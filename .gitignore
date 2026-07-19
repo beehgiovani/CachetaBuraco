@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────
+# CachetaBuraco — .gitignore
+# Android / Kotlin / Gradle / IntelliJ / AS
+# ─────────────────────────────────────────────
+
+# ── Scripts temporários / ferramentas auxiliares ──
+*.py
+*_backup.kt
+*.bak
+*.tmp
+
+# ── Build outputs ──
+build/
+*/build/
+out/
+dist/
+
+# ── Gradle cache ──
+.gradle/
+**/.gradle/
+
+# ── IntelliJ / Android Studio ──
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+
+# ── SDK / local config (nunca commitar) ──
+local.properties
+
+# ── Kotlin compiler cache ──
+.kotlin/
+
+# ── Logs e relatórios ──
+*.log
+logs/
+reports/
+
+# ── Arquivos de sistema ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Keystores e credenciais (Zero Leak Policy) ──
+*.jks
+*.keystore
+*.p12
+*.pfx
+credentials/
+secrets/
+*.env
+
+# ── Coverage / testes gerados ──
+coverage/
+*.exec
+
+# ── APKs / bundles gerados ──
+*.apk
+*.aab

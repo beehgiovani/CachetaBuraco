@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <!-- Fundo da Splash Screen -->
+        <item name="windowSplashScreenBackground">@android:color/black</item>
+        
+        <!-- Ícone da Splash Screen -->
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_round</item>
+        
+        <!-- Tema que será assumido após a Splash Screen (NoActionBar Fullscreen) -->
+        <item name="postSplashScreenTheme">@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen</item>
+    </style>
+</resources>
