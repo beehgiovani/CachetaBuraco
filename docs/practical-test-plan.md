@@ -28,15 +28,6 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
    - Cacheta, Buraco, and Tranca room creation opens the lobby.
    - Back returns to the menu.
 
-## Runtime asset visual check
-
-1. Confirm the launcher icon shows the `C & B` card mark.
-2. Open the app and confirm the splash/menu logo is sharp and readable.
-3. Start a match and confirm the table background has the new felt/wood style.
-4. Confirm face-down cards use the polished `C&B` card back.
-5. Confirm the default player avatar is clean and readable.
-6. Confirm no image appears stretched, blurry, cropped incorrectly, or with broken colors.
-
 ## Local network multiplayer smoke test
 
 Use two Android devices on the same Wi-Fi network.
@@ -67,43 +58,6 @@ Use three or four Android devices on the same Wi-Fi network.
 
 ## Rule smoke tests
 
-### Compra do lixo
-
-Execute estes cenarios em Cacheta, Buraco e Tranca quando a regra permitir compra do lixo.
-
-1. Coloque no topo do lixo uma carta que complete um jogo novo com duas cartas da mao.
-2. Compre o lixo.
-3. Tente descartar antes de usar a carta comprada.
-4. Confirme que o app bloqueia o descarte e pede para baixar ou encaixar a carta do lixo.
-5. Selecione a carta comprada com as duas cartas da mao e toque em `Baixar Jogo`.
-6. Confirme que o jogo novo aparece na sua mesa e o descarte volta a funcionar.
-7. Em outra rodada, deixe um jogo valido ja baixado na mesa.
-8. Coloque no topo do lixo uma carta que encaixe nesse jogo existente.
-9. Compre o lixo, selecione apenas a carta comprada e toque em `Encaixar`.
-10. Confirme que o jogo existente e atualizado, sem duplicar outro jogo na mesa.
-11. Em Tranca, repita com 3 preto no topo do lixo e confirme que a compra do lixo fica bloqueada.
-
-### Mesa e leitura dos jogos
-
-1. Baixe pelo menos um jogo seu e um jogo do adversario.
-2. Confirme que as duas areas de jogos ficam visiveis na mesa principal sem precisar rolar a tela.
-3. Toque em um jogo seu.
-4. Confirme que as cartas abrem em leque, com todas as cartas do jogo visiveis.
-5. Feche o leque e repita tocando em um jogo do adversario.
-6. Confirme que jogos longos aparecem compactos na mesa e completos no leque.
-7. Durante sua fase de compra, deixe o lixo disponivel e confirme o brilho azul no topo do lixo.
-8. Em uma situacao bloqueada, como 3 preto na Tranca, confirme brilho vermelho e bloqueio visual no lixo.
-
-### Sons e vibracoes
-
-1. Com o volume de midia ativo, toque em cartas da mao e confirme som curto de selecao.
-2. Compre do monte e do lixo quando permitido e confirme som/vibracao de compra.
-3. Tente comprar o lixo bloqueado e confirme som/vibracao de erro.
-4. Tente baixar uma combinacao invalida e confirme feedback de erro.
-5. Aguarde 5 segundos durante sua fase de compra ou acao e confirme aviso sonoro/vibracao curta.
-6. Finalize uma rodada e confirme som de fim de rodada.
-7. Venca uma partida e confirme som/vibracao de vitoria junto com os confetes.
-
 ### Cacheta
 
 1. Create a Cacheta room.
@@ -132,7 +86,7 @@ Execute estes cenarios em Cacheta, Buraco e Tranca quando a regra permitir compr
 ## Play Store preparation
 
 Use the files in `store-assets/` for the first listing draft:
-
+  
 - `icon-512.png`
 - `feature-graphic-1024x500.png`
 - `screenshots/01-login-1920x1080.png`

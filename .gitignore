@@ -54,6 +54,7 @@ secrets/
 # ── Coverage / testes gerados ──
 coverage/
 *.exec
+docs/
 
 # ── APKs / bundles gerados ──
 *.apk
