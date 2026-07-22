@@ -16,6 +16,7 @@ import com.brunogiovani.cachetaburaco.presentation.lobby.LobbyScreen
 import com.brunogiovani.cachetaburaco.presentation.login.LoginScreen
 import com.brunogiovani.cachetaburaco.presentation.main.MainMenuScreen
 import com.brunogiovani.cachetaburaco.presentation.match.MatchScreen
+import com.brunogiovani.cachetaburaco.presentation.match.MatchViewModel
 
 enum class AppState { LOGIN, MAIN_MENU, LOBBY_HOST, LOBBY_CLIENT, MATCH }
 
@@ -57,7 +58,15 @@ class MainActivity : ComponentActivity() {
                         AppState.MAIN_MENU -> MainMenuScreen(
                             onLogout = { currentScreen = AppState.LOGIN },
                             onHostRoom = { currentScreen = AppState.LOBBY_HOST },
-                            onJoinRoom = { currentScreen = AppState.LOBBY_CLIENT }
+                            onJoinRoom = { currentScreen = AppState.LOBBY_CLIENT },
+                            onResumeGame = {
+                                val savedInfo = MatchViewModel.getSavedGameInfo(applicationContext)
+                                if (savedInfo != null) {
+                                    isHosting = savedInfo.first
+                                    activeConfig = savedInfo.second
+                                    currentScreen = AppState.MATCH
+                                }
+                            }
                         )
 
                         AppState.LOBBY_HOST -> LobbyScreen(
@@ -65,6 +74,7 @@ class MainActivity : ComponentActivity() {
                             networkRepository = networkRepository,
                             onBack = { currentScreen = AppState.MAIN_MENU },
                             onGameStarted = { config ->
+                                MatchViewModel.clearSavedGame(applicationContext)
                                 activeConfig = config
                                 isHosting = true
                                 currentScreen = AppState.MATCH
@@ -76,6 +86,7 @@ class MainActivity : ComponentActivity() {
                             networkRepository = networkRepository,
                             onBack = { currentScreen = AppState.MAIN_MENU },
                             onGameStarted = { config ->
+                                MatchViewModel.clearSavedGame(applicationContext)
                                 activeConfig = config
                                 isHosting = false
                                 currentScreen = AppState.MATCH

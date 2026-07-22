@@ -738,7 +738,7 @@ fun LobbyScreenHostPreview() {
     val dummyRepo = object : LocalNetworkRepository {
         override val discoveredRooms = kotlinx.coroutines.flow.MutableStateFlow(emptyList<com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom>())
         override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(1)
-        override val incomingMessages = kotlinx.coroutines.flow.MutableStateFlow<com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage?>(null)
+        override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage>()
         override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus.CONNECTED)
         override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
         override fun stopHosting() {}
@@ -788,7 +788,7 @@ fun LobbyScreenClientPreview() {
     val dummyRepo = object : LocalNetworkRepository {
         override val discoveredRooms = kotlinx.coroutines.flow.MutableStateFlow(sampleRooms)
         override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(0)
-        override val incomingMessages = kotlinx.coroutines.flow.MutableStateFlow<com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage?>(null)
+        override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage>()
         override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus.CONNECTED)
         override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
         override fun stopHosting() {}

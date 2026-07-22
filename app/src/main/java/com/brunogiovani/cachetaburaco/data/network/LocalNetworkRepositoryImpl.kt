@@ -11,8 +11,11 @@ import com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
 import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -40,8 +43,10 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
     private val _connectedClientsCount = MutableStateFlow(0)
     override val connectedClientsCount: StateFlow<Int> = _connectedClientsCount.asStateFlow()
 
-    private val _incomingMessages = MutableStateFlow<NetworkMessage?>(null)
-    override val incomingMessages: StateFlow<NetworkMessage?> = _incomingMessages.asStateFlow()
+    // SharedFlow com extraBufferCapacity para não descartar mensagens
+    // quando chegam em rajada (ex: DISCARD + REQ_PICK_MORTO no mesmo frame)
+    private val _incomingMessages = MutableSharedFlow<NetworkMessage>(extraBufferCapacity = 64)
+    override val incomingMessages: SharedFlow<NetworkMessage> = _incomingMessages.asSharedFlow()
 
     private val _connectionStatus = MutableStateFlow(ConnectionStatus.IDLE)
     override val connectionStatus: StateFlow<ConnectionStatus> = _connectionStatus.asStateFlow()
@@ -116,7 +121,7 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
                     
                     val msg = parseNetworkMessage(line) ?: continue
                     playerSockets[msg.senderId] = socket
-                    _incomingMessages.value = msg
+                    _incomingMessages.tryEmit(msg)
                     broadcastMessage(line, socket)
                 }
             } catch (e: Exception) {
@@ -281,7 +286,19 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
         try { nsdManager.stopServiceDiscovery(listener) } catch (_: Exception) {}
     }
 
+    private var lastConnectedHost: String? = null
+    private var lastConnectedPort: Int? = null
+
+    override fun reconnect(): Boolean {
+        val h = lastConnectedHost ?: return false
+        val p = lastConnectedPort ?: return false
+        connectToRoom(h, p)
+        return true
+    }
+
     override fun connectToRoom(host: String, port: Int) {
+        lastConnectedHost = host
+        lastConnectedPort = port
         clientJob = coroutineScope.launch {
             try {
                 clientSocket = Socket(host, port)
@@ -295,7 +312,7 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
                     if (line.trim() == "PING") continue
                     
                     val msg = parseNetworkMessage(line) ?: continue
-                    _incomingMessages.value = msg
+                    _incomingMessages.tryEmit(msg)
                 }
                 
                 // Se chegou aqui, o host fechou a conexão

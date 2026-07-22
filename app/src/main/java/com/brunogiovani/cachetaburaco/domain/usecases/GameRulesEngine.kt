@@ -249,13 +249,15 @@ object GameRulesEngine {
             }
 
             GameType.BURACO -> {
-                // Buraco: exige ao menos uma Canastra Limpa (7+ cartas sem curinga)
+                // Buraco: a exigência de Canastra Limpa depende da configuração da sala
+                val hasCanastra = tableMelds.any { it.size >= 7 }
                 val hasCleanCanastra = tableMelds.any { meld ->
                     meld.size >= 7 && getWildcards(meld, GameType.BURACO).isEmpty()
                 }
                 when {
                     hasMorto -> WinCheckResult(false, "Você ainda não pegou o Morto")
-                    !hasCleanCanastra -> WinCheckResult(false, "Você precisa de uma Canastra Limpa para bater no Buraco")
+                    !hasCanastra -> WinCheckResult(false, "Você precisa de pelo menos uma Canastra para bater")
+                    config.requireCleanCanastraToWin && !hasCleanCanastra -> WinCheckResult(false, "Nesta sala, você precisa de uma Canastra Limpa para bater no Buraco")
                     hand.isEmpty() -> WinCheckResult(true, "Bata!")
                     else -> WinCheckResult(false)
                 }
@@ -340,11 +342,16 @@ object GameRulesEngine {
         val extraAtStart = mutableListOf<Card>()
         val extraAtEnd   = mutableListOf<Card>()
 
+        var maxSpacesLeft = minRank - 1
+
         for (w in availableWilds) {
             when {
-                minRank > 1  -> extraAtStart.add(w)  // estende para a esquerda (ex: wild-3-4...)
-                maxRank < 13 -> extraAtEnd.add(w)   // estende para a direita (ex: ...Q com wild → ...Q-K)
-                else         -> extraAtEnd.add(w)    // fallback
+                maxSpacesLeft > 0 -> {
+                    extraAtStart.add(w)
+                    maxSpacesLeft--
+                }
+                maxRank < 13 -> extraAtEnd.add(w)
+                else -> extraAtEnd.add(w)
             }
         }
 
@@ -545,6 +552,9 @@ object GameRulesEngine {
         if (card.isJoker) return if (uniformCardPoints) 10 else 20
         if (gameType == GameType.TRANCA) {
             if (card.rank == Rank.THREE && (card.suit == Suit.SPADES || card.suit == Suit.CLUBS)) {
+                return 100
+            }
+            if (card.rank == Rank.THREE && (card.suit == Suit.HEARTS || card.suit == Suit.DIAMONDS)) {
                 return 100
             }
             return 10

@@ -21,8 +21,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import com.brunogiovani.cachetaburaco.R
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
+import com.brunogiovani.cachetaburaco.presentation.match.MatchViewModel
 
 private val ColorGreen = Color(0xFF2E7D32)
 private val ColorGreenLight = Color(0xFF4CAF50)
@@ -35,11 +37,18 @@ private val ColorPanel = Color(0xCC121820)
 fun MainMenuScreen(
     onLogout: () -> Unit,
     onHostRoom: () -> Unit,
-    onJoinRoom: () -> Unit
+    onJoinRoom: () -> Unit,
+    onResumeGame: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val player = FakeAuthRepository.getCurrentPlayer()
     val ranking = remember { FakeAuthRepository.getLocalRanking() }
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var hasSavedGame by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        hasSavedGame = MatchViewModel.hasSavedGame(context)
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Image(
@@ -101,6 +110,15 @@ fun MainMenuScreen(
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
+                if (hasSavedGame) {
+                    MenuButton(
+                        text = "Continuar Partida Salva",
+                        subtitle = "Recupere o progresso anterior",
+                        color = Color(0xFFF57C00),
+                        onClick = onResumeGame
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
                 MenuButton(
                     text = "Criar sala",
                     subtitle = "Configure regras, jogadores e pontuação",

@@ -1,6 +1,7 @@
 package com.brunogiovani.cachetaburaco.domain.repositories
 
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
 
@@ -29,7 +30,9 @@ enum class ConnectionStatus {
 interface LocalNetworkRepository {
     val discoveredRooms: StateFlow<List<DiscoveredRoom>>
     val connectedClientsCount: StateFlow<Int>
-    val incomingMessages: StateFlow<NetworkMessage?>
+    // SharedFlow garante que NENHUMA mensagem seja descartada,
+    // mesmo quando chegam em rajada (ex: DISCARD + REQ_PICK_MORTO).
+    val incomingMessages: SharedFlow<NetworkMessage>
     val connectionStatus: StateFlow<ConnectionStatus>
 
     fun startHosting(playerName: String, port: Int = 9090, config: MatchConfig? = null)
@@ -39,6 +42,7 @@ interface LocalNetworkRepository {
     fun stopDiscovery()
     
     fun connectToRoom(host: String, port: Int)
+    fun reconnect(): Boolean
     fun disconnect()
     
     fun sendMessage(message: NetworkMessage)

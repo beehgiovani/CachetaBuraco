@@ -22,6 +22,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -292,12 +297,17 @@ fun MatchScreen(
             DisconnectDialog(
                 message = if (connectionStatus == ConnectionStatus.HOST_DISCONNECTED)
                     "O host perdeu a conexão." else "Um oponente saiu da partida.",
+                isClient = !isHost,
                 onBack = {
                     networkRepository.stopHosting()
                     networkRepository.disconnect()
                     onLeaveMatch()
                 },
-                onWait = { networkRepository.resetConnectionStatus() }
+                onWait = { networkRepository.resetConnectionStatus() },
+                onReconnect = {
+                    networkRepository.reconnect()
+                    networkRepository.resetConnectionStatus()
+                }
             )
         }
 
@@ -669,6 +679,7 @@ private fun TopBar(state: GameState, config: MatchConfig, onLeave: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(ColorSurface)
+            .windowInsetsPadding(WindowInsets.statusBars)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -1868,6 +1879,7 @@ private fun HandSection(
                 .fillMaxWidth()
                 .background(Color(0xCC000000))
                 .padding(horizontal = 12.dp, vertical = 7.dp)
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .heightIn(min = 48.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -2099,7 +2111,7 @@ private fun RestartMatchDialog(onConfirm: () -> Unit, onDecline: () -> Unit) {
 
 // ─── Diálogo de Desconexão ────────────────────────────────
 @Composable
-private fun DisconnectDialog(message: String, onBack: () -> Unit, onWait: () -> Unit) {
+private fun DisconnectDialog(message: String, isClient: Boolean, onBack: () -> Unit, onWait: () -> Unit, onReconnect: () -> Unit) {
     AlertDialog(
         onDismissRequest = onWait,
         containerColor = Color(0xFF1A1A2E),
@@ -2109,13 +2121,20 @@ private fun DisconnectDialog(message: String, onBack: () -> Unit, onWait: () -> 
         },
         text = { Text(message, color = Color.LightGray) },
         confirmButton = {
-            Button(
-                onClick = onBack,
-                colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight)
-            ) { Text("Voltar ao Menu") }
+            if (isClient) {
+                Button(
+                    onClick = onReconnect,
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorBlue)
+                ) { Text("Tentar Reconectar") }
+            } else {
+                Button(
+                    onClick = onWait,
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight)
+                ) { Text("Aguardar") }
+            }
         },
         dismissButton = {
-            TextButton(onClick = onWait) { Text("Aguardar", color = Color.LightGray) }
+            TextButton(onClick = onBack) { Text("Sair e Salvar", color = Color(0xFFE53935)) }
         }
     )
 }
@@ -2129,7 +2148,7 @@ fun MatchScreenPreview() {
             networkRepository = object : LocalNetworkRepository {
                 override val discoveredRooms = kotlinx.coroutines.flow.MutableStateFlow(emptyList<DiscoveredRoom>())
                 override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(1)
-                override val incomingMessages = kotlinx.coroutines.flow.MutableStateFlow<NetworkMessage?>(null)
+                override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<NetworkMessage>()
                 override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(ConnectionStatus.CONNECTED)
                 override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
                 override fun stopHosting() {}
@@ -2157,7 +2176,7 @@ fun MatchScreenCachetaPreview() {
             networkRepository = object : LocalNetworkRepository {
                 override val discoveredRooms = kotlinx.coroutines.flow.MutableStateFlow(emptyList<DiscoveredRoom>())
                 override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(1)
-                override val incomingMessages = kotlinx.coroutines.flow.MutableStateFlow<NetworkMessage?>(null)
+                override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<NetworkMessage>()
                 override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(ConnectionStatus.CONNECTED)
                 override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
                 override fun stopHosting() {}
@@ -2185,7 +2204,7 @@ fun MatchScreenTrancaPreview() {
             networkRepository = object : LocalNetworkRepository {
                 override val discoveredRooms = kotlinx.coroutines.flow.MutableStateFlow(emptyList<DiscoveredRoom>())
                 override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(1)
-                override val incomingMessages = kotlinx.coroutines.flow.MutableStateFlow<NetworkMessage?>(null)
+                override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<NetworkMessage>()
                 override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(ConnectionStatus.CONNECTED)
                 override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
                 override fun stopHosting() {}

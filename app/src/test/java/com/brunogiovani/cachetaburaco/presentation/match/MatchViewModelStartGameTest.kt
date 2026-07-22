@@ -11,7 +11,9 @@ import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
 import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
@@ -729,7 +731,7 @@ class MainDispatcherRule(
 private class FakeLocalNetworkRepository : LocalNetworkRepository {
     override val discoveredRooms: StateFlow<List<DiscoveredRoom>> = MutableStateFlow(emptyList())
     override val connectedClientsCount: StateFlow<Int> = MutableStateFlow(0)
-    override val incomingMessages: MutableStateFlow<NetworkMessage?> = MutableStateFlow(null)
+    override val incomingMessages: MutableSharedFlow<NetworkMessage> = MutableSharedFlow(replay = 64)
     override val connectionStatus: StateFlow<ConnectionStatus> = MutableStateFlow(ConnectionStatus.IDLE)
 
     val broadcastMessages = mutableListOf<NetworkMessage>()
@@ -759,7 +761,7 @@ private class FakeLocalNetworkRepository : LocalNetworkRepository {
     }
 
     fun emitIncoming(message: NetworkMessage) {
-        incomingMessages.value = message
+        incomingMessages.tryEmit(message)
     }
 }
 
