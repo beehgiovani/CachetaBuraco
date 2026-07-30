@@ -36,6 +36,3 @@ A base foi preparada para adicionar online sem duplicar regra. O caminho esperad
 .\gradlew.bat :app:assembleDebug --warning-mode all --console=plain
 ```
 
-## Git
-
-O repositorio deve versionar codigo, testes, recursos Android e assets finais da loja. Planejamentos locais, scripts temporarios, relatorios, builds, arquivos compactados e configuracoes da maquina ficam ignorados pelo `.gitignore`.
