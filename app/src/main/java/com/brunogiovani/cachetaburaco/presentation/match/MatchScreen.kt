@@ -108,6 +108,8 @@ fun MatchScreen(
 ) {
     // Em modo Preview o ViewModel não pode ser instanciado (sem Context/coroutines reais).
     // Renderizamos um layout estático com dados falsos para visualização no Android Studio.
+    // Eu mantenho a UI como apresentacao: renderiza GameState e chama acoes,
+    // enquanto regra e sincronizacao ficam no MatchViewModel.
     if (androidx.compose.ui.platform.LocalInspectionMode.current) {
         MatchScreenStaticPreview(config = config)
         return
@@ -213,7 +215,11 @@ fun MatchScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.navigationBars)
+    ) {
 
         // ── Fundo ──────────────────────────────────────────
         Image(
@@ -312,9 +318,9 @@ fun MatchScreen(
         }
 
         // ── Diálogo de Fim de Rodada / Partida ──────────────────────────────────────────────────────
-        if (state.showRoundEndDialog && state.roundEndDetails != null) {
+        state.roundEndDetails?.takeIf { state.showRoundEndDialog }?.let { details ->
             RoundEndDialog(
-                details = state.roundEndDetails!!,
+                details = details,
                 config = state.config,
                 onNextRound = { viewModel.nextRound() },
                 onLeave = {
@@ -556,44 +562,50 @@ private fun RoundEndDialog(
 
                 HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
 
-                // Placar acumulado
-                val teamScores = details.teamScores
+                // Placar acumulado — orientado pela perspectiva local (localTeam)
+                val isTeamMode = config.maxPlayers == 4
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    if (teamScores.size >= 2) {
-                        ScoreColumn(
-                            label = if (config.maxPlayers == 4) "Equipe A" else "Você",
-                            score = teamScores[0],
-                            limit = config.pointLimit,
-                            gameType = config.gameType,
-                            isWinner = details.winnerTeam == 0
-                        )
-                        ScoreColumn(
-                            label = if (config.maxPlayers == 4) "Equipe B" else "Oponente",
-                            score = teamScores[1],
-                            limit = config.pointLimit,
-                            gameType = config.gameType,
-                            isWinner = details.winnerTeam == 1
-                        )
+                    if (isTeamMode) {
+                        // Modo 4 jogadores: exibe Equipe A / Equipe B pelos índices absolutos
+                        val teamScores = details.teamScores
+                        if (teamScores.size >= 2) {
+                            ScoreColumn(
+                                label = if (details.localTeam == 0) "Equipe A (Você)" else "Equipe A",
+                                score = teamScores[0],
+                                limit = config.pointLimit,
+                                gameType = config.gameType,
+                                isWinner = details.winnerTeam == 0
+                            )
+                            ScoreColumn(
+                                label = if (details.localTeam == 1) "Equipe B (Você)" else "Equipe B",
+                                score = teamScores[1],
+                                limit = config.pointLimit,
+                                gameType = config.gameType,
+                                isWinner = details.winnerTeam == 1
+                            )
+                        }
                     } else {
+                        // Modo 2 jogadores: usa myNewTotal/opponentNewTotal já orientados localmente
                         ScoreColumn(
                             label = "Você",
                             score = details.myNewTotal,
                             limit = config.pointLimit,
                             gameType = config.gameType,
-                            isWinner = details.winnerName == "Você"
+                            isWinner = details.winnerTeam != null && details.winnerTeam == details.localTeam
                         )
                         ScoreColumn(
                             label = "Oponente",
                             score = details.opponentNewTotal,
                             limit = config.pointLimit,
                             gameType = config.gameType,
-                            isWinner = details.winnerName == "Oponente"
+                            isWinner = details.winnerTeam != null && details.winnerTeam != details.localTeam
                         )
                     }
                 }
+
 
                 if (details.isMatchOver) {
                     Box(
@@ -922,38 +934,35 @@ private fun TableCenter(
     viewModel: MatchViewModel,
     feedback: MatchFeedback
 ) {
+    // Centro da mesa: jogos baixados, monte, lixo e mortos.
+    // Eu deixo este bloco responsivo para fonte grande/tela pequena, mas sem regra de jogo.
     val haptic = LocalHapticFeedback.current
-    Column(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 10.dp, vertical = 2.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(horizontal = 8.dp, vertical = 2.dp)
     ) {
-        Text(
-            text = state.feedbackMessage,
-            color = Color.White,
-            fontSize = 12.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 22.dp)
-                .padding(horizontal = 16.dp, vertical = 2.dp)
-        )
+        val compactTable = maxWidth < 560.dp || maxHeight < 360.dp
+        val pilePanelHeight = if (maxHeight < 330.dp) 138.dp else 166.dp
 
-        Row(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Column(
+            Text(
+                text = state.feedbackMessage,
+                color = Color.White,
+                fontSize = if (compactTable) 11.sp else 12.sp,
+                textAlign = TextAlign.Center,
                 modifier = Modifier
-                    .weight(1.18f)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
+                    .fillMaxWidth()
+                    .heightIn(min = 20.dp)
+                    .padding(horizontal = 10.dp, vertical = 1.dp)
+            )
+
+            if (compactTable) {
                 MeldArea(
                     title = if (config.maxPlayers == 4) "Equipe adversaria" else "Mesa do Oponente",
                     melds = state.opponentTableMelds,
@@ -962,8 +971,33 @@ private fun TableCenter(
                         "Nenhum jogo baixado pela equipe adversaria"
                     else
                         "Nenhum jogo baixado pelo oponente",
-                    modifier = Modifier.weight(0.92f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(0.86f),
                     prominent = false
+                )
+
+                DrawPilesPanel(
+                    state = state,
+                    config = config,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(pilePanelHeight),
+                    compact = true,
+                    onDeckClick = {
+                        feedback.play(FeedbackCue.Draw)
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.drawFromDeck()
+                    },
+                    onDiscardClick = {
+                        feedback.play(FeedbackCue.Draw)
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.drawFromDiscard()
+                    },
+                    onBlockedDiscardClick = {
+                        feedback.play(FeedbackCue.Error)
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
                 )
 
                 MeldArea(
@@ -974,32 +1008,73 @@ private fun TableCenter(
                         "Jogos da sua dupla aparecem aqui"
                     else
                         "Baixe jogos para eles aparecerem aqui",
-                    modifier = Modifier.weight(1.18f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1.04f),
                     prominent = true
                 )
-            }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1.18f)
+                            .fillMaxHeight(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        MeldArea(
+                            title = if (config.maxPlayers == 4) "Equipe adversaria" else "Mesa do Oponente",
+                            melds = state.opponentTableMelds,
+                            accentColor = ColorRedLight,
+                            emptyText = if (config.maxPlayers == 4)
+                                "Nenhum jogo baixado pela equipe adversaria"
+                            else
+                                "Nenhum jogo baixado pelo oponente",
+                            modifier = Modifier.weight(0.92f),
+                            prominent = false
+                        )
 
-            DrawPilesPanel(
-                state = state,
-                config = config,
-                modifier = Modifier
-                    .weight(0.82f)
-                    .fillMaxHeight(),
-                onDeckClick = {
-                    feedback.play(FeedbackCue.Draw)
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    viewModel.drawFromDeck()
-                },
-                onDiscardClick = {
-                    feedback.play(FeedbackCue.Draw)
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    viewModel.drawFromDiscard()
-                },
-                onBlockedDiscardClick = {
-                    feedback.play(FeedbackCue.Error)
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        MeldArea(
+                            title = if (config.maxPlayers == 4) "Minha equipe" else "Minha Mesa",
+                            melds = state.myTableMelds,
+                            accentColor = ColorGreenLight,
+                            emptyText = if (config.maxPlayers == 4)
+                                "Jogos da sua dupla aparecem aqui"
+                            else
+                                "Baixe jogos para eles aparecerem aqui",
+                            modifier = Modifier.weight(1.18f),
+                            prominent = true
+                        )
+                    }
+
+                    DrawPilesPanel(
+                        state = state,
+                        config = config,
+                        modifier = Modifier
+                            .weight(0.82f)
+                            .fillMaxHeight(),
+                        onDeckClick = {
+                            feedback.play(FeedbackCue.Draw)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.drawFromDeck()
+                        },
+                        onDiscardClick = {
+                            feedback.play(FeedbackCue.Draw)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.drawFromDiscard()
+                        },
+                        onBlockedDiscardClick = {
+                            feedback.play(FeedbackCue.Error)
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                    )
                 }
-            )
+            }
         }
     }
 }
@@ -1009,10 +1084,13 @@ private fun DrawPilesPanel(
     state: GameState,
     config: MatchConfig,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
     onDeckClick: () -> Unit,
     onDiscardClick: () -> Unit,
     onBlockedDiscardClick: () -> Unit
 ) {
+    // Deck/lixo/mortos são pontos de compra. A UI mostra se pode clicar, mas a
+    // decisao oficial ainda passa pelo ViewModel e pelo GameRulesEngine.
     Box(
         modifier = modifier
             .background(
@@ -1026,25 +1104,20 @@ private fun DrawPilesPanel(
                 RoundedCornerShape(18.dp)
             )
             .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(18.dp))
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 6.dp else 8.dp),
         contentAlignment = Alignment.Center
     ) {
+        val contentArrangement = if (compact) Arrangement.spacedBy(6.dp) else Arrangement.SpaceBetween
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = contentArrangement
         ) {
             OpponentHandCounter(count = state.opponentHandCount, opponentPickedMorto = state.opponentPickedMorto)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Compra",
-                color = Color.White.copy(alpha = 0.68f),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(6.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1068,7 +1141,6 @@ private fun DrawPilesPanel(
                     onBlockedClick = onBlockedDiscardClick
                 )
             }
-            Spacer(modifier = Modifier.height(6.dp))
             if (config.gameType != GameType.CACHETA) {
                 MortosPile(mortosLeft = state.mortosLeft)
             }
@@ -1194,6 +1266,8 @@ private fun MeldArea(
     prominent: Boolean = false,
     gameType: GameType = GameType.TRANCA
 ) {
+    // Jogos na mesa sao publicos. O clique abre o leque completo do jogo sem
+    // expor cartas privadas de mao, o que continua correto no online.
     var inspectedCards by remember { mutableStateOf<List<Card>?>(null) }
 
     inspectedCards?.let { cards ->
@@ -1234,9 +1308,9 @@ private fun MeldArea(
             modifier = Modifier 
                 .fillMaxWidth()
                 .weight(1f)
-                .heightIn(min = if (prominent) 76.dp else 58.dp)
+                .heightIn(min = if (prominent) 104.dp else 88.dp)
                 .background(accentColor.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
-                .padding(6.dp),
+                .padding(5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (melds.isEmpty()) {
@@ -1259,8 +1333,16 @@ private fun MeldArea(
                     }
                 }
             } else {
-                items(melds) { meld ->
-                    MeldGroupView(meld = meld, prominent = prominent, gameType = gameType, onClick = { inspectedCards = meld })
+                itemsIndexed(
+                    items = melds,
+                    key = { index, meld -> "meld_${index}_${meld.joinToString("_") { it.id }}" }
+                ) { _, meld ->
+                    MeldGroupView(
+                        meld = meld,
+                        prominent = prominent,
+                        gameType = gameType,
+                        onClick = { inspectedCards = meld }
+                    )
                 }
             }
         }
@@ -1511,13 +1593,7 @@ private fun MeldGroupView(meld: List<Card>, prominent: Boolean = false, gameType
 
     Box(
         modifier = Modifier
-            .graphicsLayer {
-                rotationX = 22f
-                cameraDistance = 12f * density
-                shadowElevation = if (isCanastra) 24f else 12f
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                clip = false
-            }
+            .shadow(if (isCanastra) 14.dp else 8.dp, RoundedCornerShape(10.dp), clip = false)
             .clickable { onClick() }
             .background(
                 if (isCanastra) {
@@ -1541,16 +1617,21 @@ private fun MeldGroupView(meld: List<Card>, prominent: Boolean = false, gameType
             .border(if (isCanastra) 2.dp else 1.dp, borderColor.copy(alpha = if (isCanastra) pulse else 0.85f), RoundedCornerShape(8.dp))
             .padding(if (prominent) 7.dp else 5.dp)
     ) {
-        val cardWidth = if (prominent) 44.dp else 36.dp
-        val cardHeight = if (prominent) 66.dp else 54.dp
-        // Mostramos 16dp de cada carta para ler o rank/suit
-        val spacing = if (prominent) (-28).dp else (-20).dp
-        Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
+        val cardWidth = if (prominent) 58.dp else 50.dp
+        val cardHeight = cardWidth * 1.5f
+        val spacing = if (prominent) (-10).dp else (-8).dp
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(spacing),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.height(cardHeight + 4.dp)
+        ) {
             meld.forEach { card ->
                 CardView(
                     card = card,
                     isFaceUp = true,
-                    modifier = Modifier.size(width = cardWidth, height = cardHeight)
+                    modifier = Modifier
+                        .size(width = cardWidth, height = cardHeight)
+                        .shadow(4.dp, RoundedCornerShape(9.dp), clip = false)
                 )
             }
         }
@@ -1577,9 +1658,9 @@ private fun MeldGroupView(meld: List<Card>, prominent: Boolean = false, gameType
                     .padding(horizontal = 6.dp, vertical = 3.dp)
             ) {
                 Text(
-                    text = if (isCleanCanastra) "★" else "☆",
+                    text = if (isCleanCanastra) "Limpa" else "Suja",
                     color = canastraColor,
-                    fontSize = 14.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -1844,6 +1925,8 @@ private fun HandSection(
     config: MatchConfig,
     feedback: MatchFeedback
 ) {
+    // Mao do jogador local: esta lista e privada. Em modo online, somente o dono
+    // da mao deve receber estes ids de carta.
     val canInteract = state.turnPhase == TurnPhase.ACTION
     val selectedCount = state.selectedCards.size
     val haptic = LocalHapticFeedback.current
@@ -1859,14 +1942,23 @@ private fun HandSection(
     }
 
     // Altura da carta inteira e quanto fica visível por padrão (efeito domingó)
-    val cardH = 100.dp
-    val cardW = 66.dp
+    val handCount = state.myHand.size.coerceAtLeast(1)
+    val compactHand = state.myHand.size >= 13
+    val cardW = if (compactHand) 52.dp else 64.dp
+    val cardH = cardW * 1.5f
     // Exposição visível: ~42% da carta aparece. O resto fica abaixo da tela.
-    val visibleFraction = 0.42f
-    val hiddenDp = cardH * (1f - visibleFraction)   // ~58dp escondido embaixo
+    val visibleFraction = 1f
+    val hiddenDp = 0.dp
     // Quando selecionada, a carta sobe o valor inteiro do que estava escondido
     // mais um extra para destacar
-    val selectRise = hiddenDp + 8.dp
+    val selectRise = 14.dp
+    val overlap = when {
+        handCount >= 24 -> -(cardW * 0.58f)
+        handCount >= 18 -> -(cardW * 0.50f)
+        handCount >= 13 -> -(cardW * 0.38f)
+        handCount >= 9 -> -(cardW * 0.24f)
+        else -> 8.dp
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth()
@@ -1879,13 +1971,12 @@ private fun HandSection(
                 .fillMaxWidth()
                 .background(Color(0xCC000000))
                 .padding(horizontal = 12.dp, vertical = 7.dp)
-                .windowInsetsPadding(WindowInsets.navigationBars)
                 .heightIn(min = 48.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = if (!canInteract) "Aguardando..."
-                       else if (selectedCount == 0) "Mão · ${state.myHand.size} cartas"
+                       else if (selectedCount == 0) "Mao - ${state.myHand.size} cartas"
                        else "${selectedCount} selecionada(s)",
                 color = if (canInteract && selectedCount > 0) ColorGold else Color.White.copy(alpha = 0.7f),
                 fontSize = 12.sp,
@@ -1953,7 +2044,7 @@ private fun HandSection(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(cardH * visibleFraction + 4.dp)  // só expõe fração + margem mínima
+                .height(cardH + selectRise + 8.dp)
                 .background(
                     Brush.verticalGradient(
                         listOf(
@@ -1965,12 +2056,12 @@ private fun HandSection(
         ) {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy((-32).dp, Alignment.CenterHorizontally),
+                horizontalArrangement = Arrangement.spacedBy(overlap, Alignment.CenterHorizontally),
                 modifier = Modifier
                     .fillMaxWidth()
-                    // NÃO clipamos o LazyRow para cartas selecionadas subirem acima da Box
+                    // Mantem o LazyRow sem clip para cartas selecionadas subirem acima da Box.
                     .wrapContentHeight(unbounded = true)
-                    .align(Alignment.TopCenter)
+                    .align(Alignment.BottomCenter)
             ) {
                 itemsIndexed(
                     items = state.myHand,
@@ -1983,9 +2074,9 @@ private fun HandSection(
                     
                     // Limita o ângulo e drop máximo para mãos gigantes (ex: 30 cartas)
                     val maxDist = maxOf(1f, centerIdx)
-                    val factorZ = minOf(3.5f, 22f / maxDist)
-                    val factorY = minOf(1.8f, 14f / maxDist)
-                    val factorDrop = minOf(2.5f, 18f / maxDist)
+                    val factorZ = minOf(3.0f, 18f / maxDist)
+                    val factorY = minOf(1.2f, 10f / maxDist)
+                    val factorDrop = minOf(1.2f, 8f / maxDist)
 
                     val fanZ = dist * factorZ
                     val curveY = dist * -factorY
@@ -2160,6 +2251,7 @@ fun MatchScreenPreview() {
                 override fun sendMessageToClient(clientIndex: Int, message: NetworkMessage) = true
                 override fun sendMessageToPlayer(playerId: String, message: NetworkMessage) = true
                 override fun resetConnectionStatus() {}
+                override fun reconnect(): Boolean = false
             },
             isHost = true,
             config = MatchConfig(gameType = GameType.BURACO),
@@ -2188,6 +2280,7 @@ fun MatchScreenCachetaPreview() {
                 override fun sendMessageToClient(clientIndex: Int, message: NetworkMessage) = true
                 override fun sendMessageToPlayer(playerId: String, message: NetworkMessage) = true
                 override fun resetConnectionStatus() {}
+                override fun reconnect(): Boolean = false
             },
             isHost = true,
             config = MatchConfig(gameType = GameType.CACHETA),
@@ -2216,6 +2309,7 @@ fun MatchScreenTrancaPreview() {
                 override fun sendMessageToClient(clientIndex: Int, message: NetworkMessage) = true
                 override fun sendMessageToPlayer(playerId: String, message: NetworkMessage) = true
                 override fun resetConnectionStatus() {}
+                override fun reconnect(): Boolean = false
             },
             isHost = true,
             config = MatchConfig(gameType = GameType.TRANCA),

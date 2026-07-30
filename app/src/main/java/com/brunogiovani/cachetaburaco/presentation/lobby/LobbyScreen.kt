@@ -41,15 +41,19 @@ private val ColorCard = Color(0x99111133)
 @Composable
 fun LobbyScreen(
     isHosting: Boolean,
+    singlePlayerMode: Boolean = false,
     networkRepository: LocalNetworkRepository,
     onBack: () -> Unit,
     onGameStarted: (MatchConfig) -> Unit
 ) {
     val player = FakeAuthRepository.getCurrentPlayer() ?: return
 
-    // Estado de Configuração da Sala
+    // Eu concentro aqui tudo que o jogador escolhe antes da partida.
+    // O lobby nao valida jogada; ele so monta MatchConfig para o motor da mesa.
+    // No online, esta mesma config deve ser enviada/sincronizada pela sala remota.
     var selectedGameType by remember { mutableStateOf(GameType.CACHETA) }
     var selectedPlayers by remember { mutableIntStateOf(2) }
+    var cachetaCardsPerPlayer by remember { mutableIntStateOf(9) }
     var allowWildcards by remember { mutableStateOf(true) }
     var allowDrawFromDiscard by remember { mutableStateOf(true) }
     var allowCharutos by remember { mutableStateOf(true) }
@@ -63,18 +67,18 @@ fun LobbyScreen(
 
     LaunchedEffect(selectedGameType) {
         selectedPointLimit = if (selectedGameType == GameType.CACHETA) 5 else 1500
-        if (selectedGameType == GameType.CACHETA) selectedPlayers = 2
+        if (selectedGameType == GameType.CACHETA || singlePlayerMode) selectedPlayers = 2
         allowCharutos = selectedGameType != GameType.BURACO
         requireCleanCanastraToWin = selectedGameType == GameType.BURACO
     }
 
     val currentConfig = MatchConfig(
         gameType = selectedGameType,
-        maxPlayers = selectedPlayers,
+        maxPlayers = if (singlePlayerMode) 2 else selectedPlayers,
         allowWildcards = allowWildcards,
         allowDrawFromDiscard = allowDrawFromDiscard,
         allowCharutos = allowCharutos,
-        cachetaCardsPerPlayer = 9,
+        cachetaCardsPerPlayer = cachetaCardsPerPlayer,
         cachetaStartsWithDiscard = cachetaStartsWithDiscard,
         requireCleanCanastraToWin = requireCleanCanastraToWin,
         autoMeldTrancaRedThrees = autoMeldTrancaRedThrees,
@@ -84,14 +88,23 @@ fun LobbyScreen(
         pointLimit = selectedPointLimit
     )
 
+    // O singlePlayerMode reaproveita a tela de criar sala, mas o "cliente"
+    // conectado e a maquina. Por isso eu forco 2 jogadores e libero iniciar.
     val discoveredRooms by networkRepository.discoveredRooms.collectAsState()
     val connectedClients by networkRepository.connectedClientsCount.collectAsState()
 
     var gameStarted by remember { mutableStateOf(false) }
 
-    LaunchedEffect(isHosting, currentConfig) {
-        if (isHosting) networkRepository.startHosting(player.name, config = currentConfig)
-        else networkRepository.startDiscovery()
+    LaunchedEffect(isHosting, currentConfig, connectedClients) {
+        // Sempre que a regra mudar antes da partida, eu anuncio a sala com a config atual.
+        // Quando houver cliente real conectado, nao reinicio o host para nao derrubar conexao.
+        if (isHosting) {
+            if (connectedClients == 0) {
+                networkRepository.startHosting(player.name, config = currentConfig)
+            }
+        } else {
+            networkRepository.startDiscovery()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -118,7 +131,7 @@ fun LobbyScreen(
         )
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
 
-        // Conteúdo principal
+        // Conteudo principal
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -127,7 +140,7 @@ fun LobbyScreen(
                 .align(Alignment.Center),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Cabeçalho
+            // Cabecalho
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -137,7 +150,11 @@ fun LobbyScreen(
                     Text("Voltar", color = Color.White.copy(alpha = 0.8f))
                 }
                 Text(
-                    text = if (isHosting) "Criar sala" else "Procurar sala",
+                    text = when {
+                        singlePlayerMode -> "Jogar contra a maquina"
+                        isHosting -> "Criar sala"
+                        else -> "Procurar sala"
+                    },
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
@@ -151,10 +168,13 @@ fun LobbyScreen(
                 HostPanel(
                     config = currentConfig,
                     connectedClients = connectedClients,
+                    singlePlayerMode = singlePlayerMode,
                     selectedGameType = selectedGameType,
                     onGameTypeChange = { selectedGameType = it },
                     selectedPlayers = selectedPlayers,
                     onPlayersChange = { selectedPlayers = it },
+                    cachetaCardsPerPlayer = cachetaCardsPerPlayer,
+                    onCachetaCardsPerPlayerChange = { cachetaCardsPerPlayer = it },
                     allowWildcards = allowWildcards,
                     onWildcardsChange = { allowWildcards = it },
                     allowDrawFromDiscard = allowDrawFromDiscard,
@@ -203,10 +223,13 @@ fun LobbyScreen(
 private fun HostPanel(
     config: MatchConfig,
     connectedClients: Int,
+    singlePlayerMode: Boolean = false,
     selectedGameType: GameType,
     onGameTypeChange: (GameType) -> Unit,
     selectedPlayers: Int,
     onPlayersChange: (Int) -> Unit,
+    cachetaCardsPerPlayer: Int,
+    onCachetaCardsPerPlayerChange: (Int) -> Unit,
     allowWildcards: Boolean,
     onWildcardsChange: (Boolean) -> Unit,
     allowDrawFromDiscard: Boolean,
@@ -231,14 +254,13 @@ private fun HostPanel(
     modifier: Modifier = Modifier
 ) {
     val requiredClients = config.maxPlayers - 1
-    val canStart = connectedClients >= requiredClients
+    val canStart = singlePlayerMode || connectedClients >= requiredClients
 
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
         modifier = modifier
     ) {
-        //Tipo de Jogo
         item {
             SectionCard(title = "Modo de Jogo") {
                 Row(
@@ -248,9 +270,9 @@ private fun HostPanel(
                     GameType.entries.forEach { type ->
                         val isSelected = type == selectedGameType
                         val (label, desc) = when (type) {
-                            GameType.CACHETA -> "Cacheta" to "9 cartas · Solo"
-                            GameType.BURACO -> "Buraco" to "11 cartas · Duplas"
-                            GameType.TRANCA -> "Tranca" to "11 cartas · Solo/Dupla"
+                            GameType.CACHETA -> "Cacheta" to "7, 9 ou 10 cartas - Solo"
+                            GameType.BURACO -> "Buraco" to "11 cartas - Solo/Duplas"
+                            GameType.TRANCA -> "Tranca" to "11 cartas - Solo/Duplas"
                         }
                         Column(
                             modifier = Modifier
@@ -286,27 +308,21 @@ private fun HostPanel(
             }
         }
 
-        // â”€â”€ Jogadores â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         item {
-            SectionCard(title = "ðŸ‘¥ Jogadores") {
-                // Cacheta = apenas 2 jogadores
-                val options = if (selectedGameType == GameType.CACHETA) listOf(2)
-                              else listOf(2, 4)
-
+            SectionCard(title = "Jogadores") {
+                val options = if (selectedGameType == GameType.CACHETA || singlePlayerMode) listOf(2) else listOf(2, 4)
                 if (options.size == 1) {
                     Text(
-                        "Cacheta é sempre 2 jogadores (solo).",
+                        if (singlePlayerMode) "Modo contra a maquina usa 2 jogadores (voce x IA)." else "Cacheta e sempre 2 jogadores (solo).",
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 12.sp
                     )
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         options.forEach { count ->
-                            val isSelected = count == selectedPlayers
-                            val label = if (count == 2) "2 · Solo" else "4 · Duplas"
                             FilterChipOption(
-                                label = label,
-                                isSelected = isSelected,
+                                label = if (count == 2) "2 - Solo" else "4 - Duplas",
+                                isSelected = count == selectedPlayers,
                                 onClick = { onPlayersChange(count) }
                             )
                         }
@@ -315,16 +331,24 @@ private fun HostPanel(
             }
         }
 
-        // â”€â”€ Opções de Jogo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         item {
-            SectionCard(title = "Opções da Partida") {
+            SectionCard(title = "Opcoes da Partida") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (selectedGameType == GameType.CACHETA) {
                         Text(
-                            text = "Cacheta usa 9 cartas por jogador. A carta vira define o curinga da rodada.",
+                            text = "A carta vira define o curinga da rodada. Escolha a quantidade de cartas conforme a regra da mesa.",
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 12.sp
                         )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(7, 9, 10).forEach { count ->
+                                FilterChipOption(
+                                    label = "$count cartas",
+                                    isSelected = cachetaCardsPerPlayer == count,
+                                    onClick = { onCachetaCardsPerPlayerChange(count) }
+                                )
+                            }
+                        }
                         ToggleRow(
                             label = "Curinga pela Vira",
                             description = "Carta acima da vira, no mesmo naipe",
@@ -334,72 +358,80 @@ private fun HostPanel(
                         ToggleRow(
                             label = "Lixo Inicial",
                             description = if (cachetaStartsWithDiscard)
-                                "A vira também começa no lixo"
+                                "A vira tambem comeca no lixo"
                             else
-                                "Lixo começa vazio; vira fica separada",
+                                "Lixo comeca vazio; vira fica separada",
                             checked = cachetaStartsWithDiscard,
                             onCheckedChange = onCachetaStartsWithDiscardChange
                         )
                     } else {
                         Text(
-                            text = "No ${selectedGameType.name.lowercase().replaceFirstChar { it.uppercase() }}, o 2 é curinga fixo e sempre suja a canastra.",
+                            text = "No ${selectedGameType.name.lowercase().replaceFirstChar { it.uppercase() }}, o 2 e curinga fixo e sempre suja a canastra.",
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 12.sp
                         )
                     }
+
                     ToggleRow(
                         label = "Compra do Lixo",
                         description = if (selectedGameType == GameType.TRANCA)
-                            "3 preto tranca automaticamente" else "Permitir comprar do lixo",
+                            "3 preto tranca automaticamente"
+                        else
+                            "Permitir comprar do lixo",
                         checked = allowDrawFromDiscard,
                         onCheckedChange = onDrawDiscardChange
                     )
+
                     if (selectedGameType != GameType.CACHETA) {
                         ToggleRow(
                             label = "Charutos / Trincas",
                             description = if (allowCharutos)
                                 "Permite jogos de cartas do mesmo valor"
                             else
-                                "Somente sequências do mesmo naipe",
+                                "Somente sequencias do mesmo naipe",
                             checked = allowCharutos,
                             onCheckedChange = onCharutosChange
                         )
                     }
+
                     if (selectedGameType == GameType.BURACO) {
                         ToggleRow(
                             label = "Canastra Limpa",
                             description = if (requireCleanCanastraToWin)
-                                "Obrigatória para bater"
+                                "Obrigatoria para bater"
                             else
                                 "Qualquer canastra permite bater",
                             checked = requireCleanCanastraToWin,
                             onCheckedChange = onRequireCleanCanastraToWinChange
                         )
                     }
+
                     if (selectedGameType == GameType.TRANCA) {
                         ToggleRow(
                             label = "3 Vermelho",
                             description = if (autoMeldTrancaRedThrees)
                                 "Baixa automaticamente e vale 100"
                             else
-                                "Fica na mão para controle manual",
+                                "Fica na mao para controle manual",
                             checked = autoMeldTrancaRedThrees,
                             onCheckedChange = onAutoMeldTrancaRedThreesChange
                         )
                     }
+
                     if (selectedGameType != GameType.CACHETA) {
                         ToggleRow(
                             label = "Cartas Uniformes",
                             description = if (uniformCardPoints)
                                 "Todas as cartas valem 10 pts"
                             else
-                                "Valores variáveis (As=15, 2-7=5, etc.)",
+                                "Valores variaveis (As=15, 2-7=5, etc.)",
                             checked = uniformCardPoints,
                             onCheckedChange = onUniformCardPointsChange
                         )
                     }
+
                     ToggleRow(
-                        label = "Ordenar Mão Auto",
+                        label = "Ordenar Mao Auto",
                         description = "Organiza cartas por naipe e valor",
                         checked = autoSortHand,
                         onCheckedChange = onAutoSortChange
@@ -408,13 +440,12 @@ private fun HostPanel(
             }
         }
 
-
         item {
             RuleSummaryCard(config = config)
         }
-        //Modo de Pontos
+
         item {
-            SectionCard(title = "Pontuação") {
+            SectionCard(title = "Pontuacao") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChipOption(
                         label = "Gratuito",
@@ -430,19 +461,15 @@ private fun HostPanel(
             }
         }
 
-        //Limite da Partida
         item {
-            val title = if (selectedGameType == GameType.CACHETA) "❤️ Vidas (Limite)" else "ðŸ† Pontuação Limite"
+            val title = if (selectedGameType == GameType.CACHETA) "Vidas (Limite)" else "Pontuacao Limite"
             SectionCard(title = title) {
-                val options = if (selectedGameType == GameType.CACHETA) listOf(5, 10, 15)
-                              else listOf(1500, 3000, 5000)
+                val options = if (selectedGameType == GameType.CACHETA) listOf(5, 10, 15) else listOf(1500, 3000, 5000)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     options.forEach { limit ->
-                        val isSelected = limit == selectedPointLimit
-                        val label = if (selectedGameType == GameType.CACHETA) "$limit ❤️" else "$limit pts"
                         FilterChipOption(
-                            label = label,
-                            isSelected = isSelected,
+                            label = if (selectedGameType == GameType.CACHETA) "$limit vidas" else "$limit pts",
+                            isSelected = limit == selectedPointLimit,
                             onClick = { onPointLimitChange(limit) }
                         )
                     }
@@ -450,7 +477,6 @@ private fun HostPanel(
             }
         }
 
-        //Status e Botão Iniciar
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = ColorCard),
@@ -502,7 +528,7 @@ private fun HostPanel(
                         )
                     ) {
                         Text(
-                            if (canStart) "ðŸš€ Iniciar Partida" else "Aguardando jogadores...",
+                            if (canStart) "Iniciar Partida" else "Aguardando jogadores...",
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp
                         )
@@ -547,7 +573,7 @@ private fun ClientPanel(
         } else {
             item {
                 Text(
-                    "Salas disponíveis",
+                    "Salas disponiveis",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
@@ -589,7 +615,7 @@ private fun ClientPanel(
                             colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            Text("Entrar â–¶", fontWeight = FontWeight.Bold)
+                            Text("Entrar >", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -745,6 +771,7 @@ fun LobbyScreenHostPreview() {
         override fun startDiscovery() {}
         override fun stopDiscovery() {}
         override fun connectToRoom(host: String, port: Int) {}
+        override fun reconnect(): Boolean = false
         override fun disconnect() {}
         override fun sendMessage(message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) {}
         override fun sendMessageToClient(clientIndex: Int, message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) = true
@@ -769,7 +796,7 @@ fun LobbyScreenHostPreview() {
 @Composable
 fun LobbyScreenClientPreview() {
     FakeAuthRepository.forceSetForPreview(
-        com.brunogiovani.cachetaburaco.domain.models.Player("preview_client", "João")
+        com.brunogiovani.cachetaburaco.domain.models.Player("preview_client", "Joao")
     )
     val sampleRooms = listOf(
         com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom(
@@ -795,6 +822,7 @@ fun LobbyScreenClientPreview() {
         override fun startDiscovery() {}
         override fun stopDiscovery() {}
         override fun connectToRoom(host: String, port: Int) {}
+        override fun reconnect(): Boolean = false
         override fun disconnect() {}
         override fun sendMessage(message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) {}
         override fun sendMessageToClient(clientIndex: Int, message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) = true

@@ -29,6 +29,16 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
+/**
+ * Transporte de rede local via NSD + socket TCP.
+ *
+ * Eu mantenho esta classe focada apenas em conexao local: anunciar sala, descobrir
+ * salas na rede, manter socket aberto, enviar JSON e transformar linhas recebidas
+ * em NetworkMessage. Nenhuma regra de Cacheta/Buraco/Tranca deve entrar aqui.
+ *
+ * Quando o online chegar, ele deve nascer em outra implementation da interface,
+ * reaproveitando o mesmo protocolo de mensagens para nao quebrar o MatchViewModel.
+ */
 class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRepository {
 
     private val sendExecutor = Executors.newSingleThreadExecutor()
@@ -190,7 +200,11 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
                         ?.let { runCatching { MatchConfig.deserialize(it) }.getOrNull() }
                 )
                 val currentList = _discoveredRooms.value.toMutableList()
-                if (currentList.none { it.serviceName == room.serviceName }) {
+                val existingIndex = currentList.indexOfFirst { it.serviceName == room.serviceName }
+                if (existingIndex >= 0) {
+                    currentList[existingIndex] = room
+                    _discoveredRooms.value = currentList
+                } else {
                     currentList.add(room)
                     _discoveredRooms.value = currentList
                 }
@@ -305,7 +319,8 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
                 _connectionStatus.value = ConnectionStatus.CONNECTED
                 startHeartbeat()
                 
-                val reader = BufferedReader(InputStreamReader(clientSocket!!.getInputStream()))
+                val socket = clientSocket ?: return@launch
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
                 while (isActive) {
                     val line = reader.readLine() ?: break // null = host desconectou
                     
@@ -368,9 +383,10 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
         sendExecutor.execute {
             if (serverSocket?.isClosed == false) {
                 broadcastMessage(json, null)
-            } else if (clientSocket?.isClosed == false) {
+            } else {
+                val socket = clientSocket?.takeUnless { it.isClosed } ?: return@execute
                 try {
-                    val writer = PrintWriter(clientSocket!!.getOutputStream(), true)
+                    val writer = PrintWriter(socket.getOutputStream(), true)
                     writer.println(json)
                 } catch (_: Exception) {}
             }

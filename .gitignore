@@ -1,61 +1,64 @@
-# ─────────────────────────────────────────────
-# CachetaBuraco — .gitignore
-# Android / Kotlin / Gradle / IntelliJ / AS
-# ─────────────────────────────────────────────
+# CachetaBuraco - Git ignore
 
-# ── Scripts temporários / ferramentas auxiliares ──
+# Temporary scripts and one-off tools
 *.py
-*_backup.kt
-*.bak
-*.tmp
+scripts/
+tools/
 
-# ── Build outputs ──
+# Local plans, notes and generated reports
+docs/
+tasks
+*.plan.md
+*-plan.md
+reports/
+
+# Android / Gradle build outputs
 build/
 */build/
 out/
 dist/
-
-# ── Gradle cache ──
 .gradle/
 **/.gradle/
+.kotlin/
 
-# ── IntelliJ / Android Studio ──
+# Android Studio / IDE
 .idea/
 *.iml
 *.iws
 *.ipr
 .vscode/
+.trunk/
 
-# ── SDK / local config (nunca commitar) ──
+# Local SDK / machine config
 local.properties
 
-# ── Kotlin compiler cache ──
-.kotlin/
-
-# ── Logs e relatórios ──
+# Logs and temporary files
 *.log
-logs/
-reports/
+*.bak
+*.tmp
+*_backup.kt
 
-# ── Arquivos de sistema ──
-.DS_Store
-Thumbs.db
-desktop.ini
+# Archives and generated packages
+*.rar
+*.zip
+*.7z
+*.apk
+*.aab
 
-# ── Keystores e credenciais (Zero Leak Policy) ──
+# Credentials and signing files
 *.jks
 *.keystore
 *.p12
 *.pfx
+*.env
 credentials/
 secrets/
-*.env
 
-# ── Coverage / testes gerados ──
+# Coverage and test artifacts
 coverage/
 *.exec
-docs/
 
-# ── APKs / bundles gerados ──
-*.apk
-*.aab
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini

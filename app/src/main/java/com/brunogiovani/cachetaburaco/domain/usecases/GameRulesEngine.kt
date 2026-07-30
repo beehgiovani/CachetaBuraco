@@ -13,6 +13,10 @@ import com.brunogiovani.cachetaburaco.domain.models.Suit
  */
 object GameRulesEngine {
 
+    // Eu deixo as regras aqui para nao misturar UI, rede e regra de jogo.
+    // Toda variacao de Cacheta, Buraco e Tranca deve passar pelo MatchConfig.
+    // Quando o online chegar, o servidor pode reutilizar este motor sem Compose/Android.
+
     // ─── Compra do Lixo ──────────────────────────────────────────────────────
 
     data class DrawDiscardResult(
@@ -27,6 +31,8 @@ object GameRulesEngine {
         topDiscard: Card?,
         config: MatchConfig
     ): DrawDiscardResult {
+        // Esta funcao responde apenas "pode comprar o topo do lixo?".
+        // A obrigacao de usar essa carta em Buraco/Tranca fica em outro passo.
         if (topDiscard == null) return DrawDiscardResult(false, "Lixo vazio")
         if (!config.allowDrawFromDiscard) return DrawDiscardResult(false, "Compra do lixo desabilitada nesta sala")
 
@@ -76,6 +82,8 @@ object GameRulesEngine {
     ): MeldValidationResult {
         if (cards.size < 3) return MeldValidationResult(false, reason = "Mínimo 3 cartas")
 
+        // Toda baixada/encaixe passa por aqui. Se uma regra mudar por modo ou sala,
+        // eu altero neste ponto e todos os transportes herdam o mesmo comportamento.
         val wildcards = getMeldWildcards(cards, config, cachetaTurnCard)
         val normalCards = cards.filter { it !in wildcards }
 

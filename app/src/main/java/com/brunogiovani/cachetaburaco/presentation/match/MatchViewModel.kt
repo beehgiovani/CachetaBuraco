@@ -20,7 +20,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-// â”€â”€â”€ Fases do Turno â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Fases do turno ---
 enum class TurnPhase {
     WAITING_OPPONENT,
     DRAW,
@@ -36,7 +36,9 @@ data class RoundEndDetails(
     val isMatchOver: Boolean,
     val breakdown: String,
     val teamScores: List<Int> = emptyList(),
-    val winnerTeam: Int? = null
+    val winnerTeam: Int? = null,
+    /** Índice absoluto de equipe (0 ou 1) do jogador local neste dispositivo. */
+    val localTeam: Int = 0
 )
 
 private data class RoundSeatReport(
@@ -46,7 +48,8 @@ private data class RoundSeatReport(
     val tableMelds: List<List<Card>>
 )
 
-// Estado da Mesa
+// Estado da mesa que a UI observa.
+// Eu mantenho tudo que a tela precisa aqui para evitar busca solta em camada de rede.
 data class GameState(
     val myHand: List<Card> = emptyList(),
     val selectedCards: Set<Card> = emptySet(),
@@ -77,7 +80,19 @@ data class GameState(
     val showRestartMatchDialog: Boolean = false
 )
 
-// MatchViewModel
+/**
+ * Orquestrador oficial de uma partida.
+ *
+ * Eu concentro aqui o estado da mesa, as acoes do jogador e o protocolo de
+ * mensagens. O host e autoritativo: distribui cartas, controla mortos, valida
+ * pedidos privados e consolida placar. Cliente, bot e futuro online devem falar
+ * com este ViewModel por NetworkMessage, sem duplicar regra em UI ou transporte.
+ *
+ * Para o online depois:
+ * - o servidor pode assumir o papel de host autoritativo;
+ * - LocalNetworkRepository pode virar OnlineNetworkRepository;
+ * - GameRulesEngine continua sendo a fonte unica das regras.
+ */
 class MatchViewModel(
     private val networkRepository: LocalNetworkRepository,
     private val playerId: String,
@@ -101,9 +116,12 @@ class MatchViewModel(
     private val remotePlayerSeats = mutableMapOf<String, Int>()
 
     // Deck gerenciado apenas pelo Host
+    // No online, este bloco deve morar no servidor/host autoritativo. Cliente
+    // nunca deve conhecer masterDeck nem mortos completos antes de receber.
     private var masterDeck = mutableListOf<Card>()
     private var mortos = mutableListOf<List<Card>>()
     private val teamsThatPickedMorto = mutableSetOf<Int>()
+    private val teamsWithMortoServedByHost = mutableSetOf<Int>()
     private val deckServedSeatsThisTurn = mutableSetOf<Int>()
     private val pendingRoundReports = mutableMapOf<Int, RoundSeatReport>()
     private var pendingWinnerId: String? = null
@@ -111,6 +129,7 @@ class MatchViewModel(
     private var pendingCountOnlyRound: Boolean = false
     private var pendingMortoPickupIsIndirect: Boolean = false
     private var pendingDiscardDrawCardId: String? = null
+    private val processedNetworkMessageIds = linkedSetOf<String>()
 
     // Cache para resolver ‘IDs’ de cartas recebidas via rede
     private val allCardsMap: Map<String, Card> by lazy {
@@ -125,17 +144,20 @@ class MatchViewModel(
             }
         }
         // Observe state changes and persist snapshot for reconnection
+        // Não salva snapshot durante o dialog de fim de rodada para não
+        // sobrescrever pontos com estado vazio antes da próxima rodada
         viewModelScope.launch {
             _gameState.collect { state ->
-                if (state.turnPhase != TurnPhase.WAITING_OPPONENT ||
-                    state.myTableMelds.isNotEmpty()) {
+                if (!state.showRoundEndDialog &&
+                    (state.turnPhase != TurnPhase.WAITING_OPPONENT ||
+                    state.myTableMelds.isNotEmpty())) {
                     saveGameSnapshot(state)
                 }
             }
         }
     }
 
-    // â”€â”€â”€ Início do Jogo (Host) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Inicio do jogo ---
 
     /**
      * Inicia a partida a partir do lobby, configurando o estado inicial de acordo com as regras (Cacheta, Buraco ou Tranca).
@@ -145,6 +167,7 @@ class MatchViewModel(
 
         mortos.clear()
         teamsThatPickedMorto.clear()
+        teamsWithMortoServedByHost.clear()
         deckServedSeatsThisTurn.clear()
         remoteHandsBySeat.clear()
         remotePlayerSeats.clear()
@@ -224,7 +247,7 @@ class MatchViewModel(
         }
     }
 
-    // â”€â”€â”€ Ações do Jogador â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Acoes do jogador ---
 
     /**
      * Ação do jogador: Puxa uma carta do monte (Deck). Se for o Host, processa diretamente; se for Client, solicita ao Host.
@@ -343,19 +366,21 @@ class MatchViewModel(
             return
         }
 
-        // Validação da Justificativa da compra do lixo (obrigatório para todos os modos)
-        val canJustify = GameRulesEngine.canJustifyDiscardDraw(
-            topDiscard = topCard,
-            hand = state.myHand,
-            tableMelds = state.myTableMelds,
-            config = currentConfig,
-            cachetaTurnCard = state.turnCard
-        )
-        if (!canJustify) {
-            _gameState.value = state.copy(
-                feedbackMessage = "❌ Você não pode comprar do lixo: a carta não forma um jogo novo nem encaixa nos existentes!"
+        val mustJustifyDiscardDraw = currentConfig.gameType != GameType.CACHETA
+        if (mustJustifyDiscardDraw) {
+            val canJustify = GameRulesEngine.canJustifyDiscardDraw(
+                topDiscard = topCard,
+                hand = state.myHand,
+                tableMelds = state.myTableMelds,
+                config = currentConfig,
+                cachetaTurnCard = state.turnCard
             )
-            return
+            if (!canJustify) {
+                _gameState.value = state.copy(
+                    feedbackMessage = "Voce nao pode comprar do lixo: a carta nao forma um jogo novo nem encaixa nos existentes!"
+                )
+                return
+            }
         }
 
         // Determina cartas compradas (lixo inteiro no Buraco/Tranca, só o topo na Cacheta)
@@ -373,7 +398,7 @@ class MatchViewModel(
 
         val newHand = sortHandIfEnabled(state.myHand + drawnCards)
         val (processedHand, newMelds) = autoProcessThreeReds(newHand, state.myTableMelds)
-        pendingDiscardDrawCardId = topCard.id
+        pendingDiscardDrawCardId = if (mustJustifyDiscardDraw) topCard.id else null
 
         _gameState.value = state.copy(
             myHand = processedHand,
@@ -700,7 +725,7 @@ class MatchViewModel(
         _gameState.value = _gameState.value.copy(lastMeldResult = "")
     }
 
-    // â”€â”€â”€ Fluxo de Pontuação de Rodada â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Fluxo de pontuacao ---
 
     /**
      * Inicia o fluxo de vitória da rodada para o jogador local.
@@ -923,23 +948,41 @@ class MatchViewModel(
             opponentScore = oppNew,
             teamScores = updatedTeamScores,
             showRoundEndDialog = true,
-            roundEndDetails = RoundEndDetails(
-                when {
-                    countOnlyRound -> "Contagem"
-                    winnerId == playerId -> "Você"
-                    teamForSeat(localSeat) == winnerTeam -> "Sua equipe"
-                    else -> "Oponente"
-                },
-                myRoundScore,
-                opponentRoundScore,
-                myNew,
-                oppNew,
-                over,
-                breakdown,
-                updatedTeamScores,
-                winnerTeam
-            )
+            roundEndDetails = run {
+                val localTeamIdx = teamForSeat(localSeat)
+                // Substitui placeholders do breakdown para exibição no host
+                val formattedBreakdown = if (currentConfig.gameType == GameType.CACHETA) {
+                    if (winnerId == playerId) "Oponente perdeu 1 vida." else "Você perdeu 1 vida."
+                } else {
+                    var formatted = breakdown
+                    for (i in 0 until currentConfig.maxPlayers) {
+                        val team = teamForSeat(i)
+                        val isMyTeam = team == localTeamIdx
+                        formatted = formatted.replace("[TEAM_$team]", if (isMyTeam) "Você" else "Oponente")
+                        formatted = formatted.replace("[PLAYER_$i]", if (i == localSeat) "Você" else "Oponente")
+                    }
+                    formatted
+                }
+                RoundEndDetails(
+                    winnerName = when {
+                        countOnlyRound -> "Contagem"
+                        winnerId == playerId -> "Você"
+                        localTeamIdx == winnerTeam -> "Sua equipe"
+                        else -> "Oponente"
+                    },
+                    myRoundScore = myRoundScore,
+                    opponentRoundScore = opponentRoundScore,
+                    myNewTotal = myNew,
+                    opponentNewTotal = oppNew,
+                    isMatchOver = over,
+                    breakdown = formattedBreakdown,
+                    teamScores = updatedTeamScores,
+                    winnerTeam = winnerTeam,
+                    localTeam = localTeamIdx
+                )
+            }
         )
+
         pendingRoundReports.clear()
         pendingWinnerId = null
         pendingWinnerTeam = null
@@ -1000,29 +1043,39 @@ class MatchViewModel(
             teamScores = teamScores,
             showRoundEndDialog = true,
             roundEndDetails = RoundEndDetails(
-                if (amIWinner) "Você" else "Oponente",
-                myRound,
-                oppRound,
-                myNew,
-                oppNew,
-                over,
-                if (currentConfig.gameType == GameType.CACHETA) {
+                winnerName = if (amIWinner) "Você" else "Oponente",
+                myRoundScore = myRound,
+                opponentRoundScore = oppRound,
+                myNewTotal = myNew,
+                opponentNewTotal = oppNew,
+                isMatchOver = over,
+                breakdown = if (currentConfig.gameType == GameType.CACHETA) {
                     if (amIWinner) "Oponente perdeu 1 vida." else "Você perdeu 1 vida."
                 } else {
                     brk
                 },
-                teamScores,
-                winnerTeam
+                teamScores = teamScores,
+                winnerTeam = winnerTeam,
+                localTeam = teamForSeat(localSeat)
             )
         )
     }
 
     /**
-     * Inicia uma nova rodada mantendo as pontuações e configurações atuais.
+     * Inicia uma nova rodada mantendo as pontuações acumuladas.
+     * O host redistribui as cartas; os pontos do estado atual são preservados
+     * dentro de startGame() via _gameState.value.teamScores.
      */
     fun nextRound() {
-        if (isHost) { startGame(); networkRepository.sendMessage(NetworkMessage(playerId, "NEXT_ROUND", "")) }
-        else networkRepository.sendMessage(NetworkMessage(playerId, "REQ_NEXT_ROUND", ""))
+        val currentState = _gameState.value
+        // Garante que o dialog seja fechado antes de iniciar a rodada
+        _gameState.value = currentState.copy(showRoundEndDialog = false, roundEndDetails = null)
+        if (isHost) {
+            startGame()
+            networkRepository.sendMessage(NetworkMessage(playerId, "NEXT_ROUND", ""))
+        } else {
+            networkRepository.sendMessage(NetworkMessage(playerId, "REQ_NEXT_ROUND", ""))
+        }
     }
 
     private val restartMatchApprovals = mutableSetOf<String>()
@@ -1062,23 +1115,42 @@ class MatchViewModel(
         }
         if (payload == "YES") {
             restartMatchApprovals.add(senderId)
-            if (restartMatchApprovals.size >= currentConfig.maxPlayers - 1) { // -1 pq host conta, maxPlayers == conexoes esperadas? Na verdade, se everyone approve:
-                // Full restart
-                _gameState.value = _gameState.value.copy(teamScores = MutableList(currentConfig.maxPlayers) { 0 })
+            // Contamos o próprio host + aprovações dos clientes
+            val approvalNeeded = currentConfig.maxPlayers - 1 // clientes que precisam aprovar
+            if (restartMatchApprovals.size >= approvalNeeded) {
+                // Full restart — zera placar para os valores iniciais corretos
+                _gameState.value = _gameState.value.copy(
+                    teamScores = initialTeamScores(currentConfig),
+                    myScore = initialTeamScores(currentConfig).getOrElse(teamForSeat(localSeat)) { 0 },
+                    opponentScore = initialTeamScores(currentConfig).getOrElse(opposingTeam(teamForSeat(localSeat))) { 0 },
+                    showRestartMatchDialog = false
+                )
+                restartMatchApprovals.clear()
                 startGame()
                 networkRepository.sendMessage(NetworkMessage(playerId, "NEXT_ROUND", ""))
-                _gameState.value = _gameState.value.copy(feedbackMessage = "Partida reiniciada!")
             }
         }
     }
 
-    // â”€â”€â”€ Mensagens de Rede â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Mensagens de rede ---
 
     /**
      * Ponto de entrada central para todas as mensagens recebidas via rede (TCP/IP).
      */
     private fun handleNetworkMessage(message: NetworkMessage) {
         if (message.senderId == playerId) return
+        // Deduplicacao por messageId: essencial para rede real, reconexao e online,
+        // onde a mesma acao pode chegar repetida por retry ou atraso.
+        if (!processedNetworkMessageIds.add(message.messageId)) return
+        if (processedNetworkMessageIds.size > 500) {
+            val iterator = processedNetworkMessageIds.iterator()
+            repeat(100) {
+                if (iterator.hasNext()) {
+                    iterator.next()
+                    iterator.remove()
+                }
+            }
+        }
         try {
             when (message.type) {
                 "GAME_START"         -> handleGameStart(message.payload)
@@ -1189,6 +1261,8 @@ class MatchViewModel(
         val activeSeat = json.optInt("activeSeat", 1).coerceIn(0, currentConfig.maxPlayers - 1)
 
         mortos.clear()
+        teamsThatPickedMorto.clear()
+        teamsWithMortoServedByHost.clear()
         val mortosJson = json.optJSONArray("mortos") ?: JSONArray()
         repeat(mortosJson.length()) { index ->
             val morto = cardsFromJson(mortosJson.optJSONArray(index) ?: JSONArray())
@@ -1356,8 +1430,23 @@ class MatchViewModel(
         val team = teamForSeat(requestingSeat)
         if (teamsThatPickedMorto.contains(team)) return
         rememberRemoteSeat(requestingSeat, requestingPlayerId)
+        if (remoteHandCountForSeat(requestingSeat) != 0) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Pedido de morto recusado: a mão do jogador ainda não está vazia."
+            )
+            return
+        }
+        if (!teamsWithMortoServedByHost.add(team)) return
 
         val morto = mortos.removeAt(0)
+        if (morto.size != currentConfig.cardsPerPlayer) {
+            teamsWithMortoServedByHost.remove(team)
+            mortos.add(0, morto)
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Morto inválido (${morto.size} cartas). Rodada protegida; reinicie a rodada."
+            )
+            return
+        }
         teamsThatPickedMorto.add(team)
         val mortosLeft = mortos.size
         remoteHandsBySeat[requestingSeat] = sortHandIfEnabled(morto)
@@ -1379,7 +1468,8 @@ class MatchViewModel(
      * Client: Recebe as cartas do morto enviadas pelo Host.
      */
     private fun handleServeMorto(payload: String) {
-        if (teamsThatPickedMorto.contains(teamForSeat(localSeat))) return // Idempotência para evitar 44 cartas
+        val localTeam = teamForSeat(localSeat)
+        if (teamsThatPickedMorto.contains(localTeam)) return // Idempotência para evitar morto duplicado
 
         val json = runCatching { JSONObject(payload) }.getOrNull()
         val morto = if (json != null) {
@@ -1387,18 +1477,28 @@ class MatchViewModel(
         } else {
             parseHandPayload(payload)
         }
+        if (morto.size != currentConfig.cardsPerPlayer) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Morto inválido (${morto.size} cartas). Solicite nova sincronização da mesa."
+            )
+            return
+        }
         val mortosLeft = json?.optInt("mortosLeft", (_gameState.value.mortosLeft - 1).coerceAtLeast(0))
             ?: (_gameState.value.mortosLeft - 1).coerceAtLeast(0)
         val isIndirect = pendingMortoPickupIsIndirect
         val nextSeat = nextSeatAfter(localSeat)
-
-        // Mescla o morto com cartas restantes na mao (não substitui completamente,
-        // pois o jogador pode ter cartas sobrando de uma compra grande do lixo)
         val currentHand = _gameState.value.myHand
-        val mergedHand = sortHandIfEnabled(currentHand + morto)
+        if (currentHand.isNotEmpty()) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Morto recusado: sua mão ainda tem cartas. Sincronize a partida."
+            )
+            return
+        }
+
+        val mergedHand = sortHandIfEnabled(morto)
         val (processedHand, newMelds) = autoProcessThreeReds(mergedHand, _gameState.value.myTableMelds)
 
-        teamsThatPickedMorto.add(teamForSeat(localSeat))
+        teamsThatPickedMorto.add(localTeam)
         pendingMortoPickupIsIndirect = false
 
         _gameState.value = _gameState.value.copy(
@@ -1484,7 +1584,7 @@ class MatchViewModel(
         )
     }
 
-    // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Helpers ---
 
     /**
      * Identifica se existem 3 vermelhos na mão do jogador (apenas no modo Tranca).
@@ -1893,12 +1993,16 @@ class MatchViewModel(
     }
 
     /**
-     * Método responsável pela funcionalidade: isMatchOver
+     * Verifica se a partida terminou.
+     * - Cacheta: uma equipe ficou com 0 ou menos vidas.
+     * - Buraco/Tranca: uma equipe atingiu ou superou o limite de pontos configurado.
      */
     private fun isMatchOver(teamScores: List<Int>): Boolean {
         return if (currentConfig.gameType == GameType.CACHETA) {
+            // Na Cacheta os pontos começam em pointLimit e decrescem; acaba quando alguém chega em 0
             teamScores.any { it <= 0 }
         } else {
+            // No Buraco/Tranca os pontos começam em 0 e crescem; acaba quando alguém atinge o limite
             teamScores.any { it >= currentConfig.pointLimit }
         }
     }
@@ -2003,9 +2107,11 @@ class MatchViewModel(
                     formatted
                 },
                 teamScores = resolvedTeamScores,
-                winnerTeam = if (noWinner) null else winnerTeam
+                winnerTeam = if (noWinner) null else winnerTeam,
+                localTeam = localTeam
             )
         )
+
     }
 
     /**
@@ -2072,7 +2178,7 @@ class MatchViewModel(
         }
     }
 
-    // â”€â”€â”€ Persistência e Reconexão â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // --- Persistencia e reconexao ---
 
     /**
      * Método responsável pela funcionalidade: snapshotFile

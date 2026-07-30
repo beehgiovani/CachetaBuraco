@@ -38,6 +38,7 @@ fun MainMenuScreen(
     onLogout: () -> Unit,
     onHostRoom: () -> Unit,
     onJoinRoom: () -> Unit,
+    onPlayBot: () -> Unit,
     onResumeGame: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -119,11 +120,20 @@ fun MainMenuScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 }
+                // Cada botao entra em um transporte diferente, mas a partida em si
+                // continua usando MatchScreen + MatchViewModel.
                 MenuButton(
                     text = "Criar sala",
                     subtitle = "Configure regras, jogadores e pontuação",
                     color = ColorGreenLight,
                     onClick = onHostRoom
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                MenuButton(
+                    text = "Jogar contra a maquina",
+                    subtitle = "Treine e teste regras sem outro celular",
+                    color = Color(0xFF7B1FA2),
+                    onClick = onPlayBot
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 MenuButton(
@@ -311,7 +321,8 @@ fun MainMenuScreenPreview() {
         MainMenuScreen(
             onLogout = {},
             onHostRoom = {},
-            onJoinRoom = {}
+            onJoinRoom = {},
+            onPlayBot = {}
         )
     }
 }

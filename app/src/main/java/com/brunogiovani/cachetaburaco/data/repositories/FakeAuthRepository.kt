@@ -45,8 +45,9 @@ object FakeAuthRepository {
         val savedId = prefs?.getString(KEY_PLAYER_ID, null)
         val savedName = prefs?.getString(KEY_PLAYER_NAME, null)
         if (savedId != null && savedName != null) {
-            currentPlayer = Player(id = savedId, name = savedName)
-            upsertRankingEntry(currentPlayer!!)
+            val player = Player(id = savedId, name = savedName)
+            currentPlayer = player
+            upsertRankingEntry(player)
         }
     }
 
