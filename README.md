@@ -45,7 +45,3 @@ Configuração atual do Android:
 .\gradlew.bat :app:testDebugUnitTest --warning-mode all --console=plain
 .\gradlew.bat :app:assembleDebug --warning-mode all --console=plain
 ```
-
-## Git
-
-O repositório deve versionar código, testes, recursos Android e assets finais da loja. Planejamentos locais, scripts temporários, relatórios, builds, arquivos compactados e configurações da máquina ficam ignorados pelo `.gitignore`.

@@ -428,6 +428,15 @@ private fun HostPanel(
                             checked = autoMeldTrancaRedThrees,
                             onCheckedChange = onAutoMeldTrancaRedThreesChange
                         )
+                        ToggleRow(
+                            label = "3 Preto Pesado",
+                            description = if (penalizeBlackThreesInHand)
+                                "3 preto na mão desconta 100 pontos"
+                            else
+                                "3 preto na mão usa valor normal da carta",
+                            checked = penalizeBlackThreesInHand,
+                            onCheckedChange = onPenalizeBlackThreesInHandChange
+                        )
                     }
 
                     if (selectedGameType != GameType.CACHETA) {
@@ -702,6 +711,7 @@ private fun RuleSummaryText(config: MatchConfig) {
             add(if (config.requireCleanCanastraToWin) "Precisa canastra limpa para bater" else "Pode bater com canastra suja")
             if (config.gameType == GameType.TRANCA) {
                 add("3 preto tranca o lixo; 3 vermelho baixa separado")
+                add(if (config.penalizeBlackThreesInHand) "3 preto na mão desconta 100 pts" else "3 preto na mão vale normal")
             }
         }
         add(if (config.allowDrawFromDiscard) "Compra do lixo ligada" else "Compra do lixo desligada")

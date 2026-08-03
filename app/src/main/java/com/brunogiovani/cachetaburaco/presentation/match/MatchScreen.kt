@@ -586,7 +586,7 @@ private fun RoundEndDialog(
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    text = "Vencedor: ${details.winnerName}",
+                    text = if (details.winnerName == "Contagem") "Contagem" else "Vencedor: ${details.winnerName}",
                     color = ColorGreenLight,
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center

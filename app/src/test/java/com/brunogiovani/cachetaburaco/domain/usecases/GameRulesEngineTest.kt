@@ -407,6 +407,7 @@ class GameRulesEngineTest {
             cachetaStartsWithDiscard = true,
             requireCleanCanastraToWin = false,
             autoMeldTrancaRedThrees = false,
+            penalizeBlackThreesInHand = false,
             autoSortHand = false,
             uniformCardPoints = true,
             botDifficulty = BotDifficulty.HARD,
@@ -416,6 +417,31 @@ class GameRulesEngineTest {
         val restored = MatchConfig.deserialize(original.serialize())
 
         assertEquals(original, restored)
+    }
+
+    @Test
+    fun `tranca black three hand penalty follows room option`() {
+        val heavy = GameRulesEngine.calculateBuracoTrancaScore(
+            hand = listOf(card(Rank.THREE, Suit.SPADES)),
+            tableMelds = emptyList(),
+            hasMorto = false,
+            didWin = false,
+            gameType = GameType.TRANCA,
+            penalizeBlackThreesInHand = true
+        )
+        val normal = GameRulesEngine.calculateBuracoTrancaScore(
+            hand = listOf(card(Rank.THREE, Suit.SPADES)),
+            tableMelds = emptyList(),
+            hasMorto = false,
+            didWin = false,
+            gameType = GameType.TRANCA,
+            penalizeBlackThreesInHand = false
+        )
+
+        assertEquals(100, heavy.handPenalty)
+        assertEquals(100, heavy.blackThreePenalty)
+        assertEquals(5, normal.handPenalty)
+        assertEquals(5, normal.blackThreePenalty)
     }
 
     private fun card(rank: Rank, suit: Suit): Card = Card(suit = suit, rank = rank)
