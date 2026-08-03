@@ -1,6 +1,7 @@
 package com.brunogiovani.cachetaburaco.domain.usecases
 
 import com.brunogiovani.cachetaburaco.domain.models.Card
+import com.brunogiovani.cachetaburaco.domain.models.BotDifficulty
 import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.models.Rank
@@ -265,6 +266,102 @@ class GameRulesEngineTest {
     }
 
     @Test
+    fun `buraco non uniform card points use configured card table`() {
+        val score = GameRulesEngine.calculateBuracoTrancaScore(
+            hand = listOf(
+                card(Rank.ACE, Suit.CLUBS),
+                card(Rank.FOUR, Suit.DIAMONDS),
+                card(Rank.EIGHT, Suit.HEARTS),
+                card(Rank.TWO, Suit.SPADES),
+                joker()
+            ),
+            tableMelds = emptyList(),
+            hasMorto = false,
+            didWin = false,
+            gameType = GameType.BURACO,
+            uniformCardPoints = false
+        )
+
+        assertEquals(60, score.handPenalty)
+        assertEquals(-60, score.totalRoundPoints)
+    }
+
+    @Test
+    fun `buraco uniform card points make every card worth ten`() {
+        val score = GameRulesEngine.calculateBuracoTrancaScore(
+            hand = listOf(
+                card(Rank.ACE, Suit.CLUBS),
+                card(Rank.FOUR, Suit.DIAMONDS),
+                card(Rank.EIGHT, Suit.HEARTS),
+                card(Rank.TWO, Suit.SPADES),
+                joker()
+            ),
+            tableMelds = emptyList(),
+            hasMorto = false,
+            didWin = false,
+            gameType = GameType.BURACO,
+            uniformCardPoints = true
+        )
+
+        assertEquals(50, score.handPenalty)
+        assertEquals(-50, score.totalRoundPoints)
+    }
+
+    @Test
+    fun `tranca uniform card points count table and hand as ten each`() {
+        val score = GameRulesEngine.calculateBuracoTrancaScore(
+            hand = listOf(
+                card(Rank.ACE, Suit.CLUBS),
+                card(Rank.FOUR, Suit.DIAMONDS)
+            ),
+            tableMelds = listOf(
+                listOf(
+                    card(Rank.SEVEN, Suit.HEARTS),
+                    card(Rank.EIGHT, Suit.HEARTS),
+                    card(Rank.NINE, Suit.HEARTS)
+                )
+            ),
+            hasMorto = true,
+            didWin = true,
+            gameType = GameType.TRANCA,
+            uniformCardPoints = true
+        )
+
+        assertEquals(30, score.tablePoints)
+        assertEquals(20, score.handPenalty)
+        assertEquals(-100, score.mortoPenalty)
+        assertEquals(100, score.winBonus)
+        assertEquals(10, score.totalRoundPoints)
+    }
+
+    @Test
+    fun `tranca non uniform card points use card values for table and hand`() {
+        val score = GameRulesEngine.calculateBuracoTrancaScore(
+            hand = listOf(
+                card(Rank.ACE, Suit.CLUBS),
+                card(Rank.FOUR, Suit.DIAMONDS)
+            ),
+            tableMelds = listOf(
+                listOf(
+                    card(Rank.SEVEN, Suit.HEARTS),
+                    card(Rank.EIGHT, Suit.HEARTS),
+                    card(Rank.NINE, Suit.HEARTS)
+                )
+            ),
+            hasMorto = true,
+            didWin = true,
+            gameType = GameType.TRANCA,
+            uniformCardPoints = false
+        )
+
+        assertEquals(25, score.tablePoints)
+        assertEquals(20, score.handPenalty)
+        assertEquals(-100, score.mortoPenalty)
+        assertEquals(100, score.winBonus)
+        assertEquals(5, score.totalRoundPoints)
+    }
+
+    @Test
     fun `tranca red three scores positive only with canastra`() {
         val redThree = card(Rank.THREE, Suit.HEARTS)
         val cleanCanastra = listOf(
@@ -294,8 +391,8 @@ class GameRulesEngineTest {
 
         assertEquals(-100, withoutCanastra.tablePoints)
         assertEquals(-100, withoutCanastra.totalRoundPoints)
-        assertEquals(170, withCanastra.tablePoints)
-        assertEquals(370, withCanastra.totalRoundPoints)
+        assertEquals(150, withCanastra.tablePoints)
+        assertEquals(350, withCanastra.totalRoundPoints)
     }
 
     @Test
@@ -311,6 +408,8 @@ class GameRulesEngineTest {
             requireCleanCanastraToWin = false,
             autoMeldTrancaRedThrees = false,
             autoSortHand = false,
+            uniformCardPoints = true,
+            botDifficulty = BotDifficulty.HARD,
             pointLimit = 3000
         )
 
@@ -320,6 +419,7 @@ class GameRulesEngineTest {
     }
 
     private fun card(rank: Rank, suit: Suit): Card = Card(suit = suit, rank = rank)
+    private fun joker(): Card = Card(suit = Suit.SPADES, rank = Rank.ACE, isJoker = true)
 
     @Test
     fun `sortMeld places wildcard inside gap to complete sequence`() {
@@ -367,7 +467,7 @@ class GameRulesEngineTest {
             didWin = false,
             gameType = GameType.TRANCA
         )
-        // Pontuacao deve ser dobrada de -400 para -800
+        // Pontuação deve ser dobrada de -400 para -800
         assertEquals(-800, score.tablePoints)
         assertEquals(-800, score.totalRoundPoints)
     }
@@ -396,9 +496,9 @@ class GameRulesEngineTest {
             didWin = false,
             gameType = GameType.TRANCA
         )
-        // Canastra limpa = 200 pts. Cartas da canastra = 7 * 5 = 35. Vermelhos = 800 pts. Total = 1035.
-        assertEquals(870, score.tablePoints) // 800 (3s reds) + 70 (normal cards inside melds)
-        assertEquals(1070, score.totalRoundPoints) // 870 + 200 (canastra bonus)
+        // Canastra limpa = 200 pts. Cartas comuns por valor = 50. Vermelhos = 800 pts.
+        assertEquals(850, score.tablePoints)
+        assertEquals(1050, score.totalRoundPoints)
     }
 
     @Test
@@ -416,6 +516,41 @@ class GameRulesEngineTest {
     }
 
     @Test
+    fun `cacheta trinca must have exactly three cards including wildcard`() {
+        val config = MatchConfig(gameType = GameType.CACHETA)
+        val turnCard = card(Rank.FOUR, Suit.SPADES)
+        val result = GameRulesEngine.validateMeld(
+            cards = listOf(
+                card(Rank.FIVE, Suit.HEARTS),
+                card(Rank.FIVE, Suit.DIAMONDS),
+                card(Rank.FIVE, Suit.CLUBS),
+                card(Rank.FIVE, Suit.SPADES)
+            ),
+            config = config,
+            cachetaTurnCard = turnCard
+        )
+
+        assertFalse(result.isValid)
+    }
+
+    @Test
+    fun `cacheta sequence can have four cards`() {
+        val config = MatchConfig(gameType = GameType.CACHETA)
+        val result = GameRulesEngine.validateMeld(
+            cards = listOf(
+                card(Rank.SEVEN, Suit.HEARTS),
+                card(Rank.EIGHT, Suit.HEARTS),
+                card(Rank.NINE, Suit.HEARTS),
+                card(Rank.TEN, Suit.HEARTS)
+            ),
+            config = config
+        )
+
+        assertTrue(result.reason, result.isValid)
+        assertEquals(MeldType.SEQUENCIA, result.meldType)
+    }
+
+    @Test
     fun `tranca black three in hand is penalized by 100 points`() {
         val score = GameRulesEngine.calculateBuracoTrancaScore(
             hand = listOf(card(Rank.THREE, Suit.SPADES), card(Rank.ACE, Suit.DIAMONDS)),
@@ -425,8 +560,8 @@ class GameRulesEngineTest {
             gameType = GameType.TRANCA
         )
         // 3 preto = 100 pts. Ace = 10 pts. total = 110 pts penalty.
-        assertEquals(110, score.handPenalty)
-        assertEquals(-110, score.totalRoundPoints)
+        assertEquals(115, score.handPenalty)
+        assertEquals(-115, score.totalRoundPoints)
     }
 
 }

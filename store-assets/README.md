@@ -1,34 +1,34 @@
-# Play Store assets
+# Assets da Play Store
 
-Generated assets for the first practical test/listing pass.
+Assets gerados para a primeira rodada de testes práticos e preparação da listagem.
 
-Required preview assets currently covered:
+Arquivos principais já cobertos:
 
-- `icon-512.png`: 512 x 512 PNG with alpha, for the Play Store app icon.
-- `feature-graphic-1024x500.png`: 1024 x 500 PNG without alpha, for the Play Store feature graphic.
-- `screenshots/*.png`: four 1920 x 1080 landscape PNG screenshots/mock captures for the game listing, including victory/ranking.
+- `icon-512.png`: PNG 512 x 512 com alpha, usado como ícone da Play Store.
+- `feature-graphic-1024x500.png`: PNG 1024 x 500 sem alpha, usado como gráfico de destaque.
+- `screenshots/*.png`: quatro imagens 1920 x 1080 em paisagem para a listagem, incluindo mesa, vitória e ranking.
 
-Asset generator:
+Geradores:
 
-- `../tools/generate_assets.py`: regenerates runtime app assets, launcher icons, Play Store icon, feature graphic, and screenshot mock captures from deterministic local drawing code.
-- `../tools/generate_store_assets.py`: legacy store-only generator kept for reference.
+- `../tools/generate_assets.py`: regenera assets do app, ícones, gráfico de destaque e imagens de divulgação.
+- `../tools/generate_store_assets.py`: gerador antigo, mantido apenas como referência.
 
-Suggested listing copy:
+Texto sugerido para a listagem:
 
 - App name: `Cacheta & Buraco`
 - Short description: `Jogue Cacheta, Buraco e Tranca em partidas de cartas locais.`
 - Full description draft:
 
 ```text
-Cacheta & Buraco e um jogo de cartas em desenvolvimento para partidas locais em modo paisagem.
+Cacheta & Buraco é um jogo de cartas em desenvolvimento para partidas locais em modo paisagem.
 
-Crie uma sala na rede local, escolha entre Cacheta, Buraco ou Tranca, defina partidas para 2 ou 4 jogadores e teste a experiencia de mesa com compra, descarte e jogos baixados.
+Crie uma sala na rede local, escolha entre Cacheta, Buraco ou Tranca, defina partidas para 2 ou 4 jogadores e teste a experiência de mesa com compra, descarte e jogos baixados.
 
-Esta primeira versao prioriza testes praticos da interface, fluxo de sala, ranking local, animacao de vitoria e base de regras.
+Esta primeira versão prioriza testes práticos da interface, fluxo de sala, ranking local, animação de vitória e base de regras.
 ```
 
-Before production release:
+Antes de publicar em produção:
 
-- Replace generated screenshot/mock captures with screenshots captured from a real device or emulator build.
-- Configure Play App Signing and a private upload keystore before generating the final release bundle.
-- Complete content rating, data safety, target audience, privacy policy if required, and closed/internal testing tracks in Play Console.
+- Trocar capturas simuladas por screenshots de um aparelho ou emulador real.
+- Configurar Play App Signing e uma chave privada de upload antes do bundle final.
+- Preencher classificação indicativa, segurança de dados, público-alvo, política de privacidade se for exigida, e trilhas de teste no Play Console.

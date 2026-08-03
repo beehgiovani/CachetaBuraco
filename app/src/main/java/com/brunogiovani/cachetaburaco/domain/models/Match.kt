@@ -13,9 +13,13 @@ enum class MatchMode { ONLINE, LOCAL_NETWORK }
 
 enum class PointsMode { FREE, CHIPS }
 
+enum class BotDifficulty { EASY, NORMAL, HARD }
+
 /**
- * Configuração imutável de uma partida.
- * Criada no Lobby e propagada para a MatchScreen via rede.
+ * Configuração fechada da partida.
+ *
+ * O lobby monta este pacote e a mesa recebe tudo pronto, seja no local, contra
+ * a máquina ou futuramente online.
  */
 data class MatchConfig(
     val gameType: GameType = GameType.CACHETA,
@@ -27,8 +31,10 @@ data class MatchConfig(
     val cachetaStartsWithDiscard: Boolean = false, // Vira fica separado; lixo começa zerado por padrão
     val requireCleanCanastraToWin: Boolean = true, // Buraco exige canastra limpa para bater
     val autoMeldTrancaRedThrees: Boolean = true, // Tranca baixa 3 vermelho automaticamente
+    val penalizeBlackThreesInHand: Boolean = true, // Tranca: 3 preto preso na mão pesa 100 pontos
     val autoSortHand: Boolean = true,           // Ordenar mão automaticamente
     val uniformCardPoints: Boolean = false,       // Tranca/Buraco: todas as cartas valem 10pts
+    val botDifficulty: BotDifficulty = BotDifficulty.NORMAL,
     val pointsMode: PointsMode = PointsMode.FREE,
     val pointLimit: Int = 1500                   // Limite de pontos para a partida acabar
 ) {
@@ -46,8 +52,10 @@ data class MatchConfig(
             cachetaStartsWithDiscard,
             requireCleanCanastraToWin,
             autoMeldTrancaRedThrees,
+            penalizeBlackThreesInHand,
             autoSortHand,
             uniformCardPoints,
+            botDifficulty,
             pointsMode,
             pointLimit
         ).joinToString(",")
@@ -57,6 +65,8 @@ data class MatchConfig(
         fun deserialize(serialized: String): MatchConfig {
             val parts = serialized.split(",")
             val defaults = MatchConfig()
+            val hasBlackThreePenalty = parts.size >= 15
+            val hasBotDifficulty = parts.size >= 14
             val hasExpandedRules = parts.size >= 13
             val hasCharutosField = parts.size >= 8 && !hasExpandedRules
 
@@ -99,8 +109,14 @@ data class MatchConfig(
                 } else {
                     defaults.autoMeldTrancaRedThrees
                 },
+                penalizeBlackThreesInHand = if (hasBlackThreePenalty) {
+                    parts.getOrNull(9)?.toBooleanStrictOrNull() ?: defaults.penalizeBlackThreesInHand
+                } else {
+                    defaults.penalizeBlackThreesInHand
+                },
                 autoSortHand = parts.getOrNull(
                     when {
+                        hasBlackThreePenalty -> 10
                         hasExpandedRules -> 9
                         hasCharutosField -> 5
                         else -> 4
@@ -108,12 +124,21 @@ data class MatchConfig(
                 )?.toBooleanStrictOrNull()
                     ?: defaults.autoSortHand,
                 uniformCardPoints = if (hasExpandedRules) {
-                    parts.getOrNull(10)?.toBooleanStrictOrNull() ?: defaults.uniformCardPoints
+                    parts.getOrNull(if (hasBlackThreePenalty) 11 else 10)?.toBooleanStrictOrNull() ?: defaults.uniformCardPoints
                 } else {
                     defaults.uniformCardPoints
                 },
+                botDifficulty = if (hasBotDifficulty) {
+                    parts.getOrNull(if (hasBlackThreePenalty) 12 else 11)
+                        ?.let { runCatching { BotDifficulty.valueOf(it) }.getOrNull() }
+                        ?: defaults.botDifficulty
+                } else {
+                    defaults.botDifficulty
+                },
                 pointsMode = parts.getOrNull(
                     when {
+                        hasBlackThreePenalty -> 13
+                        hasBotDifficulty -> 12
                         hasExpandedRules -> 11
                         hasCharutosField -> 6
                         else -> 5
@@ -123,6 +148,8 @@ data class MatchConfig(
                     ?: defaults.pointsMode,
                 pointLimit = parts.getOrNull(
                     when {
+                        hasBlackThreePenalty -> 14
+                        hasBotDifficulty -> 13
                         hasExpandedRules -> 12
                         hasCharutosField -> 7
                         else -> 6

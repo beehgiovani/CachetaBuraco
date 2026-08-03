@@ -10,11 +10,10 @@ import org.json.JSONObject
 import java.util.UUID
 
 /**
- * Repositório de autenticação local (guest mode).
- * Persiste o perfil em SharedPreferences para que o jogador não precise
- * se identificar toda vez que abrir o aplicativo.
+ * Perfil local do jogador.
  *
- * Futuramente substituído por autenticação real (Firebase Auth / OAuth).
+ * Por enquanto o app trabalha em modo convidado e guarda nome, ID e ranking local
+ * no próprio aparelho. Quando entrar login real, a troca fica concentrada aqui.
  */
 object FakeAuthRepository {
 
@@ -32,10 +31,7 @@ object FakeAuthRepository {
         val wins: Int
     )
 
-    /**
-     * Deve ser chamado na inicialização do app (MainActivity.onCreate)
-     * para carregar o perfil salvo automaticamente.
-     */
+    /** Carrega o perfil salvo logo na abertura do app. */
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         loadSavedProfile()
@@ -51,9 +47,9 @@ object FakeAuthRepository {
         }
     }
 
-    /** Login com nickname — cria um novo perfil (ID único) e persiste. */
+    /** Cria um perfil local com apelido e ID próprio. */
     suspend fun login(nickname: String): Player {
-        delay(400) // Simula latência mínima
+        delay(400) // Pequeno respiro para a transição da tela não ficar seca.
 
         val player = Player(
             id = UUID.randomUUID().toString(),

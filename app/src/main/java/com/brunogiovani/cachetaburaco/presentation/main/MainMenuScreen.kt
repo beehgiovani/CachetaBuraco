@@ -1,4 +1,4 @@
-package com.brunogiovani.cachetaburaco.presentation.main
+﻿package com.brunogiovani.cachetaburaco.presentation.main
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
@@ -93,14 +93,15 @@ fun MainMenuScreen(
                     .weight(1.1f)
                     .fillMaxHeight()
                     .background(ColorPanel, RoundedCornerShape(20.dp))
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)
             ) {
                 Image(
                     painter = painterResource(id = R.drawable.game_logo),
                     contentDescription = "Logo",
-                    modifier = Modifier.height(118.dp),
+                    modifier = Modifier.heightIn(min = 82.dp, max = 118.dp),
                     contentScale = ContentScale.Fit
                 )
                 Text(
@@ -110,7 +111,6 @@ fun MainMenuScreen(
                     fontWeight = FontWeight.SemiBold
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
                 if (hasSavedGame) {
                     MenuButton(
                         text = "Continuar Partida Salva",
@@ -118,7 +118,6 @@ fun MainMenuScreen(
                         color = Color(0xFFF57C00),
                         onClick = onResumeGame
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
                 }
                 // Cada botao entra em um transporte diferente, mas a partida em si
                 // continua usando MatchScreen + MatchViewModel.
@@ -128,21 +127,18 @@ fun MainMenuScreen(
                     color = ColorGreenLight,
                     onClick = onHostRoom
                 )
-                Spacer(modifier = Modifier.height(12.dp))
                 MenuButton(
-                    text = "Jogar contra a maquina",
+                    text = "Jogar contra a máquina",
                     subtitle = "Treine e teste regras sem outro celular",
                     color = Color(0xFF7B1FA2),
                     onClick = onPlayBot
                 )
-                Spacer(modifier = Modifier.height(12.dp))
                 MenuButton(
                     text = "Entrar em sala",
                     subtitle = "Procure partidas na mesma rede Wi-Fi",
                     color = ColorBlue,
                     onClick = onJoinRoom
                 )
-                Spacer(modifier = Modifier.height(18.dp))
                 Text(
                     text = "Partidas locais para testes práticos. Online fica preparado para evoluir depois.",
                     color = Color.White.copy(alpha = 0.48f),

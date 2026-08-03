@@ -28,13 +28,13 @@ enum class AppState { LOGIN, MAIN_MENU, LOBBY_HOST, LOBBY_CLIENT, LOBBY_BOT, MAT
 /**
  * Entrada principal e roteador simples de telas.
  *
- * Eu deixo a Activity escolhendo qual LocalNetworkRepository a partida usa:
+ * A Activity só escolhe qual transporte a partida vai usar:
  * - LocalNetworkRepositoryImpl para Wi-Fi/local;
- * - SoloBotNetworkRepository para jogar contra a maquina;
+ * - SoloBotNetworkRepository para jogar contra a máquina;
  * - futuramente OnlineNetworkRepository para servidor online.
  *
- * A regra importante e nao colocar logica de jogo aqui. A Activity so escolhe fluxo,
- * config ativa e transporte; quem manda na partida continua sendo MatchViewModel.
+ * Regra de jogo não entra aqui. A Activity escolhe fluxo, configuração ativa
+ * e transporte; quem manda na partida continua sendo o MatchViewModel.
  */
 class MainActivity : ComponentActivity() {
 
@@ -45,8 +45,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         hideSystemBars()
 
-        // ── Inicializa o repositório de autenticação com o contexto ───────────
-        // Carrega automaticamente o perfil salvo nas SharedPreferences.
+        // Carrega o perfil salvo antes de decidir qual tela abrir.
         FakeAuthRepository.init(applicationContext)
 
         networkRepository = LocalNetworkRepositoryImpl(applicationContext)
@@ -67,8 +66,8 @@ class MainActivity : ComponentActivity() {
                     var isHosting by remember { mutableStateOf(false) }
                     var activeConfig by remember { mutableStateOf(MatchConfig()) }
                     val botRepository = remember { SoloBotNetworkRepository() }
-                    // Este repositorio ativo e a "tomada" da mesa. Trocando ele, eu troco
-                    // local/bot/online sem duplicar MatchScreen nem MatchViewModel.
+                    // Este repositório ativo é a tomada da mesa: local, máquina
+                    // e online podem trocar por aqui sem duplicar tela ou regra.
                     var activeRepository by remember { mutableStateOf<LocalNetworkRepository>(networkRepository) }
 
                     when (currentScreen) {

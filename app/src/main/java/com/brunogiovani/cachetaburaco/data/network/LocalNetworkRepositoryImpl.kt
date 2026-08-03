@@ -32,12 +32,12 @@ import java.util.concurrent.Executors
 /**
  * Transporte de rede local via NSD + socket TCP.
  *
- * Eu mantenho esta classe focada apenas em conexao local: anunciar sala, descobrir
- * salas na rede, manter socket aberto, enviar JSON e transformar linhas recebidas
- * em NetworkMessage. Nenhuma regra de Cacheta/Buraco/Tranca deve entrar aqui.
+ * Esta classe cuida só da parte de conexão: anunciar sala, descobrir mesas na rede,
+ * manter socket aberto, enviar JSON e transformar linhas recebidas em NetworkMessage.
+ * Regra de Cacheta, Buraco e Tranca fica fora daqui.
  *
- * Quando o online chegar, ele deve nascer em outra implementation da interface,
- * reaproveitando o mesmo protocolo de mensagens para nao quebrar o MatchViewModel.
+ * Quando entrar o online, ele deve nascer em outra implementação da interface,
+ * reaproveitando o mesmo protocolo para não quebrar o MatchViewModel.
  */
 class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRepository {
 
@@ -53,8 +53,7 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
     private val _connectedClientsCount = MutableStateFlow(0)
     override val connectedClientsCount: StateFlow<Int> = _connectedClientsCount.asStateFlow()
 
-    // SharedFlow com extraBufferCapacity para não descartar mensagens
-    // quando chegam em rajada (ex: DISCARD + REQ_PICK_MORTO no mesmo frame)
+    // Buffer extra para rajadas do mesmo turno, como DISCARD + REQ_PICK_MORTO.
     private val _incomingMessages = MutableSharedFlow<NetworkMessage>(extraBufferCapacity = 64)
     override val incomingMessages: SharedFlow<NetworkMessage> = _incomingMessages.asSharedFlow()
 

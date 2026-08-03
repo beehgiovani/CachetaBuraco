@@ -7,17 +7,17 @@ import com.brunogiovani.cachetaburaco.domain.models.Rank
 import com.brunogiovani.cachetaburaco.domain.models.Suit
 
 /**
- * Motor central de regras do jogo.
- * Aplica as validações corretas baseado no [MatchConfig].
- * Sem dependência de Framework (Clean Architecture - Domain Layer).
+ * Fonte única das regras de Cacheta, Buraco e Tranca.
+ *
+ * Mantive este motor sem Compose, Context ou rede para reaproveitar a mesma
+ * validação no jogo local, contra a máquina e no online depois.
  */
 object GameRulesEngine {
 
-    // Eu deixo as regras aqui para nao misturar UI, rede e regra de jogo.
-    // Toda variacao de Cacheta, Buraco e Tranca deve passar pelo MatchConfig.
-    // Quando o online chegar, o servidor pode reutilizar este motor sem Compose/Android.
+    // Toda variação configurável passa pelo MatchConfig. Se uma regra de mesa
+    // mudar, a alteração entra aqui antes de chegar na UI.
 
-    // ─── Compra do Lixo ──────────────────────────────────────────────────────
+    // Compra do lixo.
 
     data class DrawDiscardResult(
         val allowed: Boolean,
@@ -31,8 +31,8 @@ object GameRulesEngine {
         topDiscard: Card?,
         config: MatchConfig
     ): DrawDiscardResult {
-        // Esta funcao responde apenas "pode comprar o topo do lixo?".
-        // A obrigacao de usar essa carta em Buraco/Tranca fica em outro passo.
+        // Esta função responde apenas "pode comprar o topo do lixo?".
+        // A obrigação de usar essa carta em Buraco/Tranca fica em outro passo.
         if (topDiscard == null) return DrawDiscardResult(false, "Lixo vazio")
         if (!config.allowDrawFromDiscard) return DrawDiscardResult(false, "Compra do lixo desabilitada nesta sala")
 
@@ -62,7 +62,7 @@ object GameRulesEngine {
         }
     }
 
-    // ─── Validação de Baixar Cartas ──────────────────────────────────────────
+    // --- Validação de Baixar Cartas ------------------------------------------
 
     data class MeldValidationResult(
         val isValid: Boolean,
@@ -82,8 +82,8 @@ object GameRulesEngine {
     ): MeldValidationResult {
         if (cards.size < 3) return MeldValidationResult(false, reason = "Mínimo 3 cartas")
 
-        // Toda baixada/encaixe passa por aqui. Se uma regra mudar por modo ou sala,
-        // eu altero neste ponto e todos os transportes herdam o mesmo comportamento.
+        // Toda baixada/encaixe passa por aqui. Assim a tela, o bot e a rede
+        // obedecem a mesma regra, sem cada um inventar sua própria validação.
         val wildcards = getMeldWildcards(cards, config, cachetaTurnCard)
         val normalCards = cards.filter { it !in wildcards }
 
@@ -99,8 +99,12 @@ object GameRulesEngine {
         wildcards: List<Card>,
         config: MatchConfig
     ): MeldValidationResult {
-        // Cacheta aceita Trinca OU Sequência
-        val trincaResult = checkTrinca(normalCards, wildcards)
+        if (wildcards.size > 1) {
+            return MeldValidationResult(false, reason = "Na Cacheta, cada jogo aceita apenas um coringa")
+        }
+
+        // Cacheta aceita trinca exata de 3 cartas ou sequência do mesmo naipe.
+        val trincaResult = checkTrinca(normalCards, wildcards, exactSize = 3)
         if (trincaResult.isValid) {
             val allSuitsUnique = normalCards.distinctBy { it.suit }.size == normalCards.size
             if (allSuitsUnique) return trincaResult
@@ -176,13 +180,20 @@ object GameRulesEngine {
 
     // ─── Checagens Internas ──────────────────────────────────────────────────
 
-    private fun checkTrinca(normalCards: List<Card>, wildcards: List<Card>): MeldValidationResult {
+    private fun checkTrinca(
+        normalCards: List<Card>,
+        wildcards: List<Card>,
+        exactSize: Int? = null
+    ): MeldValidationResult {
         if (normalCards.isEmpty()) return MeldValidationResult(false)
 
         val allSameRank = normalCards.distinctBy { it.rank }.size == 1
         if (!allSameRank) return MeldValidationResult(false)
 
         val totalCards = normalCards.size + wildcards.size
+        if (exactSize != null && totalCards != exactSize) {
+            return MeldValidationResult(false, reason = "Trinca precisa ter exatamente $exactSize cartas")
+        }
 
         if (totalCards >= 3) {
             return MeldValidationResult(true, MeldType.TRINCA)
@@ -239,7 +250,7 @@ object GameRulesEngine {
         }
     }
 
-    // ─── Condição de Vitória ─────────────────────────────────────────────────
+    // --- Condição de Vitória -------------------------------------------------
 
     data class WinCheckResult(val canWin: Boolean, val reason: String = "")
 
@@ -288,7 +299,7 @@ object GameRulesEngine {
         }
     }
 
-    // ─── Ordenação da Mão e Mesa ─────────────────────────────────────────────
+    // --- Ordenação da Mão e Mesa ---------------------------------------------
 
     /**
      * Ordena um jogo baixado (meld) colocando curingas nas posições corretas (buracos) na sequência.
@@ -494,7 +505,15 @@ object GameRulesEngine {
         val handPenalty: Int,
         val winBonus: Int,
         val mortoPenalty: Int,
-        val totalRoundPoints: Int
+        val totalRoundPoints: Int,
+        val tableCardCount: Int = 0,
+        val handCardCount: Int = 0,
+        val cleanCanastras: Int = 0,
+        val dirtyCanastras: Int = 0,
+        val redThreesOnTable: Int = 0,
+        val redThreePoints: Int = 0,
+        val blackThreesInHand: Int = 0,
+        val blackThreePenalty: Int = 0
     )
 
     fun calculateBuracoTrancaScore(
@@ -503,11 +522,18 @@ object GameRulesEngine {
         hasMorto: Boolean, // true se não pegou o morto
         didWin: Boolean,
         gameType: GameType,
-        uniformCardPoints: Boolean = false
+        uniformCardPoints: Boolean = false,
+        penalizeBlackThreesInHand: Boolean = true
     ): ScoreBreakdown {
         var tablePoints = 0
         var canastraPoints = 0
         var handPenalty = 0
+        var tableCardCount = 0
+        var cleanCanastras = 0
+        var dirtyCanastras = 0
+        var redThreePoints = 0
+        var blackThreesInHand = 0
+        var blackThreePenalty = 0
         val winBonus = if (didWin) 100 else 0
         val mortoPenalty = if (hasMorto) -100 else 0
         val hasCanastra = tableMelds.any { it.size >= 7 }
@@ -519,8 +545,10 @@ object GameRulesEngine {
             if (meld.size >= 7) {
                 val wildcards = getWildcards(meld, gameType)
                 if (wildcards.isEmpty()) {
+                    cleanCanastras++
                     canastraPoints += 200 // Limpa
                 } else {
+                    dirtyCanastras++
                     canastraPoints += 100 // Suja
                 }
             }
@@ -530,19 +558,26 @@ object GameRulesEngine {
                 if (gameType == GameType.TRANCA && isRedThree(card)) {
                     trancaRedThreesOnTable++
                 } else {
-                    tablePoints += getCardPointsValue(card, gameType, uniformCardPoints)
+                    tableCardCount++
+                    tablePoints += getCardPointsValue(card, gameType, uniformCardPoints, penalizeBlackThreesInHand)
                 }
             }
         }
 
         // 2. Penalidade das cartas na mão
         if (gameType == GameType.TRANCA && trancaRedThreesOnTable > 0) {
-            val redThreePoints = if (trancaRedThreesOnTable == 4) 800 else trancaRedThreesOnTable * 100
+            redThreePoints = if (trancaRedThreesOnTable == 4) 800 else trancaRedThreesOnTable * 100
             tablePoints += if (hasCanastra) redThreePoints else -redThreePoints
+            if (!hasCanastra) redThreePoints = -redThreePoints
         }
 
         for (card in hand) {
-            handPenalty += getCardPointsValue(card, gameType, uniformCardPoints)
+            val value = getCardPointsValue(card, gameType, uniformCardPoints, penalizeBlackThreesInHand)
+            handPenalty += value
+            if (gameType == GameType.TRANCA && isBlackThree(card)) {
+                blackThreesInHand++
+                blackThreePenalty += value
+            }
         }
 
         val total = tablePoints + canastraPoints + winBonus + mortoPenalty - handPenalty
@@ -552,20 +587,33 @@ object GameRulesEngine {
             handPenalty = handPenalty,
             winBonus = winBonus,
             mortoPenalty = mortoPenalty,
-            totalRoundPoints = total
+            totalRoundPoints = total,
+            tableCardCount = tableCardCount,
+            handCardCount = hand.count { !(gameType == GameType.TRANCA && isRedThree(it)) },
+            cleanCanastras = cleanCanastras,
+            dirtyCanastras = dirtyCanastras,
+            redThreesOnTable = trancaRedThreesOnTable,
+            redThreePoints = redThreePoints,
+            blackThreesInHand = blackThreesInHand,
+            blackThreePenalty = blackThreePenalty
         )
     }
 
-    private fun getCardPointsValue(card: Card, gameType: GameType, uniformCardPoints: Boolean = false): Int {
+    private fun getCardPointsValue(
+        card: Card,
+        gameType: GameType,
+        uniformCardPoints: Boolean = false,
+        penalizeBlackThreesInHand: Boolean = true
+    ): Int {
         if (card.isJoker) return if (uniformCardPoints) 10 else 20
         if (gameType == GameType.TRANCA) {
             if (card.rank == Rank.THREE && (card.suit == Suit.SPADES || card.suit == Suit.CLUBS)) {
-                return 100
+                return if (penalizeBlackThreesInHand) 100 else if (uniformCardPoints) 10 else 5
             }
             if (card.rank == Rank.THREE && (card.suit == Suit.HEARTS || card.suit == Suit.DIAMONDS)) {
                 return 100
             }
-            return 10
+            if (uniformCardPoints) return 10
         }
         if (uniformCardPoints) return 10
         if (card.rank == Rank.TWO && gameType == GameType.BURACO) return 10
@@ -579,5 +627,9 @@ object GameRulesEngine {
 
     private fun isRedThree(card: Card): Boolean {
         return card.rank == Rank.THREE && (card.suit == Suit.HEARTS || card.suit == Suit.DIAMONDS)
+    }
+
+    private fun isBlackThree(card: Card): Boolean {
+        return card.rank == Rank.THREE && (card.suit == Suit.SPADES || card.suit == Suit.CLUBS)
     }
 }

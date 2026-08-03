@@ -20,7 +20,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-// --- Fases do turno ---
+// Fases simples do turno: esperando o outro jogador, comprando ou jogando.
 enum class TurnPhase {
     WAITING_OPPONENT,
     DRAW,
@@ -38,7 +38,9 @@ data class RoundEndDetails(
     val teamScores: List<Int> = emptyList(),
     val winnerTeam: Int? = null,
     /** Índice absoluto de equipe (0 ou 1) do jogador local neste dispositivo. */
-    val localTeam: Int = 0
+    val localTeam: Int = 0,
+    val myLabel: String = "Você",
+    val opponentLabel: String = "Oponente"
 )
 
 private data class RoundSeatReport(
@@ -48,8 +50,8 @@ private data class RoundSeatReport(
     val tableMelds: List<List<Card>>
 )
 
-// Estado da mesa que a UI observa.
-// Eu mantenho tudo que a tela precisa aqui para evitar busca solta em camada de rede.
+// Estado único observado pela tela. A ideia é deixar a UI só desenhar a mesa,
+// sem precisar procurar regra ou dado privado em outra camada.
 data class GameState(
     val myHand: List<Card> = emptyList(),
     val selectedCards: Set<Card> = emptySet(),
@@ -77,21 +79,21 @@ data class GameState(
     val pendingMeldTargets: List<Int>? = null,
     val lastDrawnCardId: String? = null,
     val opponentPickedMorto: Boolean = false,
-    val showRestartMatchDialog: Boolean = false
+    val showRestartMatchDialog: Boolean = false,
+    val myLabel: String = "Você",
+    val opponentLabel: String = "Oponente"
 )
 
 /**
- * Orquestrador oficial de uma partida.
+ * Coração da partida.
  *
- * Eu concentro aqui o estado da mesa, as acoes do jogador e o protocolo de
- * mensagens. O host e autoritativo: distribui cartas, controla mortos, valida
- * pedidos privados e consolida placar. Cliente, bot e futuro online devem falar
- * com este ViewModel por NetworkMessage, sem duplicar regra em UI ou transporte.
+ * O host é quem manda oficialmente na mesa: distribui cartas, guarda o monte real,
+ * controla mortos, fecha placar e valida os pedidos privados dos clientes. Cliente
+ * e máquina passam pelo mesmo protocolo de NetworkMessage, para o modo online poder
+ * entrar depois sem regra duplicada espalhada pela UI.
  *
- * Para o online depois:
- * - o servidor pode assumir o papel de host autoritativo;
- * - LocalNetworkRepository pode virar OnlineNetworkRepository;
- * - GameRulesEngine continua sendo a fonte unica das regras.
+ * Quando o online chegar, a troca principal deve ser no transporte/autorizador.
+ * O motor de regras continua sendo o GameRulesEngine.
  */
 class MatchViewModel(
     private val networkRepository: LocalNetworkRepository,
@@ -105,7 +107,8 @@ class MatchViewModel(
         myScore = if (config.gameType == GameType.CACHETA) config.pointLimit else 0,
         opponentScore = if (config.gameType == GameType.CACHETA) config.pointLimit else 0,
         teamScores = initialTeamScores(config),
-        config = config
+        config = config,
+        opponentLabel = if (isMachineMatch()) "Máquina" else "Oponente"
     ))
     val gameState: StateFlow<GameState> = _gameState.asStateFlow()
 
@@ -115,9 +118,8 @@ class MatchViewModel(
     private val remoteHandsBySeat = mutableMapOf<Int, List<Card>>()
     private val remotePlayerSeats = mutableMapOf<String, Int>()
 
-    // Deck gerenciado apenas pelo Host
-    // No online, este bloco deve morar no servidor/host autoritativo. Cliente
-    // nunca deve conhecer masterDeck nem mortos completos antes de receber.
+    // Só o host conhece o monte e os mortos completos.
+    // Cliente recebe carta servida; isso evita mão duplicada e já prepara o online.
     private var masterDeck = mutableListOf<Card>()
     private var mortos = mutableListOf<List<Card>>()
     private val teamsThatPickedMorto = mutableSetOf<Int>()
@@ -129,9 +131,37 @@ class MatchViewModel(
     private var pendingCountOnlyRound: Boolean = false
     private var pendingMortoPickupIsIndirect: Boolean = false
     private var pendingDiscardDrawCardId: String? = null
+    private var pendingDiscardDrawRest: List<Card> = emptyList()
     private val processedNetworkMessageIds = linkedSetOf<String>()
 
-    // Cache para resolver ‘IDs’ de cartas recebidas via rede
+    private fun isMachineMatch(): Boolean {
+        return networkRepository::class.simpleName == "SoloBotNetworkRepository"
+    }
+
+    private fun opponentDisplayLabel(): String = if (isMachineMatch()) "Máquina" else "Oponente"
+
+    private fun teamDisplayLabel(team: Int, localTeam: Int): String {
+        return if (team == localTeam) "Seu lado" else "Lado ${opponentDisplayLabel().lowercase()}"
+    }
+
+    private fun seatDisplayLabel(seat: Int, localSeat: Int): String {
+        if (seat == localSeat) return "Você"
+        return if (teamForSeat(seat) == teamForSeat(localSeat)) "Seu parceiro" else opponentDisplayLabel()
+    }
+
+    private fun clearRoundEndUiState(state: GameState = _gameState.value): GameState {
+        return state.copy(
+            selectedCards = emptySet(),
+            pendingMeldTargets = null,
+            lastDrawnCardId = null,
+            lastMeldResult = "",
+            showRoundEndDialog = false,
+            roundEndDetails = null,
+            showRestartMatchDialog = false
+        )
+    }
+
+    // Mapa rápido para transformar IDs recebidos pela rede em cartas reais.
     private val allCardsMap: Map<String, Card> by lazy {
         DeckFactory.createDecks(2, includeJokers = false).associateBy { it.id }
     }
@@ -143,9 +173,9 @@ class MatchViewModel(
                 handleNetworkMessage(message)
             }
         }
-        // Observe state changes and persist snapshot for reconnection
-        // Não salva snapshot durante o dialog de fim de rodada para não
-        // sobrescrever pontos com estado vazio antes da próxima rodada
+        // Snapshot local para recuperar queda/reabertura.
+        // Durante o diálogo de fim de rodada eu não salvo, para não gravar
+        // uma mesa limpa antes da próxima distribuição.
         viewModelScope.launch {
             _gameState.collect { state ->
                 if (!state.showRoundEndDialog &&
@@ -157,7 +187,7 @@ class MatchViewModel(
         }
     }
 
-    // --- Inicio do jogo ---
+    // --- Início do jogo ---
 
     /**
      * Inicia a partida a partir do lobby, configurando o estado inicial de acordo com as regras (Cacheta, Buraco ou Tranca).
@@ -171,8 +201,14 @@ class MatchViewModel(
         deckServedSeatsThisTurn.clear()
         remoteHandsBySeat.clear()
         remotePlayerSeats.clear()
+        pendingRoundReports.clear()
+        pendingWinnerId = null
+        pendingWinnerTeam = null
+        pendingCountOnlyRound = false
+        restartMatchApprovals.clear()
         pendingMortoPickupIsIndirect = false
         pendingDiscardDrawCardId = null
+        pendingDiscardDrawRest = emptyList()
         masterDeck = DeckFactory.createDecks(2, includeJokers = false).toMutableList()
 
         val myCards = dealCards(currentConfig.cardsPerPlayer, isInitialDeal = true)
@@ -247,11 +283,9 @@ class MatchViewModel(
         }
     }
 
-    // --- Acoes do jogador ---
+    // --- Ações do jogador ---
 
-    /**
-     * Ação do jogador: Puxa uma carta do monte (Deck). Se for o Host, processa diretamente; se for Client, solicita ao Host.
-     */
+    /** Compra uma carta do monte. Cliente sempre pede ao host; host processa na hora. */
     fun drawFromDeck() {
         var state = _gameState.value
         if (state.turnPhase != TurnPhase.DRAW) return
@@ -261,6 +295,7 @@ class MatchViewModel(
                 return
             }
             pendingDiscardDrawCardId = null
+            pendingDiscardDrawRest = emptyList()
             state = _gameState.value
             val card = drawTopCard() ?: return
             val newHand = sortHandIfEnabled(state.myHand + card)
@@ -277,6 +312,7 @@ class MatchViewModel(
             networkRepository.sendMessage(NetworkMessage(playerId, "DRAW_DECK", card.id))
         } else if (!isHost) {
             pendingDiscardDrawCardId = null
+            pendingDiscardDrawRest = emptyList()
             // Cliente pede ao host para comprar
             _gameState.value = state.copy(
                 turnPhase = TurnPhase.WAITING_OPPONENT,
@@ -306,9 +342,6 @@ class MatchViewModel(
         }
     }
 
-    /**
-     * Método responsável pela funcionalidade: recycleCachetaDiscardAsDeck
-     */
     private fun recycleCachetaDiscardAsDeck(state: GameState): Boolean {
         val topDiscard = state.discardPile.lastOrNull()
         val cardsToRecycle = state.discardPile.dropLast(1)
@@ -329,9 +362,6 @@ class MatchViewModel(
         return true
     }
 
-    /**
-     * Método responsável pela funcionalidade: useMortoAsDeckIfAvailable
-     */
     private fun useMortoAsDeckIfAvailable(state: GameState): Boolean {
         if (mortos.isEmpty()) {
             _gameState.value = state.copy(
@@ -352,9 +382,7 @@ class MatchViewModel(
         return true
     }
 
-    /**
-     * Ação do jogador: Puxa carta(s) do lixo (Discard Pile). Verifica regras de tranca e justificativa de compra antes de autorizar.
-     */
+    /** Compra do lixo respeitando a regra de cada modo e a carta obrigatória de Buraco/Tranca. */
     fun drawFromDiscard() {
         val state = _gameState.value
         if (state.turnPhase != TurnPhase.DRAW) return
@@ -377,28 +405,20 @@ class MatchViewModel(
             )
             if (!canJustify) {
                 _gameState.value = state.copy(
-                    feedbackMessage = "Voce nao pode comprar do lixo: a carta nao forma um jogo novo nem encaixa nos existentes!"
+                    feedbackMessage = "Você não pode comprar do lixo: a carta não forma jogo novo nem encaixa nos existentes!"
                 )
                 return
             }
         }
 
-        // Determina cartas compradas (lixo inteiro no Buraco/Tranca, só o topo na Cacheta)
-        val drawnCards = if (currentConfig.gameType == GameType.CACHETA) {
-            listOf(topCard)
-        } else {
-            state.discardPile
-        }
-
-        val newPile = if (currentConfig.gameType == GameType.CACHETA) {
-            state.discardPile.dropLast(1)
-        } else {
-            emptyList()
-        }
+        val restOfDiscard = state.discardPile.dropLast(1)
+        val drawnCards = listOf(topCard)
+        val newPile = if (currentConfig.gameType == GameType.CACHETA) emptyList() else restOfDiscard
 
         val newHand = sortHandIfEnabled(state.myHand + drawnCards)
         val (processedHand, newMelds) = autoProcessThreeReds(newHand, state.myTableMelds)
         pendingDiscardDrawCardId = if (mustJustifyDiscardDraw) topCard.id else null
+        pendingDiscardDrawRest = if (mustJustifyDiscardDraw) restOfDiscard else emptyList()
 
         _gameState.value = state.copy(
             myHand = processedHand,
@@ -459,11 +479,11 @@ class MatchViewModel(
             }
 
             if (eligibleTargets.size > 1) {
-                // Múltiplos jogos válidos, ou pode criar jogo: exibe dialog
+                // Múltiplos jogos válidos, ou pode criar jogo: abre diálogo
                 _gameState.value = state.copy(pendingMeldTargets = eligibleTargets)
                 return
             } else if (eligibleTargets.size == 1 && isValidAsNew) {
-                // Um jogo válido + novo jogo válido: exibe dialog para escolha
+                // Um jogo válido + novo jogo válido: abre diálogo para escolha
                 _gameState.value = state.copy(pendingMeldTargets = eligibleTargets)
                 return
             } else if (eligibleTargets.size == 1) {
@@ -476,6 +496,17 @@ class MatchViewModel(
         }
 
         val isNewMeld = appendTargetIndex < 0
+        if (currentConfig.gameType == GameType.CACHETA && !isNewMeld) {
+            val targetMeld = state.myTableMelds[appendTargetIndex]
+            val targetType = GameRulesEngine.validateMeld(targetMeld, currentConfig, state.turnCard).meldType
+            if (targetType == GameRulesEngine.MeldType.TRINCA) {
+                _gameState.value = state.copy(
+                    lastMeldResult = "Na Cacheta, trinca fica fechada com exatamente 3 cartas",
+                    pendingMeldTargets = null
+                )
+                return
+            }
+        }
         val result = if (!isNewMeld) {
             val targetMeld = state.myTableMelds[appendTargetIndex]
             GameRulesEngine.validateMeld(targetMeld + selected, currentConfig, state.turnCard)
@@ -500,13 +531,25 @@ class MatchViewModel(
             return
         }
 
-        val updatedHand = state.myHand.filter { it !in selected }
-        val updatedMelds = if (!isNewMeld) {
+        var updatedHand = state.myHand.filter { it !in selected }
+        var updatedMelds = if (!isNewMeld) {
             state.myTableMelds.mapIndexed { index, meld ->
                 if (index == appendTargetIndex) GameRulesEngine.sortMeld(meld + selected, currentConfig, state.turnCard) else meld
             }
         } else {
             state.myTableMelds + listOf(GameRulesEngine.sortMeld(selected, currentConfig, state.turnCard))
+        }
+        val releasedDiscardRest = pendingDiscardDrawRest
+        if (pendingDiscardCard != null && releasedDiscardRest.isNotEmpty()) {
+            val handWithRest = sortHandIfEnabled(updatedHand + releasedDiscardRest)
+            val processed = autoProcessThreeReds(handWithRest, updatedMelds)
+            updatedHand = processed.first
+            updatedMelds = processed.second
+        }
+        val discardPileAfterMeld = if (pendingDiscardCard != null && currentConfig.gameType != GameType.CACHETA) {
+            emptyList()
+        } else {
+            state.discardPile
         }
         val publicMeld = if (!isNewMeld) updatedMelds[appendTargetIndex] else selected
         val replaceMeldIndex = if (!isNewMeld) appendTargetIndex else -1
@@ -520,6 +563,7 @@ class MatchViewModel(
 
         // Reseta estados temporários de compra/escolha
         pendingDiscardDrawCardId = null
+        pendingDiscardDrawRest = emptyList()
         var finalHand = updatedHand
         var mortosLeft = state.mortosLeft
         var feedback = "Jogo baixado! $meldLabel"
@@ -530,6 +574,7 @@ class MatchViewModel(
                 _gameState.value = state.copy(
                     myHand = finalHand,
                     myTableMelds = updatedMelds,
+                    discardPile = discardPileAfterMeld,
                     selectedCards = emptySet(),
                     mortosLeft = mortosLeft,
                     lastMeldResult = meldLabel,
@@ -551,7 +596,7 @@ class MatchViewModel(
                 networkRepository.sendMessage(NetworkMessage(playerId, "PICK_MORTO", buildMortosLeftPayload(mortosLeft, localSeat)))
             }
         } else if (finalHand.isEmpty()) {
-            // Mão vazia e sem morto para pegar → verificar vitória ou contagem
+            // Mão vazia e sem morto para pegar: verificar vitória ou contagem
             networkRepository.sendMessage(
                 NetworkMessage(playerId, "MELD", buildMeldPayload(publicMeld, localSeat, replaceMeldIndex))
             )
@@ -560,10 +605,11 @@ class MatchViewModel(
                 _gameState.value = state.copy(
                     myHand = finalHand,
                     myTableMelds = updatedMelds,
+                    discardPile = discardPileAfterMeld,
                     selectedCards = emptySet(),
                     mortosLeft = mortosLeft,
                     lastMeldResult = "🏆 Bateu!",
-                    feedbackMessage = "🏆 VOCÊ BATEU A CACHETA!",
+                    feedbackMessage = "🏆 Você bateu a Cacheta!",
                     pendingMeldTargets = null
                 )
                 triggerWinFlow(finalHand)
@@ -579,18 +625,20 @@ class MatchViewModel(
                     _gameState.value = state.copy(
                         myHand = finalHand,
                         myTableMelds = updatedMelds,
+                        discardPile = discardPileAfterMeld,
                         selectedCards = emptySet(),
                         mortosLeft = mortosLeft,
                         lastMeldResult = "🏆 Bateu!",
-                        feedbackMessage = "🏆 VOCÊ BATEU!",
+                        feedbackMessage = "🏆 Você bateu!",
                         pendingMeldTargets = null
                     )
                     triggerWinFlow(finalHand)
                 } else {
-                    // Sem condições de bater, mas mão vazia → encerrar por contagem
+                    // Sem condições de bater, mas mão vazia: encerrar por contagem
                     _gameState.value = state.copy(
                         myHand = finalHand,
                         myTableMelds = updatedMelds,
+                        discardPile = discardPileAfterMeld,
                         selectedCards = emptySet(),
                         mortosLeft = mortosLeft,
                         lastMeldResult = meldLabel,
@@ -606,6 +654,7 @@ class MatchViewModel(
         _gameState.value = state.copy(
             myHand = finalHand,
             myTableMelds = updatedMelds,
+            discardPile = discardPileAfterMeld,
             selectedCards = emptySet(),
             mortosLeft = mortosLeft,
             lastMeldResult = meldLabel,
@@ -617,14 +666,18 @@ class MatchViewModel(
         ))
     }
 
-    /**
-     * Descarta uma carta selecionada. Também é responsável por verificar se o jogador bateu ou se deve pegar o morto.
-     */
+    /** Descarta a carta e fecha o turno, incluindo bater ou pegar morto quando a mão zera. */
     fun discardCard(card: Card) {
         val state = _gameState.value
         if (state.turnPhase != TurnPhase.ACTION) return
         if (pendingDiscardDrawCardId != null && state.myHand.any { it.id == pendingDiscardDrawCardId }) {
             _gameState.value = state.copy(feedbackMessage = "Baixe ou encaixe a carta comprada do lixo antes de descartar.")
+            return
+        }
+        if (!canDiscardWildcardNow(card, state)) {
+            _gameState.value = state.copy(
+                feedbackMessage = "Use esse coringa/2 em um jogo antes de descartar. Só descarte se não houver outra carta ou se ele não encaixar."
+            )
             return
         }
 
@@ -645,7 +698,7 @@ class MatchViewModel(
         var feedback = "Turno do oponente."
 
         if (winCheck.canWin) {
-            feedback = "🏆 VOCÊ GANHOU A RODADA!"
+            feedback = "🏆 Você ganhou a rodada!"
             triggerWinFlow(updatedHand)
         } else if (finalHand.isEmpty() && state.mortosLeft > 0 && !teamsThatPickedMorto.contains(teamForSeat(localSeat))) {
             if (!isHost) {
@@ -725,10 +778,10 @@ class MatchViewModel(
         _gameState.value = _gameState.value.copy(lastMeldResult = "")
     }
 
-    // --- Fluxo de pontuacao ---
+    // --- Fluxo de pontuação ---
 
     /**
-     * Inicia o fluxo de vitória da rodada para o jogador local.
+     * Dispara o fechamento da rodada quando o jogador local bate.
      */
     private fun triggerWinFlow(myRemainingHand: List<Card>) {
         val state = _gameState.value
@@ -747,9 +800,6 @@ class MatchViewModel(
         networkRepository.sendMessage(NetworkMessage(playerId, "WIN_ROUND", payload))
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleOpponentWinRound
-     */
     private fun handleOpponentWinRound(payload: String) {
         val winnerReport = parseRoundReportPayload(payload) ?: return
         if (isHost) {
@@ -769,9 +819,6 @@ class MatchViewModel(
         networkRepository.sendMessage(NetworkMessage(playerId, "REPLY_WIN_ROUND", buildRoundReportPayload(myReport)))
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleReplyWinRound
-     */
     private fun handleReplyWinRound(opponentHandIds: String) {
         if (!isHost) return
 
@@ -780,9 +827,6 @@ class MatchViewModel(
         tryFinalizePendingRoundSummary()
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleCountRoundRequest
-     */
     private fun handleCountRoundRequest() {
         val state = _gameState.value
         val report = RoundSeatReport(
@@ -795,9 +839,6 @@ class MatchViewModel(
         _gameState.value = state.copy(feedbackMessage = "Rodada encerrada por falta de cartas. Aguardando contagem...")
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleReplyCountRound
-     */
     private fun handleReplyCountRound(payload: String) {
         if (!isHost) return
 
@@ -806,9 +847,6 @@ class MatchViewModel(
         tryFinalizePendingRoundSummary()
     }
 
-    /**
-     * Método responsável pela funcionalidade: beginPendingRoundSummary
-     */
     private fun beginPendingRoundSummary(winnerId: String, winnerReport: RoundSeatReport) {
         pendingRoundReports.clear()
         pendingWinnerId = winnerId
@@ -829,9 +867,6 @@ class MatchViewModel(
         tryFinalizePendingRoundSummary()
     }
 
-    /**
-     * Método responsável pela funcionalidade: beginCountOnlyRound
-     */
     private fun beginCountOnlyRound() {
         if (!isHost) return
         val state = _gameState.value
@@ -853,9 +888,6 @@ class MatchViewModel(
         tryFinalizePendingRoundSummary()
     }
 
-    /**
-     * Método responsável pela funcionalidade: tryFinalizePendingRoundSummary
-     */
     private fun tryFinalizePendingRoundSummary() {
         val winnerId = pendingWinnerId ?: return
         val winnerTeam = pendingWinnerTeam ?: return
@@ -871,6 +903,11 @@ class MatchViewModel(
             teamRoundScores[opposingTeam(winnerTeam)] = -1
             breakdownLines += "Equipe [TEAM_${opposingTeam(winnerTeam)}] perdeu 1 vida."
         } else {
+            breakdownLines += if (currentConfig.uniformCardPoints) {
+                "Pontuação das cartas: uniforme, 10 pontos por carta."
+            } else {
+                "Pontuação das cartas: por valor da carta."
+            }
             repeat(teamRoundScores.size) { team ->
                 val teamMelds = uniqueTableMeldsForTeam(reports, team)
                 val tableScore = GameRulesEngine.calculateBuracoTrancaScore(
@@ -879,10 +916,15 @@ class MatchViewModel(
                     hasMorto = false,
                     didWin = false,
                     gameType = currentConfig.gameType,
-                    uniformCardPoints = currentConfig.uniformCardPoints
+                    uniformCardPoints = currentConfig.uniformCardPoints,
+                    penalizeBlackThreesInHand = currentConfig.penalizeBlackThreesInHand
                 )
                 teamRoundScores[team] += tableScore.totalRoundPoints
-                breakdownLines += "Equipe [TEAM_${team}]: Mesa +${tableScore.tablePoints} | Canastras +${tableScore.canastraPoints} = ${tableScore.totalRoundPoints} pts"
+                breakdownLines += "Equipe [TEAM_${team}]: mesa ${tableScore.tableCardCount} carta(s) = ${tableScore.tablePoints} pts"
+                breakdownLines += "Equipe [TEAM_${team}]: canastras limpas ${tableScore.cleanCanastras}, sujas ${tableScore.dirtyCanastras} = +${tableScore.canastraPoints} pts"
+                if (currentConfig.gameType == GameType.TRANCA) {
+                    breakdownLines += "Equipe [TEAM_${team}]: 3 vermelhos ${tableScore.redThreesOnTable} = ${tableScore.redThreePoints} pts"
+                }
             }
             reports.forEach { report ->
                 val team = teamForSeat(report.seat)
@@ -892,10 +934,14 @@ class MatchViewModel(
                     hasMorto = false,
                     didWin = false,
                     gameType = currentConfig.gameType,
-                    uniformCardPoints = currentConfig.uniformCardPoints
+                    uniformCardPoints = currentConfig.uniformCardPoints,
+                    penalizeBlackThreesInHand = currentConfig.penalizeBlackThreesInHand
                 )
                 teamRoundScores[team] += handScore.totalRoundPoints
-                breakdownLines += "Jogador [PLAYER_${report.seat}]: Mão -${handScore.handPenalty} = ${handScore.totalRoundPoints} pts"
+                breakdownLines += "Jogador [PLAYER_${report.seat}]: mão ${handScore.handCardCount} carta(s) = -${handScore.handPenalty} pts"
+                if (currentConfig.gameType == GameType.TRANCA && handScore.blackThreesInHand > 0) {
+                    breakdownLines += "Jogador [PLAYER_${report.seat}]: 3 pretos na mão ${handScore.blackThreesInHand} = -${handScore.blackThreePenalty} pts (${if (currentConfig.penalizeBlackThreesInHand) "regra pesada ligada" else "regra pesada desligada"})"
+                }
             }
             repeat(teamRoundScores.size) { team ->
                 if (team !in teamsThatPickedMorto) {
@@ -908,6 +954,9 @@ class MatchViewModel(
             } else {
                 teamRoundScores[winnerTeam] += 100
                 breakdownLines += "Equipe [TEAM_${winnerTeam}]: bonus de bate +100"
+            }
+            repeat(teamRoundScores.size) { team ->
+                breakdownLines += "Equipe [TEAM_${team}]: total da rodada ${teamRoundScores[team]} pts"
             }
         }
 
@@ -952,14 +1001,13 @@ class MatchViewModel(
                 val localTeamIdx = teamForSeat(localSeat)
                 // Substitui placeholders do breakdown para exibição no host
                 val formattedBreakdown = if (currentConfig.gameType == GameType.CACHETA) {
-                    if (winnerId == playerId) "Oponente perdeu 1 vida." else "Você perdeu 1 vida."
+                    if (winnerId == playerId) "${opponentDisplayLabel()} perdeu 1 vida." else "Você perdeu 1 vida."
                 } else {
                     var formatted = breakdown
                     for (i in 0 until currentConfig.maxPlayers) {
                         val team = teamForSeat(i)
-                        val isMyTeam = team == localTeamIdx
-                        formatted = formatted.replace("[TEAM_$team]", if (isMyTeam) "Você" else "Oponente")
-                        formatted = formatted.replace("[PLAYER_$i]", if (i == localSeat) "Você" else "Oponente")
+                        formatted = formatted.replace("[TEAM_$team]", teamDisplayLabel(team, localTeamIdx))
+                        formatted = formatted.replace("[PLAYER_$i]", seatDisplayLabel(i, localSeat))
                     }
                     formatted
                 }
@@ -968,7 +1016,7 @@ class MatchViewModel(
                         countOnlyRound -> "Contagem"
                         winnerId == playerId -> "Você"
                         localTeamIdx == winnerTeam -> "Sua equipe"
-                        else -> "Oponente"
+                        else -> opponentDisplayLabel()
                     },
                     myRoundScore = myRoundScore,
                     opponentRoundScore = opponentRoundScore,
@@ -978,7 +1026,8 @@ class MatchViewModel(
                     breakdown = formattedBreakdown,
                     teamScores = updatedTeamScores,
                     winnerTeam = winnerTeam,
-                    localTeam = localTeamIdx
+                    localTeam = localTeamIdx,
+                    opponentLabel = opponentDisplayLabel()
                 )
             }
         )
@@ -987,11 +1036,10 @@ class MatchViewModel(
         pendingWinnerId = null
         pendingWinnerTeam = null
         pendingCountOnlyRound = false
+        pendingDiscardDrawCardId = null
+        pendingDiscardDrawRest = emptyList()
     }
 
-    /**
-     * Método responsável pela funcionalidade: uniqueTableMeldsForTeam
-     */
     private fun uniqueTableMeldsForTeam(
         reports: List<RoundSeatReport>,
         team: Int
@@ -1007,9 +1055,6 @@ class MatchViewModel(
         return uniqueMelds.values.toList()
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleRoundSummary
-     */
     private fun handleRoundSummary(payload: String) {
         if (payload.trim().startsWith("{")) {
             handleRoundSummaryJson(payload)
@@ -1067,12 +1112,10 @@ class MatchViewModel(
      * dentro de startGame() via _gameState.value.teamScores.
      */
     fun nextRound() {
-        val currentState = _gameState.value
-        // Garante que o dialog seja fechado antes de iniciar a rodada
-        _gameState.value = currentState.copy(showRoundEndDialog = false, roundEndDetails = null)
+        _gameState.value = clearRoundEndUiState()
         if (isHost) {
-            startGame()
             networkRepository.sendMessage(NetworkMessage(playerId, "NEXT_ROUND", ""))
+            startGame()
         } else {
             networkRepository.sendMessage(NetworkMessage(playerId, "REQ_NEXT_ROUND", ""))
         }
@@ -1103,22 +1146,19 @@ class MatchViewModel(
         networkRepository.sendMessage(NetworkMessage(playerId, "REPLY_RESTART", "NO"))
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleReplyRestartMatch
-     */
     private fun handleReplyRestartMatch(senderId: String, payload: String) {
         if (!isHost) return
         if (payload == "NO") {
             _gameState.value = _gameState.value.copy(feedbackMessage = "Um jogador recusou reiniciar a partida.")
-            networkRepository.sendMessage(NetworkMessage(playerId, "NEXT_ROUND", "")) // Cancela o dialog na tela deles
+            networkRepository.sendMessage(NetworkMessage(playerId, "NEXT_ROUND", "")) // Fecha o diálogo na tela deles
             return
         }
         if (payload == "YES") {
             restartMatchApprovals.add(senderId)
             // Contamos o próprio host + aprovações dos clientes
-            val approvalNeeded = currentConfig.maxPlayers - 1 // clientes que precisam aprovar
+            val approvalNeeded = currentConfig.maxPlayers
             if (restartMatchApprovals.size >= approvalNeeded) {
-                // Full restart — zera placar para os valores iniciais corretos
+                // Reinício completo: volta o placar para os valores iniciais corretos.
                 _gameState.value = _gameState.value.copy(
                     teamScores = initialTeamScores(currentConfig),
                     myScore = initialTeamScores(currentConfig).getOrElse(teamForSeat(localSeat)) { 0 },
@@ -1126,8 +1166,8 @@ class MatchViewModel(
                     showRestartMatchDialog = false
                 )
                 restartMatchApprovals.clear()
-                startGame()
                 networkRepository.sendMessage(NetworkMessage(playerId, "NEXT_ROUND", ""))
+                startGame()
             }
         }
     }
@@ -1135,12 +1175,12 @@ class MatchViewModel(
     // --- Mensagens de rede ---
 
     /**
-     * Ponto de entrada central para todas as mensagens recebidas via rede (TCP/IP).
+     * Entrada única das mensagens da mesa.
      */
     private fun handleNetworkMessage(message: NetworkMessage) {
         if (message.senderId == playerId) return
-        // Deduplicacao por messageId: essencial para rede real, reconexao e online,
-        // onde a mesma acao pode chegar repetida por retry ou atraso.
+        // Deduplicação por messageId: essencial para rede real, reconexão e online,
+        // onde a mesma ação pode chegar repetida por retry ou atraso.
         if (!processedNetworkMessageIds.add(message.messageId)) return
         if (processedNetworkMessageIds.size > 500) {
             val iterator = processedNetworkMessageIds.iterator()
@@ -1168,20 +1208,36 @@ class MatchViewModel(
                 "COUNT_ROUND"        -> handleCountRoundRequest()
                 "REPLY_COUNT_ROUND"  -> handleReplyCountRound(message.payload)
                 "ROUND_SUMMARY"      -> handleRoundSummary(message.payload)
-                "NEXT_ROUND"         -> _gameState.value = _gameState.value.copy(showRoundEndDialog = false, roundEndDetails = null)
-                "REQ_NEXT_ROUND"     -> { if (isHost) startGame() }
+                "NEXT_ROUND"         -> _gameState.value = clearRoundEndUiState().copy(
+                    myHand = emptyList(),
+                    selectedCards = emptySet(),
+                    myTableMelds = emptyList(),
+                    opponentTableMelds = emptyList(),
+                    discardPile = emptyList(),
+                    turnCard = null,
+                    pendingMeldTargets = null,
+                    lastDrawnCardId = null,
+                    opponentPickedMorto = false,
+                    feedbackMessage = "Preparando nova rodada..."
+                )
+                "REQ_NEXT_ROUND"     -> {
+                    if (isHost) {
+                        networkRepository.sendMessage(NetworkMessage(playerId, "NEXT_ROUND", ""))
+                        startGame()
+                    }
+                }
                 "RESTART_MATCH"      -> _gameState.value = _gameState.value.copy(showRestartMatchDialog = true)
                 "REPLY_RESTART"      -> handleReplyRestartMatch(message.senderId, message.payload)
                 "REQ_RECONNECT"      -> handleReconnectRequest(message.senderId, message.payload)
                 "RECONNECT_STATE"    -> handleReconnectState(message.payload)
             }
         } catch (e: Exception) {
-            // Ignora silenciosamente mensagens malformadas (Anti-cheat/crash prevention)
+            // Mensagem malformada não pode derrubar a partida.
         }
     }
 
     /**
-     * Processa a mensagem de início de jogo recebida do Host.
+     * Cliente aplica a distribuição enviada pelo host.
      */
     private fun handleGameStart(payload: String) {
         if (payload.trim().startsWith("{")) {
@@ -1216,6 +1272,8 @@ class MatchViewModel(
             }
         }
         val mortosLeft = mortos.size
+        pendingDiscardDrawCardId = null
+        pendingDiscardDrawRest = emptyList()
 
         val (processedHand, initialMelds) = autoProcessThreeReds(hand, emptyList())
         val discardLocked = GameRulesEngine.isDiscardLocked(discard, currentConfig.gameType)
@@ -1224,7 +1282,7 @@ class MatchViewModel(
         _gameState.value = _gameState.value.copy(
             myHand = processedHand,
             myTableMelds = initialMelds,
-            opponentTableMelds = _gameState.value.opponentTableMelds,
+            opponentTableMelds = emptyList(),
             discardPile = if (discard != null) listOf(discard) else emptyList(),
             turnCard = turnCard,
             deckSize = deckSize,
@@ -1238,13 +1296,14 @@ class MatchViewModel(
             drawDiscardBlockedReason = drawCheck.reason,
             showRoundEndDialog = false,
             roundEndDetails = null,
+            lastMeldResult = "",
+            pendingMeldTargets = null,
+            lastDrawnCardId = null,
+            opponentPickedMorto = false,
             config = currentConfig
         )
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleGameStartJson
-     */
     private fun handleGameStartJson(payload: String) {
         val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
         currentConfig = runCatching {
@@ -1269,6 +1328,8 @@ class MatchViewModel(
             if (morto.isNotEmpty()) mortos.add(morto)
         }
         val mortosLeft = if (mortos.isNotEmpty()) mortos.size else json.optInt("mortosLeft", 0)
+        pendingDiscardDrawCardId = null
+        pendingDiscardDrawRest = emptyList()
 
         val hand = sortHandIfEnabled(cardsFromJson(myHandJson))
         val discard = allCardsMap[discardId]
@@ -1283,7 +1344,7 @@ class MatchViewModel(
             discardPile = if (discard != null) listOf(discard) else emptyList(),
             turnCard = turnCard,
             myTableMelds = initialMelds,
-            opponentTableMelds = _gameState.value.opponentTableMelds,
+            opponentTableMelds = emptyList(),
             opponentHandCount = currentConfig.cardsPerPlayer,
             deckSize = deckSize,
             mortosLeft = mortosLeft,
@@ -1297,6 +1358,9 @@ class MatchViewModel(
             drawDiscardBlockedReason = drawCheck.reason,
             showRoundEndDialog = false,
             roundEndDetails = null,
+            pendingMeldTargets = null,
+            lastDrawnCardId = null,
+            opponentPickedMorto = false,
             config = currentConfig
         )
     }
@@ -1332,9 +1396,6 @@ class MatchViewModel(
         )
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleOpponentDrewDeck
-     */
     private fun handleOpponentDrewDeck(senderId: String) {
         val state = _gameState.value
         val actorSeat = remotePlayerSeats[senderId] ?: state.activeSeat
@@ -1347,9 +1408,6 @@ class MatchViewModel(
         )
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleOpponentDrewDiscard
-     */
     private fun handleOpponentDrewDiscard(senderId: String, cardId: String) {
         val actorSeat = remotePlayerSeats[senderId] ?: _gameState.value.activeSeat
         rememberRemoteSeat(actorSeat, senderId)
@@ -1371,12 +1429,13 @@ class MatchViewModel(
     }
 
     /**
-     * Processa a carta recebida do Host após uma requisição de compra do monte.
+     * Cliente recebe a carta servida pelo host depois da compra do monte.
      */
     private fun handleServeCard(cardId: String) {
         val card = allCardsMap[cardId] ?: return
         val state = _gameState.value
         pendingDiscardDrawCardId = null
+        pendingDiscardDrawRest = emptyList()
         val newHand = sortHandIfEnabled(state.myHand + card)
         val (processedHand, newMelds) = autoProcessThreeReds(newHand, state.myTableMelds)
         val droppedThree = processedHand.size < newHand.size
@@ -1391,9 +1450,6 @@ class MatchViewModel(
     }
 
     /** Host serve carta para o cliente quando ele pede (REQ_DRAW_DECK) */
-    /**
-     * Método responsável pela funcionalidade: handleClientDrawRequest
-     */
     private fun handleClientDrawRequest(requestingPlayerId: String, payload: String) {
         if (!isHost) return
         val requestingSeat = parseSeatPayload(payload)
@@ -1422,7 +1478,7 @@ class MatchViewModel(
 
     /** Host serve um morto privado para o jogador ativo quando ele fica sem cartas. */
     /**
-     * Host: Verifica e atende a requisição de um cliente para pegar o morto.
+     * Host valida e entrega o morto para o cliente que zerou a mão.
      */
     private fun handleClientMortoRequest(requestingPlayerId: String, payload: String) {
         if (!isHost || mortos.isEmpty()) return
@@ -1511,9 +1567,6 @@ class MatchViewModel(
         )
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleOpponentMeld
-     */
     private fun handleOpponentMeld(payload: String) {
         val (meld, actorSeat) = parseMeldPayload(payload)
         val replaceIndex = parseMeldReplaceIndex(payload)
@@ -1550,9 +1603,6 @@ class MatchViewModel(
         }
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleOpponentPickMorto
-     */
     private fun handleOpponentPickMorto(payload: String = "") {
         if (mortos.isNotEmpty()) mortos.removeAt(0)
         val payloadCount = runCatching {
@@ -1590,9 +1640,6 @@ class MatchViewModel(
      * Identifica se existem 3 vermelhos na mão do jogador (apenas no modo Tranca).
      * Se houver, baixa-os automaticamente na mesa e notifica o oponente.
      */
-    /**
-     * Método responsável pela funcionalidade: findAppendTarget
-     */
     private fun findAppendTarget(
         tableMelds: List<List<Card>>,
         selected: List<Card>,
@@ -1606,9 +1653,6 @@ class MatchViewModel(
         return null
     }
 
-    /**
-     * Método responsável pela funcionalidade: findAppendTargets
-     */
     private fun findAppendTargets(
         tableMelds: List<List<Card>>,
         selected: List<Card>,
@@ -1648,9 +1692,6 @@ class MatchViewModel(
         return Pair(newHand, newMelds)
     }
 
-    /**
-     * Método responsável pela funcionalidade: updateDiscardState
-     */
     private fun updateDiscardState(
         hand: List<Card>,
         firstDiscard: Card?,
@@ -1681,13 +1722,11 @@ class MatchViewModel(
             isDiscardLocked = discardLocked,
             canDrawFromDiscard = drawCheck.allowed,
             drawDiscardBlockedReason = drawCheck.reason,
-            config = currentConfig
+            config = currentConfig,
+            opponentLabel = opponentDisplayLabel()
         )
     }
 
-    /**
-     * Método responsável pela funcionalidade: buildGameStartPayload
-     */
     private fun buildGameStartPayload(
         hand: List<Card>,
         firstDiscard: Card?,
@@ -1707,9 +1746,6 @@ class MatchViewModel(
             .toString()
     }
 
-    /**
-     * Método responsável pela funcionalidade: buildServeMortoPayload
-     */
     private fun buildServeMortoPayload(morto: List<Card>, mortosLeft: Int): String {
         return JSONObject()
             .put("v", 1)
@@ -1718,9 +1754,6 @@ class MatchViewModel(
             .toString()
     }
 
-    /**
-     * Método responsável pela funcionalidade: buildMortosLeftPayload
-     */
     private fun buildMortosLeftPayload(mortosLeft: Int, pickedSeat: Int): String {
         val json = JSONObject()
             .put("v", 1)
@@ -1733,16 +1766,10 @@ class MatchViewModel(
         return json.toString()
     }
 
-    /**
-     * Método responsável pela funcionalidade: requestMorto
-     */
     private fun requestMorto() {
         networkRepository.sendMessage(NetworkMessage(playerId, "REQ_PICK_MORTO", buildSeatPayload(localSeat)))
     }
 
-    /**
-     * Método responsável pela funcionalidade: buildDiscardPayload
-     */
     private fun buildDiscardPayload(card: Card, seat: Int): String {
         return JSONObject()
             .put("v", 1)
@@ -1751,9 +1778,6 @@ class MatchViewModel(
             .toString()
     }
 
-    /**
-     * Método responsável pela funcionalidade: buildMeldPayload
-     */
     private fun buildMeldPayload(cards: List<Card>, seat: Int, replaceIndex: Int = -1): String {
         return JSONObject()
             .put("v", 1)
@@ -1764,9 +1788,6 @@ class MatchViewModel(
             .toString()
     }
 
-    /**
-     * Método responsável pela funcionalidade: buildRoundReportPayload
-     */
     private fun buildRoundReportPayload(
         report: RoundSeatReport,
         winnerId: String? = null
@@ -1781,9 +1802,6 @@ class MatchViewModel(
             .toString()
     }
 
-    /**
-     * Método responsável pela funcionalidade: parseRoundReportPayload
-     */
     private fun parseRoundReportPayload(payload: String): RoundSeatReport? {
         val trimmed = payload.trim()
         if (!trimmed.startsWith("{")) {
@@ -1804,9 +1822,6 @@ class MatchViewModel(
         )
     }
 
-    /**
-     * Método responsável pela funcionalidade: buildSeatPayload
-     */
     private fun buildSeatPayload(seat: Int): String {
         return JSONObject()
             .put("v", 1)
@@ -1814,18 +1829,12 @@ class MatchViewModel(
             .toString()
     }
 
-    /**
-     * Método responsável pela funcionalidade: parseSeatPayload
-     */
     private fun parseSeatPayload(payload: String): Int {
         val trimmed = payload.trim()
         if (!trimmed.startsWith("{")) return -1
         return runCatching { JSONObject(trimmed).optInt("seat", -1) }.getOrDefault(-1)
     }
 
-    /**
-     * Método responsável pela funcionalidade: parseDiscardPayload
-     */
     private fun parseDiscardPayload(payload: String): Pair<String, Int> {
         val trimmed = payload.trim()
         if (!trimmed.startsWith("{")) return payload to 0
@@ -1835,9 +1844,6 @@ class MatchViewModel(
         return json.optString("card", "") to json.optInt("seat", 0)
     }
 
-    /**
-     * Método responsável pela funcionalidade: parseMeldPayload
-     */
     private fun parseMeldPayload(payload: String): Pair<List<Card>, Int> {
         val trimmed = payload.trim()
         if (!trimmed.startsWith("{")) {
@@ -1851,18 +1857,12 @@ class MatchViewModel(
         return cardsFromJson(json.optJSONArray("cards") ?: JSONArray()) to json.optInt("seat", 1)
     }
 
-    /**
-     * Método responsável pela funcionalidade: parseMeldReplaceIndex
-     */
     private fun parseMeldReplaceIndex(payload: String): Int {
         val trimmed = payload.trim()
         if (!trimmed.startsWith("{")) return -1
         return runCatching { JSONObject(trimmed).optInt("replaceIndex", -1) }.getOrDefault(-1)
     }
 
-    /**
-     * Método responsável pela funcionalidade: applyRemoteMeld
-     */
     private fun applyRemoteMeld(
         currentMelds: List<List<Card>>,
         meld: List<Card>,
@@ -1876,9 +1876,6 @@ class MatchViewModel(
         }
     }
 
-    /**
-     * Método responsável pela funcionalidade: rememberRemoteSeat
-     */
     private fun rememberRemoteSeat(seat: Int, remotePlayerId: String?) {
         if (!isHost || seat !in 1 until currentConfig.maxPlayers) return
         if (remotePlayerId != null) {
@@ -1887,18 +1884,12 @@ class MatchViewModel(
         remoteHandsBySeat.putIfAbsent(seat, emptyList())
     }
 
-    /**
-     * Método responsável pela funcionalidade: addRemoteCards
-     */
     private fun addRemoteCards(seat: Int, cards: List<Card>) {
         if (!isHost || cards.isEmpty() || seat !in 1 until currentConfig.maxPlayers) return
         val updatedHand = remoteHandsBySeat[seat].orEmpty() + cards
         remoteHandsBySeat[seat] = sortHandIfEnabled(updatedHand)
     }
 
-    /**
-     * Método responsável pela funcionalidade: removeRemoteCards
-     */
     private fun removeRemoteCards(seat: Int, cards: List<Card>) {
         if (!isHost || cards.isEmpty() || seat !in 1 until currentConfig.maxPlayers) return
         val remaining = remoteHandsBySeat[seat].orEmpty().toMutableList()
@@ -1909,17 +1900,11 @@ class MatchViewModel(
         remoteHandsBySeat[seat] = sortHandIfEnabled(remaining)
     }
 
-    /**
-     * Método responsável pela funcionalidade: remoteHandCountForSeat
-     */
     private fun remoteHandCountForSeat(seat: Int): Int {
         return remoteHandsBySeat[seat]?.size
             ?: _gameState.value.opponentHandCount
     }
 
-    /**
-     * Método responsável pela funcionalidade: isTrancaRedThree
-     */
     private fun isTrancaRedThree(card: Card): Boolean {
         return currentConfig.gameType == GameType.TRANCA &&
             currentConfig.autoMeldTrancaRedThrees &&
@@ -1927,9 +1912,27 @@ class MatchViewModel(
             (card.suit == Suit.HEARTS || card.suit == Suit.DIAMONDS)
     }
 
-    /**
-     * Método responsável pela funcionalidade: nextSeatAfter
-     */
+    private fun canDiscardWildcardNow(card: Card, state: GameState): Boolean {
+        if (currentConfig.gameType == GameType.CACHETA) return true
+        if (!GameRulesEngine.isWildcard(card, currentConfig.gameType)) return true
+
+        val remainingHand = state.myHand.filter { it.id != card.id }
+        val hasOtherDiscardOption = remainingHand.any { !GameRulesEngine.isWildcard(it, currentConfig.gameType) }
+        if (!hasOtherDiscardOption) return true
+
+        val canUseInExistingOrNewGame = GameRulesEngine.canJustifyDiscardDraw(
+            topDiscard = card,
+            hand = remainingHand,
+            tableMelds = state.myTableMelds,
+            config = currentConfig,
+            cachetaTurnCard = state.turnCard
+        )
+        val hasCleanTargetWithoutWildcard = state.myTableMelds.any { meld ->
+            meld.size >= 3 && meld.none { GameRulesEngine.isWildcard(it, currentConfig.gameType) }
+        }
+        return !canUseInExistingOrNewGame && !hasCleanTargetWithoutWildcard
+    }
+
     private fun nextSeatAfter(seat: Int): Int {
         val maxSeats = currentConfig.maxPlayers.coerceAtLeast(2)
         return (seat + 1).floorMod(maxSeats)
@@ -1937,32 +1940,17 @@ class MatchViewModel(
 
     private fun Int.floorMod(mod: Int): Int = ((this % mod) + mod) % mod
 
-    /**
-     * Método responsável pela funcionalidade: initialTeamScores
-     */
     private fun initialTeamScores(config: MatchConfig): List<Int> {
         val initial = if (config.gameType == GameType.CACHETA) config.pointLimit else 0
         return listOf(initial, initial)
     }
 
-    /**
-     * Método responsável pela funcionalidade: teamForSeat
-     */
     private fun teamForSeat(seat: Int): Int = seat.floorMod(2)
 
-    /**
-     * Método responsável pela funcionalidade: opposingTeam
-     */
     private fun opposingTeam(team: Int): Int = if (team == 0) 1 else 0
 
-    /**
-     * Método responsável pela funcionalidade: teamLabel
-     */
     private fun teamLabel(team: Int): String = if (team == 0) "A" else "B"
 
-    /**
-     * Método responsável pela funcionalidade: applyRoundToTeamScores
-     */
     private fun applyRoundToTeamScores(
         currentScores: List<Int>,
         winnerTeam: Int,
@@ -1977,9 +1965,6 @@ class MatchViewModel(
         return scores
     }
 
-    /**
-     * Método responsável pela funcionalidade: applyCountRoundToTeamScores
-     */
     private fun applyCountRoundToTeamScores(
         currentScores: List<Int>,
         roundScores: List<Int>
@@ -2039,9 +2024,6 @@ class MatchViewModel(
             .toString()
     }
 
-    /**
-     * Método responsável pela funcionalidade: handleRoundSummaryJson
-     */
     private fun handleRoundSummaryJson(payload: String) {
         val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
         val noWinner = json.optBoolean("noWinner", false)
@@ -2087,7 +2069,7 @@ class MatchViewModel(
                     noWinner -> "Contagem"
                     amIWinner -> "Você"
                     localTeam == winnerTeam -> "Sua equipe"
-                    else -> "Oponente"
+                    else -> opponentDisplayLabel()
                 },
                 myRoundScore = myRound,
                 opponentRoundScore = oppRound,
@@ -2095,37 +2077,31 @@ class MatchViewModel(
                 opponentNewTotal = oppNew,
                 isMatchOver = over,
                 breakdown = if (currentConfig.gameType == GameType.CACHETA) {
-                    if (amIWinner) "Oponente perdeu 1 vida." else "Você perdeu 1 vida."
+                    if (amIWinner) "${opponentDisplayLabel()} perdeu 1 vida." else "Você perdeu 1 vida."
                 } else {
                     var formatted = breakdown
                     for (i in 0 until currentConfig.maxPlayers) {
                         val team = teamForSeat(i)
-                        val isMyTeam = team == localTeam
-                        formatted = formatted.replace("[TEAM_$team]", if (isMyTeam) "Você" else "Oponente")
-                        formatted = formatted.replace("[PLAYER_$i]", if (i == localSeat) "Você" else "Oponente")
+                        formatted = formatted.replace("[TEAM_$team]", teamDisplayLabel(team, localTeam))
+                        formatted = formatted.replace("[PLAYER_$i]", seatDisplayLabel(i, localSeat))
                     }
                     formatted
                 },
                 teamScores = resolvedTeamScores,
                 winnerTeam = if (noWinner) null else winnerTeam,
-                localTeam = localTeam
+                localTeam = localTeam,
+                opponentLabel = opponentDisplayLabel()
             )
         )
 
     }
 
-    /**
-     * Método responsável pela funcionalidade: parseTeamScores
-     */
     private fun parseTeamScores(jsonArray: JSONArray?): List<Int>? {
         jsonArray ?: return null
         if (jsonArray.length() < 2) return null
         return List(jsonArray.length()) { index -> jsonArray.optInt(index) }
     }
 
-    /**
-     * Método responsável pela funcionalidade: parseHandPayload
-     */
     private fun parseHandPayload(payload: String): List<Card> {
         val trimmed = payload.trim()
         if (trimmed.startsWith("{")) {
@@ -2138,18 +2114,12 @@ class MatchViewModel(
             .mapNotNull { allCardsMap[it] }
     }
 
-    /**
-     * Método responsável pela funcionalidade: handsToJson
-     */
     private fun handsToJson(hands: List<List<Card>>): JSONArray {
         return JSONArray().apply {
             hands.forEach { hand -> put(cardsToJson(hand)) }
         }
     }
 
-    /**
-     * Método responsável pela funcionalidade: handsFromJson
-     */
     private fun handsFromJson(hands: JSONArray): List<List<Card>> {
         return buildList {
             repeat(hands.length()) { index ->
@@ -2158,18 +2128,12 @@ class MatchViewModel(
         }
     }
 
-    /**
-     * Método responsável pela funcionalidade: cardsToJson
-     */
     private fun cardsToJson(cards: List<Card>): JSONArray {
         return JSONArray().apply {
             cards.forEach { card -> put(card.id) }
         }
     }
 
-    /**
-     * Método responsável pela funcionalidade: cardsFromJson
-     */
     private fun cardsFromJson(cards: JSONArray): List<Card> {
         return buildList {
             repeat(cards.length()) { index ->
@@ -2178,16 +2142,13 @@ class MatchViewModel(
         }
     }
 
-    // --- Persistencia e reconexao ---
+    // --- Persistência e reconexão ---
 
-    /**
-     * Método responsável pela funcionalidade: snapshotFile
-     */
     private fun snapshotFile(): File? =
         context?.filesDir?.let { File(it, "game_snapshot_${config.gameType.name}.json") }
 
     /**
-     * Salva o estado atual da partida localmente para recuperação em caso de crash (Offline-First).
+     * Salva um retrato local da partida para recuperar queda ou fechamento do app.
      */
     private fun saveGameSnapshot(state: GameState) {
         val file = snapshotFile() ?: return
@@ -2213,7 +2174,7 @@ class MatchViewModel(
     }
 
     /**
-     * Limpa o estado salvo do jogo (SharedPreferences/File).
+     * Remove o retrato local quando a partida terminou de verdade.
      */
     fun clearGameSnapshot() {
         snapshotFile()?.delete()
@@ -2273,7 +2234,8 @@ class MatchViewModel(
                 isDiscardLocked = discardLocked,
                 canDrawFromDiscard = drawCheck.allowed,
                 drawDiscardBlockedReason = drawCheck.reason,
-                config = currentConfig
+                config = currentConfig,
+                opponentLabel = opponentDisplayLabel()
             )
             true
         } catch (e: Exception) {
@@ -2281,10 +2243,7 @@ class MatchViewModel(
         }
     }
 
-    /** Cliente chama isso ao detectar reconexão com o host */
-    /**
-     * Solicita reconexão ao Host caso o cliente tenha perdido o estado.
-     */
+    /** Cliente pede ao host o estado atual da mesa depois de uma reconexão. */
     fun requestReconnect() {
         _gameState.value = _gameState.value.copy(
             feedbackMessage = "Reconectando... aguardando estado do servidor."
@@ -2292,10 +2251,7 @@ class MatchViewModel(
         networkRepository.sendMessage(NetworkMessage(playerId, "REQ_RECONNECT", buildSeatPayload(localSeat)))
     }
 
-    /** Host recebe pedido de reconexão e reenvia o estado atual do jogo */
-    /**
-     * Método responsável pela funcionalidade: handleReconnectRequest
-     */
+    /** Host reenvia a mão correta e o estado público para o jogador reconectado. */
     private fun handleReconnectRequest(requestingPlayerId: String, payload: String) {
         if (!isHost) return
         val state = _gameState.value
@@ -2329,9 +2285,6 @@ class MatchViewModel(
     }
 
     /** Cliente recebe o estado do host e o aplica */
-    /**
-     * Método responsável pela funcionalidade: handleReconnectState
-     */
     private fun handleReconnectState(payload: String) {
         val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
         val isReconnect = json.optBoolean("isReconnect", false)
@@ -2395,7 +2348,7 @@ class MatchViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        // Mantem snapshot para reconexão, limpeza só após fim de partida
+        // Mantém snapshot para reconexão, limpeza só após fim de partida
     }
 
     companion object {

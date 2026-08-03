@@ -47,10 +47,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -106,10 +108,9 @@ fun MatchScreen(
     config: MatchConfig = MatchConfig(),
     onLeaveMatch: () -> Unit
 ) {
-    // Em modo Preview o ViewModel não pode ser instanciado (sem Context/coroutines reais).
-    // Renderizamos um layout estático com dados falsos para visualização no Android Studio.
-    // Eu mantenho a UI como apresentacao: renderiza GameState e chama acoes,
-    // enquanto regra e sincronizacao ficam no MatchViewModel.
+    // Preview do Android Studio não cria ViewModel real. Uso uma mesa estática
+    // para conferir tamanho, fonte e espaçamento sem depender de rede/coroutine.
+    // A tela só desenha o GameState e repassa cliques; regra fica no ViewModel.
     if (androidx.compose.ui.platform.LocalInspectionMode.current) {
         MatchScreenStaticPreview(config = config)
         return
@@ -131,7 +132,7 @@ fun MatchScreen(
 
     LaunchedEffect(Unit) { if (isHost && !viewModel.isRestored) viewModel.startGame() }
 
-    // Reconexão automática: cliente pede estado atual ao host quando a conexão volta
+    // Quando a conexão volta, o cliente pede a mesa atual para o host.
     var wasDisconnected by remember { mutableStateOf(false) }
     LaunchedEffect(connectionStatus) {
         when (connectionStatus) {
@@ -229,6 +230,7 @@ fun MatchScreen(
             modifier = Modifier.fillMaxSize()
         )
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
+        FeltAmbientMotion(modifier = Modifier.fillMaxSize())
 
         // ── Layout Principal ───────────────────────────────
         Column(
@@ -255,7 +257,8 @@ fun MatchScreen(
         }
 
         VictoryConfetti(
-            visible = roundEndDetails?.isMatchOver == true &&
+            visible = state.showRoundEndDialog &&
+                roundEndDetails != null &&
                 (roundEndDetails.winnerName.startsWith("Voc") || roundEndDetails.winnerName == "Sua equipe")
         )
 
@@ -297,7 +300,7 @@ fun MatchScreen(
             )
         }
 
-        // ── Diálogo de Desconexão ────────────────────────────────────────────────────────────────────
+        // -- Diálogo de Desconexão --------------------------------------------------------------------
         if (connectionStatus == ConnectionStatus.OPPONENT_DISCONNECTED ||
             connectionStatus == ConnectionStatus.HOST_DISCONNECTED) {
             DisconnectDialog(
@@ -331,7 +334,7 @@ fun MatchScreen(
             )
         }
 
-        // ── Diálogo de Seleção de Jogo Destino ──────────────────────────────────────────────────────
+        // -- Diálogo de Seleção de Jogo Destino ------------------------------------------------------
         state.pendingMeldTargets?.let { targets ->
             val canMeldNew = if (state.selectedCards.size >= 3) {
                 GameRulesEngine.validateMeld(state.selectedCards.toList(), state.config, state.turnCard).isValid
@@ -355,6 +358,36 @@ fun MatchScreen(
 
 // ── Diálogo de Fim de Rodada ──────────────────────────────────────────────────────────────────────
 @Composable
+private fun FeltAmbientMotion(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "felt_ambient_motion")
+    val drift by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 6800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "felt_ambient_drift"
+    )
+
+    Canvas(modifier = modifier) {
+        val x = size.width * drift
+        val glowCenter = androidx.compose.ui.geometry.Offset(x, size.height * 0.42f)
+        drawCircle(
+            color = ColorGreenLight.copy(alpha = 0.045f),
+            radius = size.minDimension * 0.45f,
+            center = glowCenter
+        )
+        drawLine(
+            color = Color.White.copy(alpha = 0.035f),
+            start = androidx.compose.ui.geometry.Offset(x - size.width * 0.42f, 0f),
+            end = androidx.compose.ui.geometry.Offset(x + size.width * 0.08f, size.height),
+            strokeWidth = size.width * 0.055f
+        )
+    }
+}
+
+@Composable
 private fun DealingAnimation(
     visible: Boolean,
     cardCount: Int,
@@ -362,7 +395,7 @@ private fun DealingAnimation(
 ) {
     val progress by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 900),
+        animationSpec = tween(durationMillis = 1150, easing = LinearEasing),
         label = "deal_progress"
     )
     if (progress <= 0.01f) return
@@ -370,7 +403,28 @@ private fun DealingAnimation(
     val backCard = remember {
         Card(Suit.SPADES, Rank.ACE, deckColor = DeckColor.BLACK)
     }
-    Box(modifier = modifier.alpha((1f - progress).coerceIn(0.18f, 0.82f))) {
+    Box(modifier = modifier.alpha((1f - progress).coerceIn(0.2f, 0.9f))) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val alpha = (1f - progress).coerceIn(0f, 0.55f)
+            val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height * 0.38f)
+            drawCircle(
+                color = ColorGold.copy(alpha = alpha * 0.18f),
+                radius = size.minDimension * (0.12f + progress * 0.18f),
+                center = center
+            )
+            repeat(5) { index ->
+                val lineProgress = (progress + index * 0.08f).coerceIn(0f, 1f)
+                drawLine(
+                    color = Color.White.copy(alpha = alpha * 0.16f),
+                    start = androidx.compose.ui.geometry.Offset(center.x, center.y),
+                    end = androidx.compose.ui.geometry.Offset(
+                        center.x + (index - 2) * size.width * 0.09f,
+                        center.y + size.height * (0.2f + lineProgress * 0.28f)
+                    ),
+                    strokeWidth = 3f
+                )
+            }
+        }
         Text(
             text = "Distribuindo cartas...",
             color = ColorGold.copy(alpha = (1f - progress).coerceIn(0.2f, 0.9f)),
@@ -385,6 +439,7 @@ private fun DealingAnimation(
         repeat(cardCount) { index ->
             val delay = index * 0.055f
             val localProgress = ((progress - delay) / (1f - delay)).coerceIn(0f, 1f)
+            val easedProgress = localProgress * localProgress * (3f - 2f * localProgress)
             val spread = (index - (cardCount - 1) / 2f) * 34f
             val startX = 0f
             val startY = (-80f)
@@ -395,14 +450,16 @@ private fun DealingAnimation(
                     .align(Alignment.Center)
                     .offset {
                         IntOffset(
-                            x = (startX + (endX - startX) * localProgress).toInt(),
-                            y = (startY + (endY - startY) * localProgress).toInt()
+                            x = (startX + (endX - startX) * easedProgress).toInt(),
+                            y = (startY + (endY - startY) * easedProgress).toInt()
                         )
                     }
                     .graphicsLayer {
-                        rotationZ = -18f + index * 4.5f + localProgress * 10f
-                        scaleX = 0.72f + localProgress * 0.15f
-                        scaleY = 0.72f + localProgress * 0.15f
+                        rotationZ = -20f + index * 4.7f + easedProgress * 13f
+                        rotationX = 8f * (1f - easedProgress)
+                        scaleX = 0.68f + easedProgress * 0.2f
+                        scaleY = 0.68f + easedProgress * 0.2f
+                        alpha = localProgress.coerceIn(0.15f, 1f)
                     }
             ) {
                 CardView(
@@ -564,6 +621,7 @@ private fun RoundEndDialog(
 
                 // Placar acumulado — orientado pela perspectiva local (localTeam)
                 val isTeamMode = config.maxPlayers == 4
+                val opponentSideLabel = if (details.opponentLabel == "Máquina") "Lado da Máquina" else "Lado do Oponente"
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
@@ -572,15 +630,16 @@ private fun RoundEndDialog(
                         // Modo 4 jogadores: exibe Equipe A / Equipe B pelos índices absolutos
                         val teamScores = details.teamScores
                         if (teamScores.size >= 2) {
+                            val leftIsLocal = details.localTeam == 0
                             ScoreColumn(
-                                label = if (details.localTeam == 0) "Equipe A (Você)" else "Equipe A",
+                                label = if (leftIsLocal) "Seu lado (Equipe A)" else "$opponentSideLabel (Equipe A)",
                                 score = teamScores[0],
                                 limit = config.pointLimit,
                                 gameType = config.gameType,
                                 isWinner = details.winnerTeam == 0
                             )
                             ScoreColumn(
-                                label = if (details.localTeam == 1) "Equipe B (Você)" else "Equipe B",
+                                label = if (!leftIsLocal) "Seu lado (Equipe B)" else "$opponentSideLabel (Equipe B)",
                                 score = teamScores[1],
                                 limit = config.pointLimit,
                                 gameType = config.gameType,
@@ -590,14 +649,14 @@ private fun RoundEndDialog(
                     } else {
                         // Modo 2 jogadores: usa myNewTotal/opponentNewTotal já orientados localmente
                         ScoreColumn(
-                            label = "Você",
+                            label = details.myLabel,
                             score = details.myNewTotal,
                             limit = config.pointLimit,
                             gameType = config.gameType,
                             isWinner = details.winnerTeam != null && details.winnerTeam == details.localTeam
                         )
                         ScoreColumn(
-                            label = "Oponente",
+                            label = details.opponentLabel,
                             score = details.opponentNewTotal,
                             limit = config.pointLimit,
                             gameType = config.gameType,
@@ -763,11 +822,61 @@ private fun TopBar(state: GameState, config: MatchConfig, onLeave: () -> Unit) {
                     fontSize = 11.sp
                 )
             }
+            OpponentTopCounter(
+                count = state.opponentHandCount,
+                opponentPickedMorto = state.opponentPickedMorto,
+                label = state.opponentLabel
+            )
         }
     }
 }
 
-// ── Preview Est\u00e1tico (LocalInspectionMode) ──────────────────────────────────────────────────────
+@Composable
+private fun OpponentTopCounter(
+    count: Int,
+    opponentPickedMorto: Boolean,
+    label: String
+) {
+    val shortLabel = when (label) {
+        "Máquina" -> "Máquina"
+        else -> "Oponente"
+    }
+    Row(
+        modifier = Modifier
+            .padding(top = 3.dp)
+            .background(Color.Black.copy(alpha = 0.22f), RoundedCornerShape(999.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Text(
+            text = shortLabel,
+            color = Color.White.copy(alpha = 0.62f),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        Text(
+            text = "$count cartas",
+            color = ColorGold,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.ExtraBold,
+            maxLines = 1
+        )
+        if (opponentPickedMorto) {
+            Text(
+                text = "+M",
+                color = ColorBlueLight,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+// -- Preview Estático (LocalInspectionMode) ------------------------------------------------------
 @Composable
 private fun MatchScreenStaticPreview(config: MatchConfig) {
     val sampleHand = remember {
@@ -871,19 +980,19 @@ private fun MatchScreenStaticPreview(config: MatchConfig) {
                 )
             }
 
-            // M\u00e3o (strip inferior)
+            // Mão do jogador no preview.
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xCC000000))
-                        .padding(horizontal = 12.dp, vertical = 7.dp)
-                        .heightIn(min = 48.dp),
+                        .background(Color.Black.copy(alpha = 0.56f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .heightIn(min = 44.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        "M\u00e3o \u00b7 ${sampleHand.size} cartas",
+                        "Mão - ${sampleHand.size} cartas",
                         color = Color.White.copy(alpha = 0.7f),
                         fontSize = 12.sp
                     )
@@ -935,15 +1044,30 @@ private fun TableCenter(
     feedback: MatchFeedback
 ) {
     // Centro da mesa: jogos baixados, monte, lixo e mortos.
-    // Eu deixo este bloco responsivo para fonte grande/tela pequena, mas sem regra de jogo.
+    // Bloco responsivo para fonte grande/tela pequena, sem regra de jogo misturada.
     val haptic = LocalHapticFeedback.current
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 8.dp, vertical = 2.dp)
     ) {
-        val compactTable = maxWidth < 560.dp || maxHeight < 360.dp
-        val pilePanelHeight = if (maxHeight < 330.dp) 138.dp else 166.dp
+        val landscapeTable = maxWidth >= 680.dp && maxWidth > maxHeight
+        val compactTable = !landscapeTable && (maxWidth < 560.dp || maxHeight < 360.dp)
+        val shortLandscapeTable = maxHeight < 380.dp
+        val pilePanelHeight = if (maxHeight < 330.dp) 146.dp else 176.dp
+        val centerPanelWidth = when {
+            maxWidth < 760.dp -> 214.dp
+            maxWidth < 980.dp -> 232.dp
+            else -> 252.dp
+        }
+        val opponentSideTitle = if (state.opponentLabel == "Máquina") "Lado da Máquina" else "Lado do Oponente"
+        val mySideTitle = if (config.maxPlayers == 4) "Seu lado (equipe)" else "Seu lado"
+        val opponentEmptyText = if (state.opponentLabel == "Máquina") {
+            "A máquina ainda não baixou jogo"
+        } else {
+            "Nenhum jogo baixado pelo lado adversário"
+        }
+        val myEmptyText = "Baixe jogos para eles aparecerem no seu lado"
 
         Column(
             modifier = Modifier
@@ -962,19 +1086,73 @@ private fun TableCenter(
                     .padding(horizontal = 10.dp, vertical = 1.dp)
             )
 
-            if (compactTable) {
-                MeldArea(
-                    title = if (config.maxPlayers == 4) "Equipe adversaria" else "Mesa do Oponente",
-                    melds = state.opponentTableMelds,
-                    accentColor = ColorRedLight,
-                    emptyText = if (config.maxPlayers == 4)
-                        "Nenhum jogo baixado pela equipe adversaria"
-                    else
-                        "Nenhum jogo baixado pelo oponente",
+            if (landscapeTable) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(0.86f),
-                    prominent = false
+                        .weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    MeldArea(
+                        title = opponentSideTitle,
+                        melds = state.opponentTableMelds,
+                        accentColor = ColorRedLight,
+                        emptyText = opponentEmptyText,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        prominent = true,
+                        gameType = config.gameType
+                    )
+
+                    DrawPilesPanel(
+                        state = state,
+                        config = config,
+                        modifier = Modifier
+                            .width(centerPanelWidth)
+                            .fillMaxHeight()
+                            .heightIn(min = 148.dp),
+                        compact = shortLandscapeTable,
+                        onDeckClick = {
+                            feedback.play(FeedbackCue.Draw)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.drawFromDeck()
+                        },
+                        onDiscardClick = {
+                            feedback.play(FeedbackCue.Draw)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.drawFromDiscard()
+                        },
+                        onBlockedDiscardClick = {
+                            feedback.play(FeedbackCue.Error)
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                    )
+
+                    MeldArea(
+                        title = mySideTitle,
+                        melds = state.myTableMelds,
+                        accentColor = ColorGreenLight,
+                        emptyText = myEmptyText,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        prominent = true,
+                        gameType = config.gameType
+                    )
+                }
+            } else if (compactTable) {
+                MeldArea(
+                    title = opponentSideTitle,
+                    melds = state.opponentTableMelds,
+                    accentColor = ColorRedLight,
+                    emptyText = opponentEmptyText,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    prominent = false,
+                    gameType = config.gameType
                 )
 
                 DrawPilesPanel(
@@ -1001,17 +1179,15 @@ private fun TableCenter(
                 )
 
                 MeldArea(
-                    title = if (config.maxPlayers == 4) "Minha equipe" else "Minha Mesa",
+                    title = mySideTitle,
                     melds = state.myTableMelds,
                     accentColor = ColorGreenLight,
-                    emptyText = if (config.maxPlayers == 4)
-                        "Jogos da sua dupla aparecem aqui"
-                    else
-                        "Baixe jogos para eles aparecerem aqui",
+                    emptyText = myEmptyText,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1.04f),
-                    prominent = true
+                        .weight(1f),
+                    prominent = true,
+                    gameType = config.gameType
                 )
             } else {
                 Row(
@@ -1028,27 +1204,23 @@ private fun TableCenter(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         MeldArea(
-                            title = if (config.maxPlayers == 4) "Equipe adversaria" else "Mesa do Oponente",
+                            title = opponentSideTitle,
                             melds = state.opponentTableMelds,
                             accentColor = ColorRedLight,
-                            emptyText = if (config.maxPlayers == 4)
-                                "Nenhum jogo baixado pela equipe adversaria"
-                            else
-                                "Nenhum jogo baixado pelo oponente",
+                            emptyText = opponentEmptyText,
                             modifier = Modifier.weight(0.92f),
-                            prominent = false
+                            prominent = false,
+                            gameType = config.gameType
                         )
 
                         MeldArea(
-                            title = if (config.maxPlayers == 4) "Minha equipe" else "Minha Mesa",
+                            title = mySideTitle,
                             melds = state.myTableMelds,
                             accentColor = ColorGreenLight,
-                            emptyText = if (config.maxPlayers == 4)
-                                "Jogos da sua dupla aparecem aqui"
-                            else
-                                "Baixe jogos para eles aparecerem aqui",
+                            emptyText = myEmptyText,
                             modifier = Modifier.weight(1.18f),
-                            prominent = true
+                            prominent = true,
+                            gameType = config.gameType
                         )
                     }
 
@@ -1090,8 +1262,8 @@ private fun DrawPilesPanel(
     onBlockedDiscardClick: () -> Unit
 ) {
     // Deck/lixo/mortos são pontos de compra. A UI mostra se pode clicar, mas a
-    // decisao oficial ainda passa pelo ViewModel e pelo GameRulesEngine.
-    Box(
+    // decisão oficial ainda passa pelo ViewModel e pelo GameRulesEngine.
+    BoxWithConstraints(
         modifier = modifier
             .background(
                 Brush.radialGradient(
@@ -1107,17 +1279,94 @@ private fun DrawPilesPanel(
             .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 6.dp else 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        val contentArrangement = if (compact) Arrangement.spacedBy(6.dp) else Arrangement.SpaceBetween
+        val fontScale = LocalDensity.current.fontScale
+        val priorityCards = compact || maxHeight < 250.dp || fontScale >= 1.18f
+        val ultraCompact = maxHeight < 190.dp || fontScale >= 1.35f
+        val tightPanel = priorityCards || ultraCompact
+        val compactCardByHeight = ((maxHeight - 8.dp).coerceAtLeast(88.dp)) / 1.5f
+        val compactCardByWidth = ((maxWidth - 18.dp) / if (config.gameType == GameType.CACHETA) 3f else 2f)
+        val priorityCardWidth = minOf(compactCardByHeight, compactCardByWidth, if (ultraCompact) 74.dp else 88.dp)
+            .coerceAtLeast(58.dp)
+        val pileCardWidth = if (priorityCards) priorityCardWidth else 74.dp
+        val discardCardWidth = if (priorityCards) {
+            minOf(priorityCardWidth + 10.dp, compactCardByWidth, if (ultraCompact) 80.dp else 94.dp)
+                .coerceAtLeast(priorityCardWidth)
+        } else {
+            pileCardWidth
+        }
+        val contentArrangement = Arrangement.spacedBy(if (tightPanel) 6.dp else 8.dp, Alignment.CenterVertically)
+        if (priorityCards) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .fillMaxWidth()
+                        .padding(horizontal = 2.dp, vertical = 2.dp)
+                        .zIndex(1f),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier.weight(if (config.gameType == GameType.CACHETA) 1f else 0.82f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CompactPileCard(
+                            label = "MONTE",
+                            countText = state.deckSize.toString(),
+                            card = Card(Suit.SPADES, Rank.ACE),
+                            faceUp = false,
+                            enabled = state.turnPhase == TurnPhase.DRAW && canAttemptDeckDraw(state, config),
+                            active = state.turnPhase == TurnPhase.DRAW,
+                            accentColor = ColorGreenLight,
+                            cardWidth = pileCardWidth,
+                            onClick = onDeckClick
+                        )
+                    }
+
+                    if (config.gameType == GameType.CACHETA) {
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            TurnCardPile(turnCard = state.turnCard, cardWidth = pileCardWidth)
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier.weight(if (config.gameType == GameType.CACHETA) 1f else 1.18f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val topDiscard = state.discardPile.lastOrNull()
+                        CompactPileCard(
+                            label = "LIXO",
+                            countText = state.discardPile.size.toString(),
+                            card = topDiscard,
+                            faceUp = true,
+                            enabled = topDiscard != null,
+                            active = state.canDrawFromDiscard && state.turnPhase == TurnPhase.DRAW,
+                            blocked = topDiscard != null && !state.canDrawFromDiscard &&
+                                (state.isDiscardLocked || state.drawDiscardBlockedReason.isNotBlank()),
+                            accentColor = if (state.canDrawFromDiscard && state.turnPhase == TurnPhase.DRAW) ColorBlueLight else ColorLockRed,
+                            cardWidth = discardCardWidth,
+                            onClick = onDiscardClick,
+                            onBlockedClick = onBlockedDiscardClick
+                        )
+                    }
+                }
+
+            }
+            return@BoxWithConstraints
+        }
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = contentArrangement
         ) {
-            OpponentHandCounter(count = state.opponentHandCount, opponentPickedMorto = state.opponentPickedMorto)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false),
+                    .weight(1f)
+                    .heightIn(min = if (ultraCompact) 76.dp else if (tightPanel) 88.dp else 118.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1125,11 +1374,14 @@ private fun DrawPilesPanel(
                     deckSize = state.deckSize,
                     isMyTurn = state.turnPhase == TurnPhase.DRAW,
                     canDraw = state.turnPhase == TurnPhase.DRAW && canAttemptDeckDraw(state, config),
+                    cardWidth = pileCardWidth,
+                    showHint = !priorityCards,
+                    priorityCard = priorityCards,
                     onClick = onDeckClick
                 )
 
                 if (config.gameType == GameType.CACHETA) {
-                    TurnCardPile(turnCard = state.turnCard)
+                    TurnCardPile(turnCard = state.turnCard, cardWidth = pileCardWidth)
                 }
 
                 DiscardPile(
@@ -1137,67 +1389,11 @@ private fun DrawPilesPanel(
                     isLocked = state.isDiscardLocked,
                     canDraw = state.canDrawFromDiscard && state.turnPhase == TurnPhase.DRAW,
                     blockedReason = state.drawDiscardBlockedReason,
+                    cardWidth = pileCardWidth,
+                    showHint = !priorityCards,
+                    priorityCard = priorityCards,
                     onClick = onDiscardClick,
                     onBlockedClick = onBlockedDiscardClick
-                )
-            }
-            if (config.gameType != GameType.CACHETA) {
-                MortosPile(mortosLeft = state.mortosLeft)
-            }
-        }
-    }
-}
-
-@Composable
-private fun OpponentHandCounter(count: Int, opponentPickedMorto: Boolean = false) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.24f), RoundedCornerShape(10.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "Adversário",
-                    color = Color.White.copy(alpha = 0.68f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                if (opponentPickedMorto) {
-                    Box(
-                        modifier = Modifier
-                            .background(Color(0xFF1565C0), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 4.dp, vertical = 1.dp)
-                    ) {
-                        Text(
-                            text = "M",
-                            color = Color.White,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
-                }
-            }
-            Text(
-                text = "$count carta(s)",
-                color = ColorGold,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.ExtraBold
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy((-16).dp)) {
-            val visibleBacks = count.coerceIn(0, 5)
-            repeat(visibleBacks) { index ->
-                CardView(
-                    card = Card(Suit.SPADES, Rank.ACE),
-                    isFaceUp = false,
-                    modifier = Modifier
-                        .size(width = 28.dp, height = 42.dp)
-                        .graphicsLayer { rotationZ = (index - 2) * 3f }
                 )
             }
         }
@@ -1266,7 +1462,7 @@ private fun MeldArea(
     prominent: Boolean = false,
     gameType: GameType = GameType.TRANCA
 ) {
-    // Jogos na mesa sao publicos. O clique abre o leque completo do jogo sem
+    // Jogos na mesa são públicos. O clique abre o leque completo do jogo sem
     // expor cartas privadas de mao, o que continua correto no online.
     var inspectedCards by remember { mutableStateOf<List<Card>?>(null) }
 
@@ -1302,47 +1498,64 @@ private fun MeldArea(
                 fontSize = if (prominent) 11.sp else 10.sp
             )
         }
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        BoxWithConstraints(
             modifier = Modifier 
                 .fillMaxWidth()
                 .weight(1f)
                 .heightIn(min = if (prominent) 104.dp else 88.dp)
                 .background(accentColor.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
-                .padding(5.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(5.dp)
         ) {
-            if (melds.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .widthIn(min = 220.dp)
-                            .height(42.dp)
-                            .border(1.dp, accentColor.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
-                            .background(Color.Black.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            emptyText,
-                            color = Color.White.copy(alpha = 0.42f),
-                            fontSize = if (prominent) 11.sp else 10.sp,
-                            textAlign = TextAlign.Center
+            val longestMeld = melds.maxOfOrNull { it.size } ?: 3
+            val groupCardWidth = when {
+                maxWidth < 250.dp -> 34.dp
+                melds.size >= 5 -> 34.dp
+                melds.size >= 4 -> 38.dp
+                melds.size >= 3 && longestMeld >= 5 -> 40.dp
+                melds.size >= 3 -> 46.dp
+                longestMeld >= 7 -> 42.dp
+                prominent -> 54.dp
+                else -> 48.dp
+            }
+
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (groupCardWidth <= 38.dp) 4.dp else 6.dp),
+                modifier = Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (melds.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .widthIn(min = 180.dp)
+                                .height(42.dp)
+                                .border(1.dp, accentColor.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+                                .background(Color.Black.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                emptyText,
+                                color = Color.White.copy(alpha = 0.42f),
+                                fontSize = if (prominent) 11.sp else 10.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                } else {
+                    itemsIndexed(
+                        items = melds,
+                        key = { index, meld -> "meld_${index}_${meld.joinToString("_") { it.id }}" }
+                    ) { _, meld ->
+                        MeldGroupView(
+                            meld = meld,
+                            prominent = prominent,
+                            gameType = gameType,
+                            cardWidth = groupCardWidth,
+                            onClick = { inspectedCards = meld }
                         )
                     }
-                }
-            } else {
-                itemsIndexed(
-                    items = melds,
-                    key = { index, meld -> "meld_${index}_${meld.joinToString("_") { it.id }}" }
-                ) { _, meld ->
-                    MeldGroupView(
-                        meld = meld,
-                        prominent = prominent,
-                        gameType = gameType,
-                        onClick = { inspectedCards = meld }
-                    )
                 }
             }
         }
@@ -1350,7 +1563,7 @@ private fun MeldArea(
 }
 
 @Composable
-private fun TurnCardPile(turnCard: Card?) {
+private fun TurnCardPile(turnCard: Card?, cardWidth: Dp = 58.dp) {
     val pulse by rememberInfiniteTransition(label = "turn_card_pulse").animateFloat(
         initialValue = 0.52f,
         targetValue = 1f,
@@ -1372,14 +1585,14 @@ private fun TurnCardPile(turnCard: Card?) {
                 CardView(
                     card = turnCard,
                     isFaceUp = true,
-                    modifier = Modifier.size(width = 58.dp, height = 87.dp)
+                    modifier = Modifier.size(width = cardWidth, height = cardWidth * 1.5f)
                 )
             }
         } else {
             Box(
                 modifier = Modifier
-                    .width(58.dp)
-                    .height(87.dp)
+                    .width(cardWidth)
+                    .height(cardWidth * 1.5f)
                     .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
@@ -1399,9 +1612,136 @@ private fun TurnCardPile(turnCard: Card?) {
     }
 }
 
+@Composable
+private fun CompactPileCard(
+    label: String,
+    countText: String,
+    card: Card?,
+    faceUp: Boolean,
+    enabled: Boolean,
+    active: Boolean,
+    accentColor: Color,
+    cardWidth: Dp,
+    blocked: Boolean = false,
+    onClick: () -> Unit,
+    onBlockedClick: () -> Unit = {}
+) {
+    val pulse by rememberInfiniteTransition(label = "compact_pile_pulse_$label").animateFloat(
+        initialValue = 0.62f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "compact_pile_alpha_$label"
+    )
+    val glowColor = when {
+        active -> accentColor
+        blocked -> ColorLockRed
+        else -> Color.White.copy(alpha = 0.16f)
+    }
+    Box(
+        modifier = Modifier
+            .size(width = cardWidth, height = cardWidth * 1.5f)
+            .shadow(if (active || blocked) 16.dp else 5.dp, RoundedCornerShape(9.dp), clip = false)
+            .background(
+                if (active || blocked) glowColor.copy(alpha = 0.14f * pulse) else Color.Transparent,
+                RoundedCornerShape(10.dp)
+            )
+            .border(
+                width = if (active || blocked) 2.dp else 1.dp,
+                color = if (active || blocked) glowColor.copy(alpha = pulse) else Color.White.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(9.dp)
+            )
+            .padding(if (active || blocked) 3.dp else 1.dp)
+            .clickable(enabled = enabled) {
+                if (blocked) onBlockedClick() else onClick()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (card != null) {
+            CardView(
+                card = card,
+                isFaceUp = faceUp,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.White.copy(alpha = 0.10f), RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = label,
+                    color = Color.White.copy(alpha = 0.42f),
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(999.dp))
+                .padding(horizontal = 6.dp, vertical = 1.dp)
+        ) {
+            Text(
+                text = label,
+                color = accentColor,
+                fontSize = 7.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(999.dp))
+                .border(1.dp, accentColor.copy(alpha = 0.55f), RoundedCornerShape(999.dp))
+                .padding(horizontal = 5.dp, vertical = 1.dp)
+        ) {
+            Text(
+                text = countText,
+                color = ColorGold,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1
+            )
+        }
+
+        if (blocked) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(Color.Black.copy(alpha = 0.34f), RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "X",
+                    color = ColorLockRed,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
+    }
+}
+
 // ─── Monte (Deck) ─────────────────────────────────────────
 @Composable
-private fun DeckPile(deckSize: Int, isMyTurn: Boolean, canDraw: Boolean, onClick: () -> Unit) {
+private fun DeckPile(
+    deckSize: Int,
+    isMyTurn: Boolean,
+    canDraw: Boolean,
+    cardWidth: Dp = 54.dp,
+    showHint: Boolean = true,
+    priorityCard: Boolean = false,
+    onClick: () -> Unit
+) {
     val pulse by rememberInfiniteTransition(label = "deck_pulse").animateFloat(
         initialValue = 0.65f,
         targetValue = 1f,
@@ -1411,10 +1751,20 @@ private fun DeckPile(deckSize: Int, isMyTurn: Boolean, canDraw: Boolean, onClick
         ),
         label = "deck_pulse_alpha"
     )
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("MONTE", color = ColorGreenLight, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(3.dp))
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            "MONTE",
+            color = ColorGreenLight,
+            fontSize = if (priorityCard) 8.sp else 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(if (priorityCard) 1.dp else 3.dp))
         Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
                 .shadow(if (isMyTurn) 16.dp else 5.dp, RoundedCornerShape(8.dp), clip = false)
                 .background(
@@ -1437,27 +1787,48 @@ private fun DeckPile(deckSize: Int, isMyTurn: Boolean, canDraw: Boolean, onClick
                         com.brunogiovani.cachetaburaco.domain.models.Rank.ACE
                     ),
                     isFaceUp = false,
-                    modifier = Modifier.size(width = 54.dp, height = 81.dp)
+                    modifier = Modifier.size(width = cardWidth, height = cardWidth * 1.5f)
                 )
             } else {
-                Box(modifier = Modifier.width(54.dp).height(81.dp)
+                Box(modifier = Modifier.width(cardWidth).height(cardWidth * 1.5f)
                     .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp)))
             }
+            if (priorityCard) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(999.dp))
+                        .border(1.dp, ColorGreenLight.copy(alpha = 0.55f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        text = if (deckSize > 0) deckSize.toString() else "0",
+                        color = ColorGold,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1
+                    )
+                }
+            }
         }
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = if (deckSize > 0) "$deckSize cartas" else "Vazio",
-            color = Color.White.copy(alpha = 0.7f),
-            fontSize = 11.sp
-        )
-        if (canDraw) {
+        if (!priorityCard) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = if (deckSize > 0) "$deckSize cartas" else "Vazio",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 11.sp,
+                maxLines = 1
+            )
+        }
+        if (canDraw && showHint) {
             Text(
                 if (deckSize > 0) "Toque para comprar" else "Toque para resolver",
                 color = ColorGreenLight,
-                fontSize = 10.sp
+                fontSize = 10.sp,
+                maxLines = 1
             )
-        } else if (isMyTurn) {
-            Text("Indisponivel", color = Color.White.copy(alpha = 0.45f), fontSize = 10.sp)
+        } else if (isMyTurn && showHint) {
+            Text("Indisponível", color = Color.White.copy(alpha = 0.45f), fontSize = 10.sp, maxLines = 1)
         }
     }
 }
@@ -1478,6 +1849,9 @@ private fun DiscardPile(
     isLocked: Boolean,
     canDraw: Boolean,
     blockedReason: String,
+    cardWidth: Dp = 54.dp,
+    showHint: Boolean = true,
+    priorityCard: Boolean = false,
     onClick: () -> Unit,
     onBlockedClick: () -> Unit
 ) {
@@ -1498,9 +1872,18 @@ private fun DiscardPile(
         label = "discard_pulse_alpha"
     )
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("LIXO", color = if (canDraw) ColorBlueLight else Color.White.copy(alpha = 0.72f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(3.dp))
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            "LIXO",
+            color = if (canDraw) ColorBlueLight else Color.White.copy(alpha = 0.72f),
+            fontSize = if (priorityCard) 8.sp else 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(if (priorityCard) 1.dp else 3.dp))
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -1533,7 +1916,7 @@ private fun DiscardPile(
                 CardView(
                     card = topCard,
                     isFaceUp = true,
-                    modifier = Modifier.size(width = 54.dp, height = 81.dp)
+                    modifier = Modifier.size(width = cardWidth, height = cardWidth * 1.5f)
                 )
                 if (isBlocked) {
                     Box(
@@ -1551,32 +1934,57 @@ private fun DiscardPile(
                     }
                 }
             } else {
-                Box(modifier = Modifier.width(54.dp).height(81.dp)
+                Box(modifier = Modifier.width(cardWidth).height(cardWidth * 1.5f)
                     .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("Lixo", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp)
+                    Text("Lixo", color = Color.White.copy(alpha = 0.4f), fontSize = if (priorityCard) 8.sp else 12.sp, maxLines = 1)
+                }
+            }
+            if (priorityCard) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(999.dp))
+                        .border(1.dp, statusColor.copy(alpha = if (topCard != null) 0.55f else 0.22f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        text = discardPile.size.toString(),
+                        color = if (discardPile.isNotEmpty()) ColorGold else Color.White.copy(alpha = 0.65f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1
+                    )
                 }
             }
         }
-        Spacer(modifier = Modifier.height(4.dp))
-        // Mostra quantidade de cartas no lixo
         val pileCount = discardPile.size
-        Text(
-            text = if (pileCount > 0) "$pileCount carta(s)" else "Vazio",
-            color = Color.White.copy(alpha = 0.7f),
-            fontSize = 11.sp
-        )
+        if (!priorityCard) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = if (pileCount > 0) "$pileCount carta(s)" else "Vazio",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 11.sp,
+                maxLines = 1
+            )
+        }
         when {
-            isLocked -> Text(blockedReason, color = ColorLockRed, fontSize = 10.sp)
-            canDraw -> Text("Toque para comprar", color = ColorBlueLight, fontSize = 10.sp)
+            isLocked && showHint -> Text(blockedReason, color = ColorLockRed, fontSize = 10.sp, maxLines = 1)
+            canDraw && showHint -> Text("Toque para comprar", color = ColorBlueLight, fontSize = 10.sp, maxLines = 1)
         }
     }
 }
 
 // ─── Grupo de Melds na Mesa ───────────────────────────────
 @Composable
-private fun MeldGroupView(meld: List<Card>, prominent: Boolean = false, gameType: GameType = GameType.TRANCA, onClick: () -> Unit) {
+private fun MeldGroupView(
+    meld: List<Card>,
+    prominent: Boolean = false,
+    gameType: GameType = GameType.TRANCA,
+    cardWidth: Dp = if (prominent) 58.dp else 50.dp,
+    onClick: () -> Unit
+) {
     val isCanastra = meld.size >= 7
     val isCleanCanastra = isCanastra && meld.none { GameRulesEngine.isWildcard(it, gameType) }
     val canastraColor = if (isCleanCanastra) ColorGold else Color(0xFFB0B0B0)
@@ -1617,9 +2025,13 @@ private fun MeldGroupView(meld: List<Card>, prominent: Boolean = false, gameType
             .border(if (isCanastra) 2.dp else 1.dp, borderColor.copy(alpha = if (isCanastra) pulse else 0.85f), RoundedCornerShape(8.dp))
             .padding(if (prominent) 7.dp else 5.dp)
     ) {
-        val cardWidth = if (prominent) 58.dp else 50.dp
         val cardHeight = cardWidth * 1.5f
-        val spacing = if (prominent) (-10).dp else (-8).dp
+        val spacing = when {
+            cardWidth <= 36.dp -> (-6).dp
+            cardWidth <= 42.dp -> (-7).dp
+            prominent -> (-10).dp
+            else -> (-8).dp
+        }
         Row(
             horizontalArrangement = Arrangement.spacedBy(spacing),
             verticalAlignment = Alignment.CenterVertically,
@@ -1668,7 +2080,7 @@ private fun MeldGroupView(meld: List<Card>, prominent: Boolean = false, gameType
     }
 }
 
-// ─── Mão do Jogador ───────────────────────────────────────
+// --- Mão do Jogador ---------------------------------------
 @Composable
 private fun MeldInspectorDialog(
     title: String,
@@ -1941,7 +2353,7 @@ private fun HandSection(
         if (state.lastMeldResult.isNotBlank()) isProcessing = false
     }
 
-    // Altura da carta inteira e quanto fica visível por padrão (efeito domingó)
+    // Altura da carta inteira e quanto fica visível por padrão (efeito dominó)
     val handCount = state.myHand.size.coerceAtLeast(1)
     val compactHand = state.myHand.size >= 13
     val cardW = if (compactHand) 52.dp else 64.dp
@@ -1966,21 +2378,21 @@ private fun HandSection(
         // ── Barra de ações — fora do Box das cartas, nunca sobreposta ────────
         // Renderiza num bloco Row isolado ACIMA do Box das cartas,
         // evitando qualquer sobreposição de toque ou visual.
-        Row(
+        if (canInteract || selectedCount > 0) {
+            Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xCC000000))
-                .padding(horizontal = 12.dp, vertical = 7.dp)
-                .heightIn(min = 48.dp),
+                .background(Color.Black.copy(alpha = 0.56f))
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .heightIn(min = 44.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (!canInteract) "Aguardando..."
-                       else if (selectedCount == 0) "Mao - ${state.myHand.size} cartas"
+                text = if (selectedCount == 0) "Mão - ${state.myHand.size} cartas"
                        else "${selectedCount} selecionada(s)",
-                color = if (canInteract && selectedCount > 0) ColorGold else Color.White.copy(alpha = 0.7f),
+                color = if (selectedCount > 0) ColorGold else Color.White.copy(alpha = 0.7f),
                 fontSize = 12.sp,
-                fontWeight = if (canInteract && selectedCount > 0) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (selectedCount > 0) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier.weight(1f)
             )
 
@@ -2037,10 +2449,12 @@ private fun HandSection(
                 }
             }
         }
+        }
 
-        // ── Cartas da mão — estilo dominó ────────────────────────────────────
+        // -- Cartas da mão - estilo dominó ------------------------------------
         // O Box tem altura = parte visível da carta, e as cartas transbordam para baixo
         // ficando escondidas pelo clip. Carta selecionada sobe com offset negativo.
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2059,7 +2473,7 @@ private fun HandSection(
                 horizontalArrangement = Arrangement.spacedBy(overlap, Alignment.CenterHorizontally),
                 modifier = Modifier
                     .fillMaxWidth()
-                    // Mantem o LazyRow sem clip para cartas selecionadas subirem acima da Box.
+                    // Mantém o LazyRow sem clip para cartas selecionadas subirem acima da Box.
                     .wrapContentHeight(unbounded = true)
                     .align(Alignment.BottomCenter)
             ) {
@@ -2200,7 +2614,7 @@ private fun RestartMatchDialog(onConfirm: () -> Unit, onDecline: () -> Unit) {
     )
 }
 
-// ─── Diálogo de Desconexão ────────────────────────────────
+// --- Diálogo de Desconexão --------------------------------
 @Composable
 private fun DisconnectDialog(message: String, isClient: Boolean, onBack: () -> Unit, onWait: () -> Unit, onReconnect: () -> Unit) {
     AlertDialog(

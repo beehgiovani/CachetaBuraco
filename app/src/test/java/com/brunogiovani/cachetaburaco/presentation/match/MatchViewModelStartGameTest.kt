@@ -1,5 +1,7 @@
 package com.brunogiovani.cachetaburaco.presentation.match
 
+import com.brunogiovani.cachetaburaco.data.network.SoloBotNetworkRepository
+import com.brunogiovani.cachetaburaco.domain.models.BotDifficulty
 import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.models.Card
@@ -15,10 +17,13 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.json.JSONArray
@@ -27,6 +32,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -488,6 +494,112 @@ class MatchViewModelStartGameTest {
     }
 
     @Test
+    fun `next round clears table and redeals while preserving accumulated scores`() = runTest {
+        val repo = FakeLocalNetworkRepository()
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        advanceUntilIdle()
+        val staleCard = Card(suit = Suit.SPADES, rank = Rank.KING, isJoker = true)
+        val scoredState = viewModel.gameState.value.copy(
+            myHand = listOf(staleCard),
+            selectedCards = setOf(staleCard),
+            discardPile = listOf(staleCard),
+            myTableMelds = listOf(listOf(staleCard)),
+            opponentTableMelds = listOf(listOf(staleCard)),
+            myScore = 340,
+            opponentScore = 120,
+            teamScores = listOf(340, 120),
+            showRoundEndDialog = true,
+            roundEndDetails = RoundEndDetails(
+                winnerName = "Você",
+                myRoundScore = 340,
+                opponentRoundScore = 120,
+                myNewTotal = 340,
+                opponentNewTotal = 120,
+                isMatchOver = false,
+                breakdown = "Rodada anterior"
+            )
+        )
+        viewModel.mutableGameState().value = scoredState
+
+        viewModel.nextRound()
+        advanceUntilIdle()
+
+        val state = viewModel.gameState.value
+        assertEquals(11, state.myHand.size)
+        assertEquals(1, state.discardPile.size)
+        assertFalse(state.myHand.contains(staleCard))
+        assertFalse(state.discardPile.contains(staleCard))
+        assertFalse(state.myTableMelds.flatten().contains(staleCard))
+        assertTrue(state.opponentTableMelds.isEmpty())
+        assertTrue(state.selectedCards.isEmpty())
+        assertEquals(2, state.mortosLeft)
+        assertEquals(340, state.myScore)
+        assertEquals(120, state.opponentScore)
+        assertEquals(listOf(340, 120), state.teamScores)
+        assertFalse(state.showRoundEndDialog)
+        assertNull(state.roundEndDetails)
+        assertTrue(repo.broadcastMessages.any { it.type == "NEXT_ROUND" })
+        assertEquals(2, repo.privateClientMessages.count { it.message.type == "GAME_START" })
+        assertTrue(repo.eventLog.indexOf("broadcast:NEXT_ROUND") < repo.eventLog.lastIndexOf("client:GAME_START"))
+    }
+
+    @Test
+    fun `full restart waits all players then clears table redeals and resets scores`() = runTest {
+        val repo = FakeLocalNetworkRepository()
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 4)
+        )
+        viewModel.startGame()
+        advanceUntilIdle()
+        val staleCard = Card(suit = Suit.HEARTS, rank = Rank.QUEEN, isJoker = true)
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(
+            myHand = listOf(staleCard),
+            discardPile = listOf(staleCard),
+            myTableMelds = listOf(listOf(staleCard)),
+            opponentTableMelds = listOf(listOf(staleCard)),
+            myScore = 600,
+            opponentScore = 250,
+            teamScores = listOf(600, 250)
+        )
+
+        viewModel.requestRestartMatch()
+        advanceUntilIdle()
+        repo.emitIncoming(NetworkMessage("client-1", "REPLY_RESTART", "YES"))
+        advanceUntilIdle()
+        repo.emitIncoming(NetworkMessage("client-2", "REPLY_RESTART", "YES"))
+        advanceUntilIdle()
+
+        assertEquals(listOf(600, 250), viewModel.gameState.value.teamScores)
+        assertFalse(repo.broadcastMessages.any { it.type == "NEXT_ROUND" })
+
+        repo.emitIncoming(NetworkMessage("client-3", "REPLY_RESTART", "YES"))
+        advanceUntilIdle()
+
+        val state = viewModel.gameState.value
+        assertEquals(11, state.myHand.size)
+        assertEquals(1, state.discardPile.size)
+        assertFalse(state.myHand.contains(staleCard))
+        assertFalse(state.discardPile.contains(staleCard))
+        assertFalse(state.myTableMelds.flatten().contains(staleCard))
+        assertTrue(state.opponentTableMelds.isEmpty())
+        assertEquals(listOf(0, 0), state.teamScores)
+        assertEquals(0, state.myScore)
+        assertEquals(0, state.opponentScore)
+        assertEquals(2, state.mortosLeft)
+        assertTrue(repo.broadcastMessages.any { it.type == "NEXT_ROUND" })
+        assertEquals(6, repo.privateClientMessages.count { it.message.type == "GAME_START" })
+    }
+
+    @Test
     fun `client receives indirect morto but waits next turn`() = runTest {
         val repo = FakeLocalNetworkRepository()
         val viewModel = MatchViewModel(
@@ -523,6 +635,139 @@ class MatchViewModelStartGameTest {
         assertEquals(mortoIds.sorted(), state.myHand.map { it.id }.sorted())
         assertEquals(TurnPhase.WAITING_OPPONENT, state.turnPhase)
         assertEquals(0, state.activeSeat)
+    }
+
+    @Test
+    fun `solo bot replies round count so host can finish stock empty round`() = runTest {
+        val repo = SoloBotNetworkRepository()
+        val messages = mutableListOf<NetworkMessage>()
+        val collectJob = launch {
+            repo.incomingMessages.collect { messages += it }
+        }
+        runCurrent()
+
+        repo.sendMessageToClient(
+            0,
+            NetworkMessage(
+                "host",
+                "GAME_START",
+                gameStartPayload(
+                    gameType = GameType.TRANCA,
+                    seat = 1,
+                    hand = listOf(cardId(Rank.FIVE, Suit.HEARTS), cardId(Rank.SIX, Suit.HEARTS)),
+                    activeSeat = 0,
+                    maxPlayers = 2
+                )
+            )
+        )
+
+        repo.sendMessage(NetworkMessage("host", "COUNT_ROUND", ""))
+        advanceUntilIdle()
+
+        val reply = messages.lastOrNull { it.type == "REPLY_COUNT_ROUND" }
+        assertNotNull(reply)
+        val payload = JSONObject(reply!!.payload)
+        assertEquals(1, payload.getInt("seat"))
+        assertEquals(2, payload.getJSONArray("hand").length())
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `normal solo bot buys discard when top card creates a valid tranca meld`() = runTest {
+        val repo = SoloBotNetworkRepository()
+        val messages = mutableListOf<NetworkMessage>()
+        val collectJob = launch {
+            repo.incomingMessages.collect { messages += it }
+        }
+        runCurrent()
+
+        repo.sendMessageToClient(
+            0,
+            NetworkMessage(
+                "host",
+                "GAME_START",
+                gameStartPayload(
+                    gameType = GameType.TRANCA,
+                    seat = 1,
+                    hand = listOf(cardId(Rank.FIVE, Suit.HEARTS), cardId(Rank.SIX, Suit.HEARTS), cardId(Rank.KING, Suit.SPADES)),
+                    activeSeat = 0,
+                    maxPlayers = 2,
+                    botDifficulty = BotDifficulty.NORMAL
+                )
+            )
+        )
+
+        repo.sendMessage(
+            NetworkMessage(
+                "host",
+                "DISCARD",
+                JSONObject()
+                    .put("v", 1)
+                    .put("card", cardId(Rank.FOUR, Suit.HEARTS))
+                    .put("seat", 0)
+                    .toString()
+            )
+        )
+        advanceTimeBy(700)
+        advanceUntilIdle()
+
+        assertTrue(messages.any { it.type == "DRAW_DISCARD" && it.payload == cardId(Rank.FOUR, Suit.HEARTS) })
+        assertFalse(messages.any { it.type == "REQ_DRAW_DECK" })
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `easy solo bot avoids obvious discard into opponent table`() = runTest {
+        val repo = SoloBotNetworkRepository()
+        val messages = mutableListOf<NetworkMessage>()
+        val collectJob = launch {
+            repo.incomingMessages.collect { messages += it }
+        }
+        runCurrent()
+
+        repo.sendMessageToClient(
+            0,
+            NetworkMessage(
+                "host",
+                "GAME_START",
+                gameStartPayload(
+                    gameType = GameType.TRANCA,
+                    seat = 1,
+                    hand = listOf(cardId(Rank.KING, Suit.HEARTS), cardId(Rank.ACE, Suit.SPADES)),
+                    activeSeat = 0,
+                    maxPlayers = 2,
+                    botDifficulty = BotDifficulty.EASY
+                )
+            )
+        )
+        repo.sendMessage(
+            NetworkMessage(
+                "host",
+                "MELD",
+                JSONObject()
+                    .put("v", 1)
+                    .put("seat", 0)
+                    .put("team", 0)
+                    .put("replaceIndex", -1)
+                    .put(
+                        "cards",
+                        JSONArray()
+                            .put(cardId(Rank.JACK, Suit.HEARTS))
+                            .put(cardId(Rank.QUEEN, Suit.HEARTS))
+                    )
+                    .toString()
+            )
+        )
+
+        repo.sendMessageToPlayer("client-1", NetworkMessage("host", "SERVE_CARD", cardId(Rank.FOUR, Suit.CLUBS)))
+        advanceTimeBy(900)
+        advanceUntilIdle()
+
+        val discard = messages.lastOrNull { it.type == "DISCARD" }
+        assertNotNull(discard)
+        assertTrue(discard!!.payload.contains(cardId(Rank.FOUR, Suit.CLUBS)))
+        assertFalse(discard.payload.contains(cardId(Rank.KING, Suit.HEARTS)))
+        collectJob.cancel()
     }
 
     @Test
@@ -747,7 +992,126 @@ class MatchViewModelStartGameTest {
         assertEquals(TurnPhase.DRAW, viewModel.gameState.value.turnPhase)
         assertEquals(listOf(topDiscard), viewModel.gameState.value.discardPile)
         assertFalse(repo.broadcastMessages.any { it.type == "DRAW_DISCARD" })
-        assertTrue(viewModel.gameState.value.feedbackMessage.contains("nao pode comprar do lixo"))
+        assertTrue(viewModel.gameState.value.feedbackMessage.contains("não pode comprar do lixo"))
+    }
+
+    @Test
+    fun `tranca discard draw releases rest only after top card is melded`() = runTest {
+        val repo = FakeLocalNetworkRepository()
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "client-1",
+            isHost = false,
+            config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 2)
+        )
+        val topDiscard = Card(suit = Suit.HEARTS, rank = Rank.FOUR)
+        val lowerDiscard = Card(suit = Suit.CLUBS, rank = Rank.KING)
+        val fiveHearts = Card(suit = Suit.HEARTS, rank = Rank.FIVE)
+        val sixHearts = Card(suit = Suit.HEARTS, rank = Rank.SIX)
+
+        repo.emitIncoming(NetworkMessage("host", "GAME_START", gameStartPayload(
+            gameType = GameType.TRANCA,
+            seat = 1,
+            hand = listOf(fiveHearts.id, sixHearts.id),
+            discardId = topDiscard.id,
+            activeSeat = 1,
+            maxPlayers = 2
+        )))
+        advanceUntilIdle()
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(
+            discardPile = listOf(lowerDiscard, topDiscard)
+        )
+
+        viewModel.drawFromDiscard()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.gameState.value.myHand.contains(topDiscard))
+        assertFalse(viewModel.gameState.value.myHand.contains(lowerDiscard))
+        assertEquals(listOf(lowerDiscard), viewModel.gameState.value.discardPile)
+
+        listOf(topDiscard, fiveHearts, sixHearts).forEach { viewModel.toggleCardSelection(it) }
+        viewModel.meldSelectedCards()
+        advanceUntilIdle()
+
+        assertFalse(viewModel.gameState.value.myHand.contains(topDiscard))
+        assertTrue(viewModel.gameState.value.myHand.contains(lowerDiscard))
+        assertTrue(viewModel.gameState.value.discardPile.isEmpty())
+        assertTrue(repo.broadcastMessages.any { it.type == "DRAW_DISCARD" && it.payload == topDiscard.id })
+        assertTrue(repo.broadcastMessages.any { it.type == "MELD" && it.payload.contains(topDiscard.id) })
+    }
+
+    @Test
+    fun `tranca discard draw cannot be justified by lower discard cards`() = runTest {
+        val repo = FakeLocalNetworkRepository()
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "client-1",
+            isHost = false,
+            config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 2)
+        )
+        val topDiscard = Card(suit = Suit.HEARTS, rank = Rank.FOUR)
+        val lowerDiscard = Card(suit = Suit.HEARTS, rank = Rank.SIX)
+        val fiveHearts = Card(suit = Suit.HEARTS, rank = Rank.FIVE)
+
+        repo.emitIncoming(NetworkMessage("host", "GAME_START", gameStartPayload(
+            gameType = GameType.TRANCA,
+            seat = 1,
+            hand = listOf(fiveHearts.id),
+            discardId = topDiscard.id,
+            activeSeat = 1,
+            maxPlayers = 2
+        )))
+        advanceUntilIdle()
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(
+            discardPile = listOf(lowerDiscard, topDiscard)
+        )
+
+        viewModel.drawFromDiscard()
+        advanceUntilIdle()
+
+        assertEquals(TurnPhase.DRAW, viewModel.gameState.value.turnPhase)
+        assertEquals(listOf(lowerDiscard, topDiscard), viewModel.gameState.value.discardPile)
+        assertFalse(repo.broadcastMessages.any { it.type == "DRAW_DISCARD" })
+    }
+
+    @Test
+    fun `cacheta cannot append a fourth card to a table trinca`() = runTest {
+        val repo = FakeLocalNetworkRepository()
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "client-1",
+            isHost = false,
+            config = MatchConfig(gameType = GameType.CACHETA, maxPlayers = 2)
+        )
+        val trinca = listOf(
+            Card(suit = Suit.HEARTS, rank = Rank.NINE),
+            Card(suit = Suit.SPADES, rank = Rank.NINE),
+            Card(suit = Suit.CLUBS, rank = Rank.NINE)
+        )
+        val fourthNine = Card(suit = Suit.DIAMONDS, rank = Rank.NINE)
+
+        repo.emitIncoming(NetworkMessage("host", "GAME_START", gameStartPayload(
+            gameType = GameType.CACHETA,
+            seat = 1,
+            hand = listOf(fourthNine.id),
+            activeSeat = 1,
+            maxPlayers = 2
+        )))
+        advanceUntilIdle()
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(
+            myHand = listOf(fourthNine),
+            myTableMelds = listOf(trinca),
+            turnPhase = TurnPhase.ACTION
+        )
+
+        viewModel.toggleCardSelection(fourthNine)
+        viewModel.meldSelectedCards(chosenTargetIndex = 0)
+        advanceUntilIdle()
+
+        assertEquals(listOf(fourthNine), viewModel.gameState.value.myHand)
+        assertEquals(listOf(trinca), viewModel.gameState.value.myTableMelds)
+        assertTrue(viewModel.gameState.value.lastMeldResult.contains("trinca fica fechada"))
+        assertFalse(repo.broadcastMessages.any { it.type == "MELD" })
     }
 
     @Test
@@ -809,21 +1173,210 @@ class MatchViewModelStartGameTest {
         val summary = JSONObject(repo.broadcastMessages.last { it.type == "ROUND_SUMMARY" }.payload)
         val breakdown = summary.getString("breakdown")
 
-        assertTrue(breakdown.contains("Equipe [TEAM_1]: Mesa +65 | Canastras +200 = 265 pts"))
+        assertTrue(breakdown.contains("Equipe [TEAM_1]: Mesa 7 carta(s) +65 | Canastras +200 = 265 pts"))
         assertFalse(breakdown.contains("Equipe [TEAM_1]: Mesa +130 | Canastras +400 = 530 pts"))
+    }
+
+    @Test
+    fun `tranca round summary applies the same asymmetric score on host and client`() = runTest {
+        val hostRepo = FakeLocalNetworkRepository()
+        val hostViewModel = MatchViewModel(
+            networkRepository = hostRepo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 2, uniformCardPoints = false)
+        )
+        hostViewModel.startGame()
+        advanceUntilIdle()
+
+        hostRepo.emitIncoming(NetworkMessage("mirror-host", "PICK_MORTO", """{"v":1,"mortosLeft":1,"seat":0,"team":0}"""))
+        advanceUntilIdle()
+        val winnerMeld = cleanCanastraJson()
+        val loserHand = listOf(
+            cardId(Rank.ACE, Suit.CLUBS),
+            cardId(Rank.FOUR, Suit.DIAMONDS)
+        )
+
+        hostRepo.emitIncoming(NetworkMessage("client-1", "WIN_ROUND", roundReportPayload(
+            playerId = "host",
+            seat = 0,
+            winnerId = "host",
+            hand = emptyList(),
+            tableMelds = listOf(winnerMeld)
+        )))
+        advanceUntilIdle()
+        hostRepo.emitIncoming(NetworkMessage("client-1", "REPLY_WIN_ROUND", roundReportPayload(
+            playerId = "client-1",
+            seat = 1,
+            hand = loserHand
+        )))
+        advanceUntilIdle()
+
+        val summaryMessage = hostRepo.broadcastMessages.last { it.type == "ROUND_SUMMARY" }
+        val summary = JSONObject(summaryMessage.payload)
+        assertEquals(365, summary.getJSONArray("teamRoundScores").getInt(0))
+        assertEquals(-120, summary.getJSONArray("teamRoundScores").getInt(1))
+        assertEquals(365, hostViewModel.gameState.value.roundEndDetails!!.myRoundScore)
+        assertEquals(-120, hostViewModel.gameState.value.roundEndDetails!!.opponentRoundScore)
+        assertTrue(summary.getString("breakdown").contains("Mesa 7 carta(s) +65 | Canastras +200 = 265 pts"))
+        assertTrue(summary.getString("breakdown").contains("Mão 2 carta(s) -20 = -20 pts"))
+        assertTrue(summary.getString("breakdown").contains("bonus de bate +100"))
+
+        val clientRepo = FakeLocalNetworkRepository()
+        val clientViewModel = MatchViewModel(
+            networkRepository = clientRepo,
+            playerId = "client-1",
+            isHost = false,
+            config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 2, uniformCardPoints = false)
+        )
+        clientRepo.emitIncoming(NetworkMessage("host", "GAME_START", gameStartPayload(
+            gameType = GameType.TRANCA,
+            seat = 1,
+            hand = loserHand,
+            activeSeat = 1,
+            maxPlayers = 2
+        )))
+        advanceUntilIdle()
+        clientRepo.emitIncoming(summaryMessage)
+        advanceUntilIdle()
+
+        assertEquals(-120, clientViewModel.gameState.value.roundEndDetails!!.myRoundScore)
+        assertEquals(365, clientViewModel.gameState.value.roundEndDetails!!.opponentRoundScore)
+        assertEquals(-120, clientViewModel.gameState.value.myScore)
+        assertEquals(365, clientViewModel.gameState.value.opponentScore)
+    }
+
+    @Test
+    fun `solo bot replies when host wins round`() = runTest {
+        val repo = SoloBotNetworkRepository()
+        val replies = mutableListOf<NetworkMessage>()
+        val collectJob = launch {
+            repo.incomingMessages.collect { replies += it }
+        }
+        runCurrent()
+
+        repo.startHosting("host", 0, MatchConfig(gameType = GameType.CACHETA, maxPlayers = 2))
+        repo.sendMessageToClient(
+            0,
+            NetworkMessage(
+                "host",
+                "GAME_START",
+                gameStartPayload(gameType = GameType.CACHETA, seat = 1, maxPlayers = 2)
+            )
+        )
+        repo.sendMessage(NetworkMessage("host", "WIN_ROUND", roundReportPayload("host", 0, winnerId = "host")))
+        advanceUntilIdle()
+
+        val reply = replies.lastOrNull { it.type == "REPLY_WIN_ROUND" }
+        assertNotNull(reply)
+        val payload = JSONObject(reply!!.payload)
+        assertEquals("machine-1", payload.getString("playerId"))
+        assertEquals(1, payload.getInt("seat"))
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `host versus solo bot finishes cacheta when host melds last cards`() = runTest {
+        val repo = SoloBotNetworkRepository()
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.CACHETA, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        advanceUntilIdle()
+
+        val winningHand = listOf(
+            Card(Suit.HEARTS, Rank.SEVEN),
+            Card(Suit.HEARTS, Rank.EIGHT),
+            Card(Suit.HEARTS, Rank.NINE)
+        )
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(
+            myHand = winningHand,
+            selectedCards = emptySet(),
+            myTableMelds = emptyList(),
+            turnPhase = TurnPhase.ACTION,
+            activeSeat = 0,
+            showRoundEndDialog = false,
+            roundEndDetails = null
+        )
+
+        winningHand.forEach { viewModel.toggleCardSelection(it) }
+        viewModel.meldSelectedCards()
+        advanceUntilIdle()
+
+        val state = viewModel.gameState.value
+        assertTrue(state.showRoundEndDialog)
+        assertNotNull(state.roundEndDetails)
+        assertEquals("Você", state.roundEndDetails!!.winnerName)
+    }
+
+    @Test
+    fun `next round against solo bot does not leave previous win active`() = runTest {
+        val repo = SoloBotNetworkRepository()
+        val botMessages = mutableListOf<NetworkMessage>()
+        val collectJob = launch {
+            repo.incomingMessages.collect { botMessages += it }
+        }
+        runCurrent()
+
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.CACHETA, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        advanceUntilIdle()
+
+        val winningHand = listOf(
+            Card(Suit.CLUBS, Rank.FOUR),
+            Card(Suit.CLUBS, Rank.FIVE),
+            Card(Suit.CLUBS, Rank.SIX)
+        )
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(
+            myHand = winningHand,
+            selectedCards = emptySet(),
+            myTableMelds = emptyList(),
+            turnPhase = TurnPhase.ACTION,
+            activeSeat = 0,
+            showRoundEndDialog = false,
+            roundEndDetails = null
+        )
+
+        winningHand.forEach { viewModel.toggleCardSelection(it) }
+        viewModel.meldSelectedCards()
+        advanceUntilIdle()
+        assertTrue(viewModel.gameState.value.showRoundEndDialog)
+
+        botMessages.clear()
+        viewModel.nextRound()
+        advanceTimeBy(700)
+        runCurrent()
+
+        val state = viewModel.gameState.value
+        assertFalse(state.showRoundEndDialog)
+        assertNull(state.roundEndDetails)
+        assertTrue(state.myHand.isNotEmpty())
+        assertTrue(botMessages.any { it.type == "REQ_DRAW_DECK" || it.type == "DRAW_DISCARD" })
+
+        collectJob.cancel()
     }
 
     private fun roundReportPayload(
         playerId: String,
         seat: Int,
         winnerId: String? = null,
+        hand: List<String> = emptyList(),
         tableMelds: List<org.json.JSONArray> = emptyList()
     ): String {
         return JSONObject()
             .put("v", 1)
             .put("playerId", playerId)
             .put("seat", seat)
-            .put("hand", org.json.JSONArray())
+            .put("hand", org.json.JSONArray().apply { hand.forEach { put(it) } })
             .put("tableMelds", org.json.JSONArray().apply { tableMelds.forEach { put(it) } })
             .apply { if (winnerId != null) put("winnerId", winnerId) }
             .toString()
@@ -836,11 +1389,17 @@ class MatchViewModelStartGameTest {
         autoSortHand: Boolean = true,
         activeSeat: Int = 1,
         maxPlayers: Int = 4,
-        discardId: String = ""
+        discardId: String = "",
+        botDifficulty: BotDifficulty = BotDifficulty.NORMAL
     ): String {
         return JSONObject()
             .put("v", 1)
-            .put("config", MatchConfig(gameType = gameType, maxPlayers = maxPlayers, autoSortHand = autoSortHand).serialize())
+            .put("config", MatchConfig(
+                gameType = gameType,
+                maxPlayers = maxPlayers,
+                autoSortHand = autoSortHand,
+                botDifficulty = botDifficulty
+            ).serialize())
             .put("hand", org.json.JSONArray().apply { hand.forEach { put(it) } })
             .put("seat", seat)
             .put("activeSeat", activeSeat)
@@ -928,6 +1487,7 @@ private class FakeLocalNetworkRepository : LocalNetworkRepository {
     val broadcastMessages = mutableListOf<NetworkMessage>()
     val privateClientMessages = mutableListOf<PrivateClientMessage>()
     val privatePlayerMessages = mutableListOf<PrivatePlayerMessage>()
+    val eventLog = mutableListOf<String>()
 
     override fun startHosting(playerName: String, port: Int, config: MatchConfig?) = Unit
     override fun stopHosting() = Unit
@@ -939,15 +1499,18 @@ private class FakeLocalNetworkRepository : LocalNetworkRepository {
     override fun resetConnectionStatus() = Unit
 
     override fun sendMessage(message: NetworkMessage) {
+        eventLog += "broadcast:${message.type}"
         broadcastMessages += message
     }
 
     override fun sendMessageToClient(clientIndex: Int, message: NetworkMessage): Boolean {
+        eventLog += "client:${message.type}"
         privateClientMessages += PrivateClientMessage(clientIndex, message)
         return true
     }
 
     override fun sendMessageToPlayer(playerId: String, message: NetworkMessage): Boolean {
+        eventLog += "player:${message.type}"
         privatePlayerMessages += PrivatePlayerMessage(playerId, message)
         return true
     }

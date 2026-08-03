@@ -1,20 +1,19 @@
 plugins {
     id("com.android.application")
-    // org.jetbrains.kotlin.android removido: Kotlin é built-in no AGP 9.0+
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace = "com.brunogiovani.cachetaburaco"
     compileSdk = 37
-    buildToolsVersion = "36.0.0"
+    buildToolsVersion = "36.1.0"
 
     defaultConfig {
         applicationId = "com.brunogiovani.cachetaburaco"
         minSdk = 26
         targetSdk = 37
         versionCode = 1
-        versionName =    "1.0.0"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -42,6 +41,12 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+    }
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
@@ -54,14 +59,12 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     implementation("androidx.compose.material3:material3")
     
-    // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
-    
-    // Splash Screen
+
     implementation("androidx.core:core-splashscreen:1.2.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    testImplementation("org.json:json:20260522")
+    testImplementation("org.json:json:20260719")
 }

@@ -71,7 +71,7 @@ fun CardView(
                 .border(2.dp, Color.Black.copy(alpha = 0.08f), cardShape),
             contentAlignment = Alignment.Center
         ) {
-            val scaleFactor = maxWidth.value / 80f // 80dp is the baseline width
+            val scaleFactor = maxWidth.value / 80f
             
             if (isFaceUp) {
                 Canvas(modifier = Modifier.matchParentSize()) {
@@ -82,15 +82,24 @@ fun CardView(
                     )
                 }
                 if (card.isJoker) {
-                    Text(
-                        text = "🃏",
-                        fontSize = (42 * scaleFactor).sp,
-                        color = Color(0xFF212121)
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "★",
+                            fontSize = (34 * scaleFactor).sp,
+                            color = Color(0xFFD6A928),
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = "JOKER",
+                            fontSize = (14 * scaleFactor).sp,
+                            color = Color(0xFF212121),
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
                 } else {
                     val color = if (card.suit == Suit.HEARTS || card.suit == Suit.DIAMONDS) Color(0xFFD32F2F) else Color(0xFF212121)
                     val mutedColor = color.copy(alpha = 0.12f)
-                    val symbol = when (card.suit) {
+                    val displaySymbol = when (card.suit) {
                         Suit.HEARTS -> "♥"
                         Suit.DIAMONDS -> "♦"
                         Suit.CLUBS -> "♣"
@@ -113,7 +122,7 @@ fun CardView(
                         // Top Left
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(text = rankText, color = color, fontWeight = FontWeight.Bold, fontSize = (16 * scaleFactor).sp)
-                            Text(text = symbol, color = color, fontSize = (14 * scaleFactor).sp)
+                            Text(text = displaySymbol, color = color, fontSize = (14 * scaleFactor).sp)
                         }
     
                         // Center Symbol
@@ -124,12 +133,12 @@ fun CardView(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = symbol,
+                                text = displaySymbol,
                                 color = mutedColor,
                                 fontSize = (48 * scaleFactor).sp
                             )
                             Text(
-                                text = symbol,
+                                text = displaySymbol,
                                 color = color,
                                 fontSize = (30 * scaleFactor).sp
                             )
@@ -141,7 +150,7 @@ fun CardView(
                             modifier = Modifier.align(Alignment.End)
                         ) {
                             Text(text = rankText, color = color, fontWeight = FontWeight.Bold, fontSize = (16 * scaleFactor).sp)
-                            Text(text = symbol, color = color, fontSize = (14 * scaleFactor).sp)
+                            Text(text = displaySymbol, color = color, fontSize = (14 * scaleFactor).sp)
                         }
                     }
                 }

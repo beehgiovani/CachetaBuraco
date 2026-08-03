@@ -1,6 +1,7 @@
 package com.brunogiovani.cachetaburaco.data.network
 
 import com.brunogiovani.cachetaburaco.domain.models.Card
+import com.brunogiovani.cachetaburaco.domain.models.BotDifficulty
 import com.brunogiovani.cachetaburaco.domain.models.DeckFactory
 import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
@@ -24,17 +25,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Transporte local para partida contra a maquina.
+ * Modo contra a máquina usando o mesmo caminho de uma partida em rede.
  *
- * Eu trato a IA como se fosse um cliente real: ela recebe GAME_START, pede carta
- * com REQ_DRAW_DECK, baixa jogo com MELD, descarta com DISCARD e pede morto com
- * REQ_PICK_MORTO. Isso e intencional, porque exercita o mesmo fluxo que o online
- * vai usar depois e evita criar regras duplicadas so para o bot.
+ * A máquina guarda apenas a própria mão, observa mesa/lixo/mortos públicos e envia
+ * mensagens como se fosse um cliente normal. Assim o host continua mandando na partida
+ * e a máquina não ganha acesso ao monte real nem à mão do jogador.
  *
- * Responsabilidade desta classe:
- * - guardar a mao privada da maquina;
- * - tomar decisoes simples de jogada;
- * - emitir NetworkMessage para o MatchViewModel do host processar oficialmente.
+ * Os níveis mudam a forma de decidir compra do lixo e descarte. A validação final
+ * continua passando pelo MatchViewModel e pelo GameRulesEngine.
  */
 class SoloBotNetworkRepository : LocalNetworkRepository {
     override val discoveredRooms: StateFlow<List<DiscoveredRoom>> = MutableStateFlow(emptyList())
@@ -52,6 +50,7 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
     private var currentConfig = MatchConfig(maxPlayers = 2)
     private var hand = emptyList<Card>()
     private var tableMelds = emptyList<List<Card>>()
+    private var opponentTableMelds = emptyList<List<Card>>()
     private var discardPile = emptyList<Card>()
     private var turnCard: Card? = null
     private var deckSize = 0
@@ -79,10 +78,13 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
 
     override fun sendMessage(message: NetworkMessage) {
         if (message.senderId == botId) return
-        // Mensagens publicas do host atualizam a visao publica da IA.
-        // A IA nunca recebe a mao do jogador humano.
+        // Só entram aqui informações públicas da mesa. A mão do jogador continua privada.
         when (message.type) {
             "DISCARD" -> handleHostDiscard(message.payload)
+            "DRAW_DISCARD" -> handleHostDrewDiscard()
+            "MELD" -> handlePublicMeld(message.payload)
+            "WIN_ROUND" -> replyWinRound()
+            "COUNT_ROUND" -> replyCountRound()
             "PICK_MORTO" -> mortosLeft = runCatching {
                 JSONObject(message.payload).optInt("mortosLeft", mortosLeft)
             }.getOrDefault(mortosLeft)
@@ -117,6 +119,7 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
         activeSeat = json.optInt("activeSeat", 1)
         hand = sort(cardsFromJson(json.optJSONArray("hand") ?: JSONArray()))
         tableMelds = emptyList()
+        opponentTableMelds = emptyList()
         discardPile = json.optString("discard", "").takeIf { it.isNotBlank() }?.let { id ->
             allCards[id]?.let { listOf(it) }
         }.orEmpty()
@@ -132,6 +135,28 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
         discardPile = discardPile + card
         activeSeat = botSeat
         scheduleTurnIfNeeded()
+    }
+
+    private fun handleHostDrewDiscard() {
+        discardPile = if (currentConfig.gameType == GameType.CACHETA) {
+            discardPile.dropLast(1)
+        } else {
+            emptyList()
+        }
+    }
+
+    private fun handlePublicMeld(payload: String) {
+        val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
+        val seat = json.optInt("seat", -1)
+        val cards = cardsFromJson(json.optJSONArray("cards") ?: JSONArray())
+        if (cards.isEmpty()) return
+
+        val replaceIndex = json.optInt("replaceIndex", -1)
+        if (seat == botSeat) {
+            tableMelds = replaceOrAppendMeld(tableMelds, replaceIndex, cards)
+        } else {
+            opponentTableMelds = replaceOrAppendMeld(opponentTableMelds, replaceIndex, cards)
+        }
     }
 
     private fun handleServedCard(payload: String) {
@@ -165,7 +190,28 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
         scope.launch {
             delay(650)
             actionScheduled = false
-            emitToHost("REQ_DRAW_DECK", seatPayload())
+            if (shouldDrawFromDiscard()) {
+                val topDiscard = discardPile.lastOrNull()
+                val drawnCards = if (currentConfig.gameType == GameType.CACHETA) {
+                    topDiscard?.let { listOf(it) }.orEmpty()
+                } else {
+                    discardPile
+                }
+                if (topDiscard != null && drawnCards.isNotEmpty()) {
+                    discardPile = if (currentConfig.gameType == GameType.CACHETA) {
+                        discardPile.dropLast(1)
+                    } else {
+                        emptyList()
+                    }
+                    hand = sort(hand + drawnCards)
+                    emitToHost("DRAW_DISCARD", topDiscard.id)
+                    scheduleAction()
+                } else {
+                    emitToHost("REQ_DRAW_DECK", seatPayload())
+                }
+            } else {
+                emitToHost("REQ_DRAW_DECK", seatPayload())
+            }
         }
     }
 
@@ -187,12 +233,21 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
     }
 
     private fun playAction() {
-        // Primeira versao da IA: baixa o que for claramente valido e descarta
-        // a carta de maior valor. Depois posso evoluir aqui para niveis de dificuldade.
+        // A máquina joga pelo mesmo protocolo de um cliente real.
+        // O nível muda a heurística: quando comprar lixo e qual carta descartar.
         autoDropRedThrees()
-        val meld = findBestMeld()
-        if (meld != null) {
-            meldCards(meld)
+        while (true) {
+            val extension = findBestTableExtension()
+            if (extension != null) {
+                meldCards(extension.cards, replaceIndex = extension.replaceIndex)
+                continue
+            }
+            val meld = findBestMeld()
+            if (meld != null) {
+                meldCards(meld)
+                continue
+            }
+            break
         }
 
         if (hand.isEmpty()) {
@@ -225,23 +280,29 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
     private fun findBestMeld(): List<Card>? {
         if (hand.size < 3) return null
         val sorted = sort(hand)
+        var best: List<Card>? = null
+        var bestScore = Int.MIN_VALUE
         for (i in 0 until sorted.size - 2) {
             for (j in i + 1 until sorted.size - 1) {
                 for (k in j + 1 until sorted.size) {
                     val candidate = listOf(sorted[i], sorted[j], sorted[k])
                     if (GameRulesEngine.validateMeld(candidate, currentConfig, turnCard).isValid) {
-                        return candidate
+                        val score = candidate.sumOf { cardValue(it) } + meldGrowthBonus(candidate)
+                        if (score > bestScore) {
+                            best = candidate
+                            bestScore = score
+                        }
                     }
                 }
             }
         }
-        return null
+        return best
     }
 
-    private fun meldCards(cards: List<Card>) {
+    private fun meldCards(cards: List<Card>, replaceIndex: Int = -1) {
         if (cards.isEmpty()) return
         hand = cards.fold(hand) { current, card -> current.filterNotOnce(card) }
-        tableMelds = tableMelds + listOf(cards)
+        tableMelds = replaceOrAppendMeld(tableMelds, replaceIndex, cards)
         emitToHost(
             "MELD",
             JSONObject()
@@ -249,7 +310,7 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
                 .put("cards", JSONArray().apply { cards.forEach { put(it.id) } })
                 .put("seat", botSeat)
                 .put("team", botSeat.floorMod(2))
-                .put("replaceIndex", -1)
+                .put("replaceIndex", replaceIndex)
                 .toString()
         )
     }
@@ -277,10 +338,158 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
     }
 
     private fun chooseDiscard(): Card {
-        return hand
-            .filterNot { currentConfig.gameType == GameType.TRANCA && it.rank == Rank.THREE && (it.suit == Suit.HEARTS || it.suit == Suit.DIAMONDS) }
-            .maxByOrNull { it.rank.value }
-            ?: hand.last()
+        val candidates = hand.filterNot {
+            currentConfig.gameType == GameType.TRANCA && it.rank == Rank.THREE && (it.suit == Suit.HEARTS || it.suit == Suit.DIAMONDS)
+        }.ifEmpty { hand }
+
+        return candidates.minByOrNull { discardRiskScore(it) } ?: hand.last()
+    }
+
+    private fun shouldDrawFromDiscard(): Boolean {
+        val topDiscard = discardPile.lastOrNull() ?: return false
+        val check = GameRulesEngine.canDrawFromDiscard(topDiscard, currentConfig)
+        if (!check.allowed) return false
+
+        if (currentConfig.gameType == GameType.CACHETA) {
+            return currentConfig.botDifficulty != BotDifficulty.EASY || improvesHandPotential(topDiscard)
+        }
+
+        val canUse = GameRulesEngine.canJustifyDiscardDraw(
+            topDiscard = topDiscard,
+            hand = hand,
+            tableMelds = tableMelds,
+            config = currentConfig,
+            cachetaTurnCard = turnCard
+        )
+        if (!canUse) return false
+
+        return when (currentConfig.botDifficulty) {
+            BotDifficulty.EASY -> formsNewMeld(topDiscard)
+            BotDifficulty.NORMAL -> true
+            BotDifficulty.HARD -> true
+        }
+    }
+
+    private data class MeldExtension(
+        val replaceIndex: Int,
+        val cards: List<Card>,
+        val score: Int
+    )
+
+    private fun findBestTableExtension(): MeldExtension? {
+        var best: MeldExtension? = null
+        var bestScore = Int.MIN_VALUE
+        tableMelds.forEachIndexed { index, meld ->
+            hand.forEach { card ->
+                val combined = meld + card
+                if (GameRulesEngine.validateMeld(combined, currentConfig, turnCard).isValid) {
+                    val score = cardValue(card) + meldGrowthBonus(combined)
+                    if (score > bestScore) {
+                        best = MeldExtension(index, combined, score)
+                        bestScore = score
+                    }
+                }
+            }
+        }
+        return best
+    }
+
+    private fun formsNewMeld(topDiscard: Card): Boolean {
+        if (hand.size < 2) return false
+        for (i in hand.indices) {
+            for (j in i + 1 until hand.size) {
+                if (GameRulesEngine.validateMeld(listOf(hand[i], hand[j], topDiscard), currentConfig, turnCard).isValid) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun improvesHandPotential(card: Card): Boolean {
+        if (formsNewMeld(card)) return true
+        return hand.any { other ->
+            other.rank == card.rank ||
+                (other.suit == card.suit && kotlin.math.abs(other.rank.value - card.rank.value) <= 2)
+        }
+    }
+
+    private fun discardRiskScore(card: Card): Int {
+        var score = cardValue(card)
+        if (fitsOpponentTable(card)) {
+            score += when (currentConfig.botDifficulty) {
+                BotDifficulty.EASY -> 45
+                BotDifficulty.NORMAL -> 65
+                BotDifficulty.HARD -> 95
+            }
+        }
+        if (hand.count { it.rank == card.rank } >= 2) {
+            score += if (currentConfig.botDifficulty == BotDifficulty.EASY) 14 else 35
+        }
+        if (hand.any { it.suit == card.suit && kotlin.math.abs(it.rank.value - card.rank.value) == 1 }) {
+            score += if (currentConfig.botDifficulty == BotDifficulty.EASY) 12 else 28
+        }
+        if (currentConfig.gameType == GameType.TRANCA && card.rank == Rank.THREE) score += 100
+        if (card.rank == Rank.TWO || card.isJoker) score += 60
+        return score
+    }
+
+    private fun fitsOpponentTable(card: Card): Boolean {
+        return opponentTableMelds.any { meld ->
+            GameRulesEngine.validateMeld(meld + card, currentConfig, turnCard).isValid
+        }
+    }
+
+    private fun meldGrowthBonus(cards: List<Card>): Int {
+        return when {
+            cards.size >= 7 -> 120
+            cards.size >= 5 -> 40
+            else -> 0
+        }
+    }
+
+    private fun cardValue(card: Card): Int {
+        return when {
+            card.isJoker -> 50
+            card.rank == Rank.TWO -> 20
+            card.rank == Rank.ACE -> 15
+            card.rank.value >= Rank.EIGHT.value -> 10
+            else -> 5
+        }
+    }
+
+    private fun replyCountRound() {
+        emitToHost(
+            "REPLY_COUNT_ROUND",
+            JSONObject()
+                .put("v", 1)
+                .put("playerId", botId)
+                .put("seat", botSeat)
+                .put("hand", JSONArray().apply { hand.forEach { put(it.id) } })
+                .put("tableMelds", JSONArray().apply {
+                    tableMelds.forEach { meld ->
+                        put(JSONArray().apply { meld.forEach { put(it.id) } })
+                    }
+                })
+                .toString()
+        )
+    }
+
+    private fun replyWinRound() {
+        emitToHost(
+            "REPLY_WIN_ROUND",
+            JSONObject()
+                .put("v", 1)
+                .put("playerId", botId)
+                .put("seat", botSeat)
+                .put("hand", JSONArray().apply { hand.forEach { put(it.id) } })
+                .put("tableMelds", JSONArray().apply {
+                    tableMelds.forEach { meld ->
+                        put(JSONArray().apply { meld.forEach { put(it.id) } })
+                    }
+                })
+                .toString()
+        )
     }
 
     private fun emitToHost(type: String, payload: String) {
@@ -305,10 +514,20 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
 
     private fun sort(cards: List<Card>): List<Card> = GameRulesEngine.sortHand(cards, currentConfig.gameType)
 
+    private fun replaceOrAppendMeld(
+        current: List<List<Card>>,
+        replaceIndex: Int,
+        cards: List<Card>
+    ): List<List<Card>> {
+        if (replaceIndex !in current.indices) return current + listOf(cards)
+        return current.mapIndexed { index, meld -> if (index == replaceIndex) cards else meld }
+    }
+
     private fun resetBotState(keepConfig: Boolean = false) {
         if (!keepConfig) currentConfig = MatchConfig(maxPlayers = 2)
         hand = emptyList()
         tableMelds = emptyList()
+        opponentTableMelds = emptyList()
         discardPile = emptyList()
         turnCard = null
         deckSize = 0

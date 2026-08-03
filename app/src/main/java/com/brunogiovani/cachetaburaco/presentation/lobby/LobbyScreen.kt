@@ -1,4 +1,4 @@
-package com.brunogiovani.cachetaburaco.presentation.lobby
+﻿package com.brunogiovani.cachetaburaco.presentation.lobby
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.brunogiovani.cachetaburaco.R
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
+import com.brunogiovani.cachetaburaco.domain.models.BotDifficulty
 import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.models.PointsMode
@@ -48,9 +49,8 @@ fun LobbyScreen(
 ) {
     val player = FakeAuthRepository.getCurrentPlayer() ?: return
 
-    // Eu concentro aqui tudo que o jogador escolhe antes da partida.
-    // O lobby nao valida jogada; ele so monta MatchConfig para o motor da mesa.
-    // No online, esta mesma config deve ser enviada/sincronizada pela sala remota.
+    // Tudo que o jogador escolhe antes da partida vira MatchConfig.
+    // O lobby não valida jogada; quem manda nisso é o motor de regras.
     var selectedGameType by remember { mutableStateOf(GameType.CACHETA) }
     var selectedPlayers by remember { mutableIntStateOf(2) }
     var cachetaCardsPerPlayer by remember { mutableIntStateOf(9) }
@@ -60,8 +60,10 @@ fun LobbyScreen(
     var cachetaStartsWithDiscard by remember { mutableStateOf(false) }
     var requireCleanCanastraToWin by remember { mutableStateOf(true) }
     var autoMeldTrancaRedThrees by remember { mutableStateOf(true) }
+    var penalizeBlackThreesInHand by remember { mutableStateOf(true) }
     var uniformCardPoints by remember { mutableStateOf(false) }
     var autoSortHand by remember { mutableStateOf(true) }
+    var botDifficulty by remember { mutableStateOf(BotDifficulty.NORMAL) }
     var pointsMode by remember { mutableStateOf(PointsMode.FREE) }
     var selectedPointLimit by remember { mutableIntStateOf(5) }
 
@@ -82,22 +84,24 @@ fun LobbyScreen(
         cachetaStartsWithDiscard = cachetaStartsWithDiscard,
         requireCleanCanastraToWin = requireCleanCanastraToWin,
         autoMeldTrancaRedThrees = autoMeldTrancaRedThrees,
+        penalizeBlackThreesInHand = penalizeBlackThreesInHand,
         uniformCardPoints = uniformCardPoints,
         autoSortHand = autoSortHand,
+        botDifficulty = botDifficulty,
         pointsMode = pointsMode,
         pointLimit = selectedPointLimit
     )
 
-    // O singlePlayerMode reaproveita a tela de criar sala, mas o "cliente"
-    // conectado e a maquina. Por isso eu forco 2 jogadores e libero iniciar.
+    // No modo contra a máquina, reaproveito a criação de sala e simulo um cliente.
+    // Por isso a mesa fica fixa em 2 jogadores: Bruno x máquina.
     val discoveredRooms by networkRepository.discoveredRooms.collectAsState()
     val connectedClients by networkRepository.connectedClientsCount.collectAsState()
 
     var gameStarted by remember { mutableStateOf(false) }
 
     LaunchedEffect(isHosting, currentConfig, connectedClients) {
-        // Sempre que a regra mudar antes da partida, eu anuncio a sala com a config atual.
-        // Quando houver cliente real conectado, nao reinicio o host para nao derrubar conexao.
+        // Antes de começar, qualquer mudança de regra atualiza a sala anunciada.
+        // Com cliente real conectado eu não reinicio o host para não derrubar a conexão.
         if (isHosting) {
             if (connectedClients == 0) {
                 networkRepository.startHosting(player.name, config = currentConfig)
@@ -151,7 +155,7 @@ fun LobbyScreen(
                 }
                 Text(
                     text = when {
-                        singlePlayerMode -> "Jogar contra a maquina"
+                        singlePlayerMode -> "Jogar contra a máquina"
                         isHosting -> "Criar sala"
                         else -> "Procurar sala"
                     },
@@ -187,10 +191,14 @@ fun LobbyScreen(
                     onRequireCleanCanastraToWinChange = { requireCleanCanastraToWin = it },
                     autoMeldTrancaRedThrees = autoMeldTrancaRedThrees,
                     onAutoMeldTrancaRedThreesChange = { autoMeldTrancaRedThrees = it },
+                    penalizeBlackThreesInHand = penalizeBlackThreesInHand,
+                    onPenalizeBlackThreesInHandChange = { penalizeBlackThreesInHand = it },
                     uniformCardPoints = uniformCardPoints,
                     onUniformCardPointsChange = { uniformCardPoints = it },
                     autoSortHand = autoSortHand,
                     onAutoSortChange = { autoSortHand = it },
+                    botDifficulty = botDifficulty,
+                    onBotDifficultyChange = { botDifficulty = it },
                     pointsMode = pointsMode,
                     onPointsModeChange = { pointsMode = it },
                     selectedPointLimit = selectedPointLimit,
@@ -242,10 +250,14 @@ private fun HostPanel(
     onRequireCleanCanastraToWinChange: (Boolean) -> Unit,
     autoMeldTrancaRedThrees: Boolean,
     onAutoMeldTrancaRedThreesChange: (Boolean) -> Unit,
+    penalizeBlackThreesInHand: Boolean,
+    onPenalizeBlackThreesInHandChange: (Boolean) -> Unit,
     uniformCardPoints: Boolean,
     onUniformCardPointsChange: (Boolean) -> Unit,
     autoSortHand: Boolean,
     onAutoSortChange: (Boolean) -> Unit,
+    botDifficulty: BotDifficulty,
+    onBotDifficultyChange: (BotDifficulty) -> Unit,
     pointsMode: PointsMode,
     onPointsModeChange: (PointsMode) -> Unit,
     selectedPointLimit: Int,
@@ -313,7 +325,7 @@ private fun HostPanel(
                 val options = if (selectedGameType == GameType.CACHETA || singlePlayerMode) listOf(2) else listOf(2, 4)
                 if (options.size == 1) {
                     Text(
-                        if (singlePlayerMode) "Modo contra a maquina usa 2 jogadores (voce x IA)." else "Cacheta e sempre 2 jogadores (solo).",
+                        if (singlePlayerMode) "Modo contra a máquina usa 2 jogadores (você x máquina)." else "Cacheta é sempre 2 jogadores (solo).",
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 12.sp
                     )
@@ -332,7 +344,7 @@ private fun HostPanel(
         }
 
         item {
-            SectionCard(title = "Opcoes da Partida") {
+            SectionCard(title = "Opções da Partida") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (selectedGameType == GameType.CACHETA) {
                         Text(
@@ -358,15 +370,15 @@ private fun HostPanel(
                         ToggleRow(
                             label = "Lixo Inicial",
                             description = if (cachetaStartsWithDiscard)
-                                "A vira tambem comeca no lixo"
+                                "A vira também começa no lixo"
                             else
-                                "Lixo comeca vazio; vira fica separada",
+                                "Lixo começa vazio; vira fica separada",
                             checked = cachetaStartsWithDiscard,
                             onCheckedChange = onCachetaStartsWithDiscardChange
                         )
                     } else {
                         Text(
-                            text = "No ${selectedGameType.name.lowercase().replaceFirstChar { it.uppercase() }}, o 2 e curinga fixo e sempre suja a canastra.",
+                            text = "No ${selectedGameType.name.lowercase().replaceFirstChar { it.uppercase() }}, o 2 é curinga fixo e sempre suja a canastra.",
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 12.sp
                         )
@@ -388,7 +400,7 @@ private fun HostPanel(
                             description = if (allowCharutos)
                                 "Permite jogos de cartas do mesmo valor"
                             else
-                                "Somente sequencias do mesmo naipe",
+                                "Somente sequências do mesmo naipe",
                             checked = allowCharutos,
                             onCheckedChange = onCharutosChange
                         )
@@ -398,7 +410,7 @@ private fun HostPanel(
                         ToggleRow(
                             label = "Canastra Limpa",
                             description = if (requireCleanCanastraToWin)
-                                "Obrigatoria para bater"
+                                "Obrigatória para bater"
                             else
                                 "Qualquer canastra permite bater",
                             checked = requireCleanCanastraToWin,
@@ -412,7 +424,7 @@ private fun HostPanel(
                             description = if (autoMeldTrancaRedThrees)
                                 "Baixa automaticamente e vale 100"
                             else
-                                "Fica na mao para controle manual",
+                                "Fica na mão para controle manual",
                             checked = autoMeldTrancaRedThrees,
                             onCheckedChange = onAutoMeldTrancaRedThreesChange
                         )
@@ -424,18 +436,57 @@ private fun HostPanel(
                             description = if (uniformCardPoints)
                                 "Todas as cartas valem 10 pts"
                             else
-                                "Valores variaveis (As=15, 2-7=5, etc.)",
+                                "Valores variáveis (As=15, 2-7=5, etc.)",
                             checked = uniformCardPoints,
                             onCheckedChange = onUniformCardPointsChange
                         )
                     }
 
                     ToggleRow(
-                        label = "Ordenar Mao Auto",
+                        label = "Ordenar Mão Auto",
                         description = "Organiza cartas por naipe e valor",
                         checked = autoSortHand,
                         onCheckedChange = onAutoSortChange
                     )
+
+                    if (singlePlayerMode) {
+                        Text(
+                            text = "Nível da máquina",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            BotDifficulty.entries.forEach { difficulty ->
+                                val profile = when (difficulty) {
+                                    BotDifficulty.EASY -> BotDifficultyProfile(
+                                        label = "Fácil",
+                                        description = "Compra pouco e protege o básico",
+                                        color = Color(0xFF66BB6A)
+                                    )
+                                    BotDifficulty.NORMAL -> BotDifficultyProfile(
+                                        label = "Normal",
+                                        description = "Compra lixo útil e monta jogos",
+                                        color = ColorGold
+                                    )
+                                    BotDifficulty.HARD -> BotDifficultyProfile(
+                                        label = "Difícil",
+                                        description = "Lê a mesa e evita entregar carta",
+                                        color = Color(0xFFEF5350)
+                                    )
+                                }
+                                BotDifficultyOption(
+                                    profile = profile,
+                                    isSelected = botDifficulty == difficulty,
+                                    onClick = { onBotDifficultyChange(difficulty) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -445,7 +496,7 @@ private fun HostPanel(
         }
 
         item {
-            SectionCard(title = "Pontuacao") {
+            SectionCard(title = "Pontuação") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChipOption(
                         label = "Gratuito",
@@ -462,7 +513,7 @@ private fun HostPanel(
         }
 
         item {
-            val title = if (selectedGameType == GameType.CACHETA) "Vidas (Limite)" else "Pontuacao Limite"
+            val title = if (selectedGameType == GameType.CACHETA) "Vidas (Limite)" else "Pontuação limite"
             SectionCard(title = title) {
                 val options = if (selectedGameType == GameType.CACHETA) listOf(5, 10, 15) else listOf(1500, 3000, 5000)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -647,7 +698,7 @@ private fun RuleSummaryText(config: MatchConfig) {
             add(if (config.cachetaStartsWithDiscard) "Lixo inicial com a vira" else "Lixo inicial vazio")
         } else {
             add("2 e curinga fixo; topo do lixo deve baixar ou encaixar")
-            add(if (config.allowCharutos) "Charutos/trincas permitidos" else "Somente sequencias do mesmo naipe")
+            add(if (config.allowCharutos) "Charutos/trincas permitidos" else "Somente sequências do mesmo naipe")
             add(if (config.requireCleanCanastraToWin) "Precisa canastra limpa para bater" else "Pode bater com canastra suja")
             if (config.gameType == GameType.TRANCA) {
                 add("3 preto tranca o lixo; 3 vermelho baixa separado")
@@ -713,6 +764,54 @@ private fun FilterChipOption(label: String, isSelected: Boolean, onClick: () -> 
             color = if (isSelected) ColorGreenLight else Color.White.copy(alpha = 0.7f),
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
             fontSize = 13.sp
+        )
+    }
+}
+
+private data class BotDifficultyProfile(
+    val label: String,
+    val description: String,
+    val color: Color
+)
+
+@Composable
+private fun BotDifficultyOption(
+    profile: BotDifficultyProfile,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .heightIn(min = 86.dp)
+            .border(
+                width = if (isSelected) 2.dp else 1.dp,
+                color = if (isSelected) profile.color else Color.White.copy(alpha = 0.18f),
+                shape = RoundedCornerShape(12.dp)
+            )
+            .background(
+                color = if (isSelected) profile.color.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.04f),
+                shape = RoundedCornerShape(12.dp)
+            )
+            .clickable { onClick() }
+            .padding(10.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = profile.label,
+            color = if (isSelected) profile.color else Color.White.copy(alpha = 0.82f),
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = profile.description,
+            color = Color.White.copy(alpha = if (isSelected) 0.82f else 0.58f),
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
+            textAlign = TextAlign.Center
         )
     }
 }

@@ -28,25 +28,20 @@ enum class ConnectionStatus {
 }
 
 /**
- * Contrato unico de comunicacao da mesa.
+ * Contrato de transporte da mesa.
  *
- * Eu mantenho o MatchViewModel dependente desta interface para que o jogo nao saiba
- * se esta falando com rede local, maquina ou servidor online. Quando eu for colocar
- * o online, a ideia e criar outro implementation aqui, por exemplo
- * OnlineNetworkRepository, mantendo as mesmas mensagens de dominio:
- * GAME_START, REQ_DRAW_DECK, SERVE_CARD, MELD, DISCARD, PICK_MORTO etc.
+ * O ViewModel conversa com esta interface sem saber se a partida está usando
+ * Wi-Fi local, máquina ou futuro servidor online. As mensagens de domínio ficam
+ * iguais em todos os modos: GAME_START, REQ_DRAW_DECK, SERVE_CARD, MELD, DISCARD,
+ * PICK_MORTO e as respostas de contagem/reconexão.
  *
- * Responsabilidade desta camada:
- * - descobrir/criar sala quando o transporte precisar disso;
- * - enviar e receber NetworkMessage sem aplicar regra de jogo;
- * - expor status de conexao para a UI;
- * - preservar messageId para o ViewModel deduplicar eventos.
+ * Aqui não entra regra de jogo; só conexão, descoberta de sala e entrega de
+ * NetworkMessage. O messageId segue junto para deduplicar eventos repetidos.
  */
 interface LocalNetworkRepository {
     val discoveredRooms: StateFlow<List<DiscoveredRoom>>
     val connectedClientsCount: StateFlow<Int>
-    // SharedFlow garante que NENHUMA mensagem seja descartada,
-    // mesmo quando chegam em rajada (ex: DISCARD + REQ_PICK_MORTO).
+    // Buffer pequeno para segurar rajadas no mesmo turno, como DISCARD + REQ_PICK_MORTO.
     val incomingMessages: SharedFlow<NetworkMessage>
     val connectionStatus: StateFlow<ConnectionStatus>
 
