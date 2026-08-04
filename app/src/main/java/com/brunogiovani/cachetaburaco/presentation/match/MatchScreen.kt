@@ -600,21 +600,9 @@ private fun RoundEndDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Breakdown
+                // Detalhamento da rodada em formato de tabela para ficar fácil conferir.
                 if (details.breakdown.isNotBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
-                            .padding(12.dp)
-                    ) {
-                        Text(
-                            text = details.breakdown,
-                            color = Color.White.copy(alpha = 0.85f),
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp
-                        )
-                    }
+                    RoundBreakdownTable(breakdown = details.breakdown)
                 }
 
                 HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
@@ -711,6 +699,159 @@ private fun RoundEndDialog(
             }
         }
     )
+}
+
+private data class BreakdownRow(
+    val owner: String,
+    val item: String,
+    val quantity: String,
+    val points: String
+)
+
+@Composable
+private fun RoundBreakdownTable(breakdown: String) {
+    val rows = remember(breakdown) { parseBreakdownRows(breakdown) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(14.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = "Detalhes da contagem",
+            color = ColorGold,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp
+        )
+        if (rows.isEmpty()) {
+            Text(
+                text = breakdown,
+                color = Color.White.copy(alpha = 0.85f),
+                fontSize = 13.sp,
+                lineHeight = 19.sp
+            )
+            return@Column
+        }
+
+        BreakdownHeaderRow()
+        rows.groupBy { it.owner }.forEach { (owner, ownerRows) ->
+            Text(
+                text = owner,
+                color = ColorGreenLight,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+            ownerRows.forEachIndexed { index, row ->
+                BreakdownDataRow(
+                    row = row,
+                    background = if (index % 2 == 0) Color.White.copy(alpha = 0.045f) else Color.Transparent
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BreakdownHeaderRow() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        BreakdownCell("Item", weight = 1.45f, isHeader = true)
+        BreakdownCell("Qtd.", weight = 0.55f, isHeader = true, alignEnd = true)
+        BreakdownCell("Pontos", weight = 0.8f, isHeader = true, alignEnd = true)
+    }
+}
+
+@Composable
+private fun BreakdownDataRow(row: BreakdownRow, background: Color) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(background, RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        BreakdownCell(row.item, weight = 1.45f)
+        BreakdownCell(row.quantity.ifBlank { "-" }, weight = 0.55f, alignEnd = true)
+        BreakdownCell(row.points.ifBlank { "-" }, weight = 0.8f, alignEnd = true)
+    }
+}
+
+@Composable
+private fun RowScope.BreakdownCell(
+    text: String,
+    weight: Float,
+    isHeader: Boolean = false,
+    alignEnd: Boolean = false
+) {
+    Text(
+        text = text,
+        modifier = Modifier.weight(weight),
+        color = if (isHeader) Color.White.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.9f),
+        fontSize = if (isHeader) 11.sp else 12.sp,
+        fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Medium,
+        textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
+        maxLines = 2,
+        lineHeight = 15.sp
+    )
+}
+
+private fun parseBreakdownRows(breakdown: String): List<BreakdownRow> {
+    return breakdown
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .map { line -> parseBreakdownLine(line) }
+        .toList()
+}
+
+private fun parseBreakdownLine(line: String): BreakdownRow {
+    val owner = line.substringBefore(":", missingDelimiterValue = "Rodada").trim()
+    val body = line.substringAfter(":", line).trim()
+    val item = when {
+        body.startsWith("Pontuação das cartas") -> "Regra das cartas"
+        body.startsWith("mesa", ignoreCase = true) -> "Cartas na mesa"
+        body.startsWith("canastras", ignoreCase = true) -> "Canastras"
+        body.startsWith("3 vermelhos", ignoreCase = true) -> "3 vermelhos"
+        body.startsWith("mão", ignoreCase = true) -> "Cartas na mão"
+        body.startsWith("3 pretos", ignoreCase = true) -> "3 pretos na mão"
+        body.startsWith("morto", ignoreCase = true) -> "Morto"
+        body.startsWith("bonus", ignoreCase = true) -> "Bônus de bate"
+        body.startsWith("total", ignoreCase = true) -> "Total da rodada"
+        else -> body.substringBefore("=").trim().ifBlank { body }
+    }
+    return BreakdownRow(
+        owner = owner,
+        item = item,
+        quantity = extractBreakdownQuantity(body),
+        points = extractBreakdownPoints(body)
+    )
+}
+
+private fun extractBreakdownQuantity(body: String): String {
+    val cardCount = Regex("""(\d+)\s+carta\(s\)""").find(body)?.groupValues?.getOrNull(1)
+    if (cardCount != null) return cardCount
+    val cleanDirty = Regex("""limpas\s+(\d+),\s+sujas\s+(\d+)""").find(body)?.groupValues
+    if (cleanDirty != null && cleanDirty.size >= 3) return "L ${cleanDirty[1]} / S ${cleanDirty[2]}"
+    val threeCount = Regex("""3\s+\w+\s+(\d+)""").find(body)?.groupValues?.getOrNull(1)
+    if (threeCount != null) return threeCount
+    return ""
+}
+
+private fun extractBreakdownPoints(body: String): String {
+    val afterEquals = body.substringAfter("=", missingDelimiterValue = "").trim()
+    if (afterEquals.isNotBlank()) return afterEquals
+    val explicitPoints = Regex("""([+-]?\d+\s*pts?)""").find(body)?.groupValues?.getOrNull(1)
+    if (explicitPoints != null) return explicitPoints
+    val penalty = Regex("""([+-]\d+)""").find(body)?.groupValues?.getOrNull(1)
+    return penalty ?: ""
 }
 
 @Composable

@@ -310,6 +310,7 @@ class MatchViewModel(
                 feedbackMessage = if (droppedThree) "3 Vermelho! Você deve comprar novamente." else "Você comprou do Monte. Baixe ou Descarte."
             )
             networkRepository.sendMessage(NetworkMessage(playerId, "DRAW_DECK", card.id))
+            publishPublicTableState()
         } else if (!isHost) {
             pendingDiscardDrawCardId = null
             pendingDiscardDrawRest = emptyList()
@@ -379,6 +380,7 @@ class MatchViewModel(
             mortosLeft = mortosLeft,
             feedbackMessage = "Um morto virou o novo monte."
         )
+        publishPublicTableState()
         return true
     }
 
@@ -429,6 +431,7 @@ class MatchViewModel(
             feedbackMessage = "Você comprou do Lixo. Baixe ou Descarte."
         )
         networkRepository.sendMessage(NetworkMessage(playerId, "DRAW_DISCARD", topCard.id))
+        publishPublicTableState()
     }
 
     /**
@@ -664,6 +667,7 @@ class MatchViewModel(
         networkRepository.sendMessage(NetworkMessage(
             playerId, "MELD", buildMeldPayload(publicMeld, localSeat, replaceMeldIndex)
         ))
+        publishPublicTableState()
     }
 
     /** Descarta a carta e fecha o turno, incluindo bater ou pegar morto quando a mão zera. */
@@ -765,6 +769,7 @@ class MatchViewModel(
         )
 
         networkRepository.sendMessage(NetworkMessage(playerId, "DISCARD", buildDiscardPayload(card, localSeat)))
+        publishPublicTableState()
 
         if (isHost && masterDeck.isEmpty() && mortos.isEmpty() && currentConfig.gameType != GameType.CACHETA) {
             beginCountOnlyRound()
@@ -1194,6 +1199,7 @@ class MatchViewModel(
         try {
             when (message.type) {
                 "GAME_START"         -> handleGameStart(message.payload)
+                "PUBLIC_STATE"       -> handlePublicTableState(message.payload)
                 "DISCARD"            -> handleOpponentDiscard(message.payload)
                 "DRAW_DECK"          -> handleOpponentDrewDeck(message.senderId)
                 "DRAW_DISCARD"       -> handleOpponentDrewDiscard(message.senderId, message.payload)
@@ -1394,6 +1400,7 @@ class MatchViewModel(
             canDrawFromDiscard = drawCheck.allowed,
             drawDiscardBlockedReason = drawCheck.reason
         )
+        if (isHost) publishPublicTableState()
     }
 
     private fun handleOpponentDrewDeck(senderId: String) {
@@ -1406,6 +1413,7 @@ class MatchViewModel(
             deckSize = (state.deckSize - 1).coerceAtLeast(0),
             opponentHandCount = remoteHandCountForSeat(actorSeat)
         )
+        if (isHost) publishPublicTableState()
     }
 
     private fun handleOpponentDrewDiscard(senderId: String, cardId: String) {
@@ -1426,6 +1434,7 @@ class MatchViewModel(
             discardPile = newPile,
             opponentHandCount = remoteHandCountForSeat(actorSeat)
         )
+        if (isHost) publishPublicTableState()
     }
 
     /**
@@ -1474,6 +1483,7 @@ class MatchViewModel(
             deckSize = masterDeck.size,
             opponentHandCount = remoteHandCountForSeat(requestingSeat)
         )
+        publishPublicTableState()
     }
 
     /** Host serve um morto privado para o jogador ativo quando ele fica sem cartas. */
@@ -1518,6 +1528,7 @@ class MatchViewModel(
             opponentHandCount = remoteHandCountForSeat(requestingSeat),
             opponentPickedMorto = true
         )
+        publishPublicTableState()
     }
 
     /**
@@ -1600,6 +1611,7 @@ class MatchViewModel(
                     beginCountOnlyRound()
                 }
             }
+            if (isHost) publishPublicTableState()
         }
     }
 
@@ -1632,6 +1644,7 @@ class MatchViewModel(
             opponentHandCount = if (pickedSeat >= 0) remoteHandCountForSeat(pickedSeat) else state.opponentHandCount,
             opponentPickedMorto = true
         )
+        if (isHost) publishPublicTableState()
     }
 
     // --- Helpers ---
@@ -1744,6 +1757,87 @@ class MatchViewModel(
             .put("deckSize", masterDeck.size)
             .put("mortosLeft", mortos.size)
             .toString()
+    }
+
+    private fun publishPublicTableState() {
+        if (!isHost) return
+        networkRepository.sendMessage(NetworkMessage(playerId, "PUBLIC_STATE", buildPublicTableStatePayload()))
+    }
+
+    private fun buildPublicTableStatePayload(): String {
+        val state = _gameState.value
+        val handCounts = JSONArray().apply {
+            repeat(currentConfig.maxPlayers.coerceAtLeast(2)) { seat ->
+                put(publicHandCountForSeat(seat, state))
+            }
+        }
+
+        return JSONObject()
+            .put("v", 1)
+            .put("activeSeat", state.activeSeat)
+            .put("deckSize", state.deckSize)
+            .put("discardCount", state.discardPile.size)
+            .put("discardPile", cardsToJson(state.discardPile))
+            .put("turnCard", state.turnCard?.id ?: "")
+            .put("mortosLeft", state.mortosLeft)
+            .put("handCounts", handCounts)
+            .toString()
+    }
+
+    private fun handlePublicTableState(payload: String) {
+        if (isHost) return
+        val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
+        val state = _gameState.value
+        val activeSeat = json.optInt("activeSeat", state.activeSeat)
+            .coerceIn(0, currentConfig.maxPlayers.coerceAtLeast(2) - 1)
+        val discardPile = cardsFromJson(json.optJSONArray("discardPile") ?: JSONArray())
+        val turnCard = allCardsMap[json.optString("turnCard", "")]
+        val handCounts = json.optJSONArray("handCounts")
+        val opponentSeat = visibleOpponentSeatFor(state.playerSeat)
+        val opponentHandCount = if (handCounts != null && opponentSeat in 0 until handCounts.length()) {
+            handCounts.optInt(opponentSeat, state.opponentHandCount)
+        } else {
+            state.opponentHandCount
+        }
+        val topDiscard = discardPile.lastOrNull()
+        val discardLocked = GameRulesEngine.isDiscardLocked(topDiscard, currentConfig.gameType)
+        val drawCheck = GameRulesEngine.canDrawFromDiscard(topDiscard, currentConfig)
+        val waitingPrivateCard = state.feedbackMessage.contains("Aguardando carta do host", ignoreCase = true)
+        val syncedTurnPhase = when {
+            state.showRoundEndDialog -> state.turnPhase
+            localSeat != activeSeat -> TurnPhase.WAITING_OPPONENT
+            waitingPrivateCard -> state.turnPhase
+            state.turnPhase == TurnPhase.ACTION -> TurnPhase.ACTION
+            else -> TurnPhase.DRAW
+        }
+
+        _gameState.value = state.copy(
+            discardPile = discardPile,
+            turnCard = turnCard,
+            deckSize = json.optInt("deckSize", state.deckSize),
+            mortosLeft = json.optInt("mortosLeft", state.mortosLeft),
+            opponentHandCount = opponentHandCount,
+            activeSeat = activeSeat,
+            turnPhase = syncedTurnPhase,
+            isDiscardLocked = discardLocked,
+            canDrawFromDiscard = drawCheck.allowed,
+            drawDiscardBlockedReason = drawCheck.reason
+        )
+    }
+
+    private fun publicHandCountForSeat(seat: Int, state: GameState): Int {
+        return if (seat == localSeat) {
+            state.myHand.size
+        } else {
+            remoteHandsBySeat[seat]?.size ?: state.opponentHandCount
+        }
+    }
+
+    private fun visibleOpponentSeatFor(playerSeat: Int): Int {
+        val maxSeats = currentConfig.maxPlayers.coerceAtLeast(2)
+        return (0 until maxSeats).firstOrNull { seat ->
+            seat != playerSeat && teamForSeat(seat) != teamForSeat(playerSeat)
+        } ?: nextSeatAfter(playerSeat)
     }
 
     private fun buildServeMortoPayload(morto: List<Card>, mortosLeft: Int): String {

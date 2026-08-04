@@ -377,6 +377,48 @@ class MatchViewModelStartGameTest {
     }
 
     @Test
+    fun `client applies host public table counts`() = runTest {
+        val repo = FakeLocalNetworkRepository()
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "client-1",
+            isHost = false,
+            config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 2)
+        )
+        val discard = cardId(Rank.SEVEN, Suit.HEARTS)
+
+        repo.emitIncoming(NetworkMessage("host", "GAME_START", gameStartPayload(
+            gameType = GameType.TRANCA,
+            seat = 1,
+            hand = listOf(cardId(Rank.ACE, Suit.CLUBS)),
+            activeSeat = 0,
+            maxPlayers = 2
+        )))
+        advanceUntilIdle()
+
+        val publicState = JSONObject()
+            .put("v", 1)
+            .put("activeSeat", 0)
+            .put("deckSize", 37)
+            .put("discardPile", JSONArray().put(discard))
+            .put("turnCard", "")
+            .put("mortosLeft", 1)
+            .put("handCounts", JSONArray().put(8).put(6))
+            .toString()
+
+        repo.emitIncoming(NetworkMessage("host", "PUBLIC_STATE", publicState))
+        advanceUntilIdle()
+
+        val state = viewModel.gameState.value
+        assertEquals(8, state.opponentHandCount)
+        assertEquals(37, state.deckSize)
+        assertEquals(1, state.discardPile.size)
+        assertEquals(discard, state.discardPile.single().id)
+        assertEquals(1, state.mortosLeft)
+        assertEquals(TurnPhase.WAITING_OPPONENT, state.turnPhase)
+    }
+
+    @Test
     fun `host serves only one deck card per active seat turn`() = runTest {
         val repo = FakeLocalNetworkRepository()
         val viewModel = MatchViewModel(
@@ -1173,8 +1215,10 @@ class MatchViewModelStartGameTest {
         val summary = JSONObject(repo.broadcastMessages.last { it.type == "ROUND_SUMMARY" }.payload)
         val breakdown = summary.getString("breakdown")
 
-        assertTrue(breakdown.contains("Equipe [TEAM_1]: Mesa 7 carta(s) +65 | Canastras +200 = 265 pts"))
-        assertFalse(breakdown.contains("Equipe [TEAM_1]: Mesa +130 | Canastras +400 = 530 pts"))
+        assertTrue(breakdown.contains("Equipe [TEAM_1]: mesa 7 carta(s) = 65 pts"))
+        assertTrue(breakdown.contains("Equipe [TEAM_1]: canastras limpas 1, sujas 0 = +200 pts"))
+        assertFalse(breakdown.contains("Equipe [TEAM_1]: mesa 14 carta(s) = 130 pts"))
+        assertFalse(breakdown.contains("Equipe [TEAM_1]: canastras limpas 2, sujas 0 = +400 pts"))
     }
 
     @Test
@@ -1218,8 +1262,9 @@ class MatchViewModelStartGameTest {
         assertEquals(-120, summary.getJSONArray("teamRoundScores").getInt(1))
         assertEquals(365, hostViewModel.gameState.value.roundEndDetails!!.myRoundScore)
         assertEquals(-120, hostViewModel.gameState.value.roundEndDetails!!.opponentRoundScore)
-        assertTrue(summary.getString("breakdown").contains("Mesa 7 carta(s) +65 | Canastras +200 = 265 pts"))
-        assertTrue(summary.getString("breakdown").contains("Mão 2 carta(s) -20 = -20 pts"))
+        assertTrue(summary.getString("breakdown").contains("mesa 7 carta(s) = 65 pts"))
+        assertTrue(summary.getString("breakdown").contains("canastras limpas 1, sujas 0 = +200 pts"))
+        assertTrue(summary.getString("breakdown").contains("Jogador [PLAYER_1]: mão 2 carta(s) = -20 pts"))
         assertTrue(summary.getString("breakdown").contains("bonus de bate +100"))
 
         val clientRepo = FakeLocalNetworkRepository()

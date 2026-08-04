@@ -93,7 +93,7 @@ fun LobbyScreen(
     )
 
     // No modo contra a máquina, reaproveito a criação de sala e simulo um cliente.
-    // Por isso a mesa fica fixa em 2 jogadores: Bruno x máquina.
+    // Por isso a mesa fica fixa em 2 jogadores: jogador local x máquina.
     val discoveredRooms by networkRepository.discoveredRooms.collectAsState()
     val connectedClients by networkRepository.connectedClientsCount.collectAsState()
 
@@ -868,7 +868,7 @@ private fun ToggleRow(
 @Composable
 fun LobbyScreenHostPreview() {
     FakeAuthRepository.forceSetForPreview(
-        com.brunogiovani.cachetaburaco.domain.models.Player("preview_host", "Bruno")
+        com.brunogiovani.cachetaburaco.domain.models.Player("preview_host", "Jogador")
     )
     val dummyRepo = object : LocalNetworkRepository {
         override val discoveredRooms = kotlinx.coroutines.flow.MutableStateFlow(emptyList<com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom>())
@@ -909,7 +909,7 @@ fun LobbyScreenClientPreview() {
     )
     val sampleRooms = listOf(
         com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom(
-            serviceName = "Room_Bruno",
+            serviceName = "Room_Local",
             host = "192.168.1.10",
             port = 9090,
             config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 4)
