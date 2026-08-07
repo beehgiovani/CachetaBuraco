@@ -14,7 +14,8 @@ class OnlineRoomConfigJsonTest {
             allowWildcards = false,
             allowDrawFromDiscard = false,
             allowCharutos = false,
-            requireCleanCanastraToWin = false
+            requireCleanCanastraToWin = false,
+            autoMeldTrancaRedThrees = false
         )
 
         val json = config.toOnlineRoomConfigJson()
@@ -24,6 +25,7 @@ class OnlineRoomConfigJsonTest {
         assertEquals("false", json["allowDrawFromDiscard"].toString())
         assertEquals("false", json["allowCharutos"].toString())
         assertEquals("false", json["requireCleanCanastraToWin"].toString())
+        assertEquals("false", json["autoMeldTrancaRedThrees"].toString())
         assertEquals("11", json["cardsPerPlayer"].toString())
     }
 }

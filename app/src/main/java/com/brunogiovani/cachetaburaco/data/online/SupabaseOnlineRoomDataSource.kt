@@ -165,6 +165,13 @@ class SupabaseOnlineRoomDataSource(
         ).decodeAs<Boolean>()
     }
 
+    override suspend fun startRound(session: OnlineRoomSession): String {
+        return client.postgrest.rpc(
+            function = "start_online_round",
+            parameters = buildJsonObject { put("p_room_id", session.room.roomId) }
+        ).decodeAs<JsonObject>().toString()
+    }
+
     override fun observeEvents(
         session: OnlineRoomSession,
         afterSequence: Long
@@ -273,6 +280,7 @@ internal fun MatchConfig.toOnlineRoomConfigJson(): JsonObject = buildJsonObject 
     put("allowCharutos", allowCharutos)
     put("allowDrawFromDiscard", allowDrawFromDiscard)
     put("requireCleanCanastraToWin", requireCleanCanastraToWin)
+    put("autoMeldTrancaRedThrees", autoMeldTrancaRedThrees)
     put("cardsPerPlayer", cardsPerPlayer)
 }
 

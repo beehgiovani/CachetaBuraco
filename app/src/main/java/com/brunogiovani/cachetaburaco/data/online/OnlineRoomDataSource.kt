@@ -93,4 +93,14 @@ interface OnlineRoomDataSource {
     ): Flow<OnlineStoredEvent>
 
     fun observeConnectedSeats(session: OnlineRoomSession): Flow<Set<Int>>
+
+    /**
+     * Pede pro servidor embaralhar e distribuir a rodada inteira (RPC
+     * `start_online_round`), em vez do host decidir isso sozinho no aparelho.
+     * So o host pode chamar -- o banco rejeita se quem chamou nao for o
+     * assento 0 da sala. Devolvo o jsonb bruto como texto porque quem
+     * interpreta esse payload e o MatchViewModel, do mesmo jeito que qualquer
+     * outro NetworkMessage.payload.
+     */
+    suspend fun startRound(session: OnlineRoomSession): String
 }

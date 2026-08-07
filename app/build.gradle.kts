@@ -65,7 +65,9 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:auth-kt")
     implementation("io.github.jan-tennert.supabase:postgrest-kt")
     implementation("io.github.jan-tennert.supabase:realtime-kt")
-    implementation("io.ktor:ktor-client-android:3.5.2")
+    // O engine Android do Ktor (HttpURLConnection) nao suporta WebSocket, o que
+    // quebra o Realtime do Supabase (usado para descobrir salas online).
+    implementation("io.ktor:ktor-client-okhttp:3.5.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
