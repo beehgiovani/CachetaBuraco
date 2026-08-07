@@ -6,7 +6,6 @@ scripts/
 tools/
 
 # Local plans, notes and generated reports
-docs/
 tasks
 *.plan.md
 *-plan.md
@@ -51,6 +50,10 @@ local.properties
 *.p12
 *.pfx
 *.env
+.env
+.env.*
+!.env.example
+!*.env.example
 credentials/
 secrets/
 

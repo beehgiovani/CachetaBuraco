@@ -1,6 +1,7 @@
 package com.brunogiovani.cachetaburaco.presentation.match
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -101,6 +102,10 @@ private fun String.isErrorFeedback(): Boolean {
         startsWith("❌")
 }
 
+internal fun RoundEndDetails.isLocalMatchWinner(): Boolean {
+    return isMatchOver && winnerTeam != null && winnerTeam == localTeam
+}
+
 @Composable
 fun MatchScreen(
     networkRepository: LocalNetworkRepository,
@@ -119,8 +124,14 @@ fun MatchScreen(
     val currentPlayer = FakeAuthRepository.getCurrentPlayer() ?: return
 
     val context = androidx.compose.ui.platform.LocalContext.current
-    val viewModel = remember {
-        MatchViewModel(networkRepository, currentPlayer.id, isHost, config, context)
+    val matchPlayerId = remember(networkRepository, currentPlayer.id) {
+        networkRepository.authenticatedPlayerId ?: currentPlayer.id
+    }
+    val viewModel = remember(networkRepository, matchPlayerId, isHost, config) {
+        MatchViewModel(networkRepository, matchPlayerId, isHost, config, context)
+    }
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.dispose() }
     }
 
     val state by viewModel.gameState.collectAsState()
@@ -129,6 +140,8 @@ fun MatchScreen(
     val roundEndDetails = state.roundEndDetails
     var recordedMatchWinKey by remember { mutableStateOf<String?>(null) }
     var showDealingAnimation by remember { mutableStateOf(false) }
+    var mortoNoticeText by remember { mutableStateOf<String?>(null) }
+    var lastMortoNoticeKey by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) { if (isHost && !viewModel.isRestored) viewModel.startGame() }
 
@@ -167,8 +180,8 @@ fun MatchScreen(
         }
     }
 
-    LaunchedEffect(state.playerSeat, state.myHand.size, state.turnCard?.id, state.config.gameType) {
-        if (state.myHand.isNotEmpty()) {
+    LaunchedEffect(state.dealEventId) {
+        if (state.dealEventId > 0 && state.myHand.isNotEmpty()) {
             showDealingAnimation = true
             kotlinx.coroutines.delay(1250)
             showDealingAnimation = false
@@ -179,12 +192,12 @@ fun MatchScreen(
         roundEndDetails?.isMatchOver,
         roundEndDetails?.winnerName,
         roundEndDetails?.myNewTotal,
-        roundEndDetails?.opponentNewTotal
+        roundEndDetails?.opponentNewTotal,
+        state.dealEventId
     ) {
         val details = roundEndDetails ?: return@LaunchedEffect
-        val isLocalWinner = details.isMatchOver &&
-            (details.winnerName.startsWith("Voc") || details.winnerName == "Sua equipe")
-        val winKey = "${details.winnerName}:${details.myNewTotal}:${details.opponentNewTotal}"
+        val isLocalWinner = details.isLocalMatchWinner()
+        val winKey = "${state.dealEventId}:${details.winnerTeam}:${details.myNewTotal}:${details.opponentNewTotal}"
         if (isLocalWinner && recordedMatchWinKey != winKey) {
             feedback.play(FeedbackCue.Victory)
             FakeAuthRepository.recordCurrentPlayerVictory()
@@ -194,10 +207,26 @@ fun MatchScreen(
         }
     }
 
-    // Som quando adversário pega o morto
-    LaunchedEffect(state.opponentPickedMorto) {
-        if (state.opponentPickedMorto) {
-            feedback.play(FeedbackCue.OpponentMorto)
+    LaunchedEffect(state.mortoNoticeId) {
+        val pickedSeat = state.mortoNoticeSeat ?: return@LaunchedEffect
+        val localTeam = ((state.playerSeat % 2) + 2) % 2
+        val pickedTeam = ((pickedSeat % 2) + 2) % 2
+        val pickedByLocalSeat = pickedSeat == state.playerSeat
+        val pickedByLocalTeam = pickedTeam == localTeam
+        val notice = when {
+            pickedByLocalSeat -> "Você pegou o morto"
+            pickedByLocalTeam -> "Sua equipe pegou o morto"
+            state.opponentLabel == "Máquina" -> "Máquina pegou o morto"
+            state.config.maxPlayers == 4 -> "Equipe adversária pegou o morto"
+            else -> "Oponente pegou o morto"
+        }
+        val key = state.mortoNoticeId.toString()
+        if (key != lastMortoNoticeKey) {
+            lastMortoNoticeKey = key
+            mortoNoticeText = notice
+            feedback.play(if (pickedByLocalTeam) FeedbackCue.Draw else FeedbackCue.OpponentMorto)
+            kotlinx.coroutines.delay(2600)
+            if (mortoNoticeText == notice) mortoNoticeText = null
         }
     }
 
@@ -270,6 +299,11 @@ fun MatchScreen(
 
         MeldSparkleBurst(
             visible = state.lastMeldResult.isNotBlank(),
+            modifier = Modifier.align(Alignment.Center)
+        )
+
+        MortoNoticeOverlay(
+            text = mortoNoticeText,
             modifier = Modifier.align(Alignment.Center)
         )
 
@@ -486,12 +520,14 @@ private fun MeldSparkleBurst(
     visible: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val progress by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 760, easing = LinearEasing),
-        label = "meld_sparkle_progress"
-    )
-    if (progress <= 0.01f) return
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(visible) {
+        if (visible) {
+            progress.snapTo(0f)
+            progress.animateTo(1f, tween(durationMillis = 760, easing = LinearEasing))
+        }
+    }
+    if (!visible || progress.value <= 0.01f) return
 
     val colors = remember {
         listOf(ColorGold, ColorGreenLight, ColorBlueLight, Color.White)
@@ -500,14 +536,80 @@ private fun MeldSparkleBurst(
         val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
         repeat(28) { index ->
             val angle = (PI.toFloat() * 2f / 28f) * index
-            val distance = (28f + (index % 5) * 9f) * progress
+            val distance = (28f + (index % 5) * 9f) * progress.value
             val x = center.x + cos(angle) * distance
             val y = center.y + sin(angle) * distance
             drawCircle(
                 color = colors[index % colors.size],
-                radius = (5f - progress * 2.5f).coerceAtLeast(1.5f),
+                radius = (5f - progress.value * 2.5f).coerceAtLeast(1.5f),
                 center = androidx.compose.ui.geometry.Offset(x, y),
-                alpha = (1f - progress).coerceIn(0f, 0.92f)
+                alpha = (1f - progress.value).coerceIn(0f, 0.92f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MortoNoticeOverlay(
+    text: String?,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = text != null,
+        enter = fadeIn(animationSpec = tween(140)) + scaleIn(
+            initialScale = 0.86f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMedium
+            )
+        ),
+        exit = fadeOut(animationSpec = tween(240)) + scaleOut(
+            targetScale = 0.92f,
+            animationSpec = tween(220)
+        ),
+        modifier = modifier.zIndex(4f)
+    ) {
+        val pulse by rememberInfiniteTransition(label = "morto_notice_pulse").animateFloat(
+            initialValue = 0.62f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 760, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "morto_notice_alpha"
+        )
+        Row(
+            modifier = Modifier
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            Color.Black.copy(alpha = 0.78f),
+                            Color(0xFF143B2C).copy(alpha = 0.90f),
+                            Color.Black.copy(alpha = 0.78f)
+                        )
+                    ),
+                    RoundedCornerShape(18.dp)
+                )
+                .border(2.dp, ColorGold.copy(alpha = pulse), RoundedCornerShape(18.dp))
+                .shadow(18.dp, RoundedCornerShape(18.dp), clip = false)
+                .padding(horizontal = 22.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "MORTO",
+                color = ColorGold,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1
+            )
+            Text(
+                text = text.orEmpty(),
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 2,
+                textAlign = TextAlign.Center
             )
         }
     }
@@ -1647,60 +1749,151 @@ private fun MeldArea(
                 .background(accentColor.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
                 .padding(5.dp)
         ) {
-            val longestMeld = melds.maxOfOrNull { it.size } ?: 3
-            val groupCardWidth = when {
-                maxWidth < 250.dp -> 34.dp
-                melds.size >= 5 -> 34.dp
-                melds.size >= 4 -> 38.dp
-                melds.size >= 3 && longestMeld >= 5 -> 40.dp
-                melds.size >= 3 -> 46.dp
-                longestMeld >= 7 -> 42.dp
-                prominent -> 54.dp
-                else -> 48.dp
-            }
-
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(if (groupCardWidth <= 38.dp) 4.dp else 6.dp),
-                modifier = Modifier.fillMaxSize(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (melds.isEmpty()) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .widthIn(min = 180.dp)
-                                .height(42.dp)
-                                .border(1.dp, accentColor.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
-                                .background(Color.Black.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
-                                .padding(horizontal = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                emptyText,
-                                color = Color.White.copy(alpha = 0.42f),
-                                fontSize = if (prominent) 11.sp else 10.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                } else {
-                    itemsIndexed(
-                        items = melds,
-                        key = { index, meld -> "meld_${index}_${meld.joinToString("_") { it.id }}" }
-                    ) { _, meld ->
-                        MeldGroupView(
-                            meld = meld,
-                            prominent = prominent,
-                            gameType = gameType,
-                            cardWidth = groupCardWidth,
-                            onClick = { inspectedCards = meld }
+            if (melds.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .widthIn(min = 180.dp)
+                            .height(42.dp)
+                            .border(1.dp, accentColor.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+                            .background(Color.Black.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            emptyText,
+                            color = Color.White.copy(alpha = 0.42f),
+                            fontSize = if (prominent) 11.sp else 10.sp,
+                            textAlign = TextAlign.Center
                         )
+                    }
+                }
+            } else {
+                val gap = if (maxWidth < 360.dp) 4.dp else 6.dp
+                val longestMeld = melds.maxOfOrNull { it.size } ?: 3
+                val columns = tableGridColumnCount(
+                    maxWidth = maxWidth,
+                    meldCount = melds.size,
+                    longestMeld = longestMeld,
+                    prominent = prominent,
+                    gap = gap
+                )
+                val cellWidth = ((maxWidth - gap * (columns - 1)) / columns).coerceAtLeast(72.dp)
+                val groupCardWidth = tableGridCardWidth(
+                    cellWidth = cellWidth,
+                    longestMeld = longestMeld,
+                    meldCount = melds.size,
+                    prominent = prominent
+                )
+                val rowHeight = (groupCardWidth * 1.5f) + if (prominent) 24.dp else 20.dp
+                val rows = melds.chunked(columns)
+                val maxVisibleRows = (maxHeight.value / rowHeight.value).toInt().coerceAtLeast(1)
+                val useScroll = rows.size > maxVisibleRows
+                val gridModifier = if (useScroll) {
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                } else {
+                    Modifier.fillMaxSize()
+                }
+
+                Column(
+                    modifier = gridModifier,
+                    verticalArrangement = Arrangement.spacedBy(gap, Alignment.CenterVertically),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    rows.forEachIndexed { rowIndex, rowMelds ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(gap, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            rowMelds.forEachIndexed { columnIndex, meld ->
+                                val meldIndex = rowIndex * columns + columnIndex
+                                key("meld_grid_${meldIndex}_${meld.joinToString("_") { it.id }}") {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(cellWidth)
+                                            .heightIn(min = rowHeight),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        MeldGroupView(
+                                            meld = meld,
+                                            prominent = prominent,
+                                            gameType = gameType,
+                                            cardWidth = groupCardWidth,
+                                            onClick = { inspectedCards = meld }
+                                        )
+                                    }
+                                }
+                            }
+                            repeat(columns - rowMelds.size) {
+                                Spacer(
+                                    modifier = Modifier
+                                        .width(cellWidth)
+                                        .height(1.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+private fun tableGridColumnCount(
+    maxWidth: Dp,
+    meldCount: Int,
+    longestMeld: Int,
+    prominent: Boolean,
+    gap: Dp
+): Int {
+    val preferred = when {
+        maxWidth < 220.dp -> 1
+        maxWidth < 390.dp -> 2
+        maxWidth < 620.dp -> if (prominent) 2 else 3
+        maxWidth < 920.dp -> 3
+        prominent -> 3
+        meldCount <= 6 -> 4
+        else -> 3
+    }
+    var columns = preferred.coerceIn(1, meldCount.coerceAtLeast(1))
+    val minimumCardWidth = if (maxWidth < 300.dp) 24.dp else 28.dp
+    val minimumOverlap = 6.dp
+    val groupPadding = if (prominent) 14.dp else 10.dp
+    val requiredCellWidth = minimumCardWidth * longestMeld.toFloat() -
+        minimumOverlap * (longestMeld - 1).coerceAtLeast(0).toFloat() + groupPadding
+
+    while (columns > 1) {
+        val candidateCellWidth = (maxWidth - gap * (columns - 1)) / columns
+        if (candidateCellWidth >= requiredCellWidth) break
+        columns--
+    }
+    return columns
+}
+
+private fun tableGridCardWidth(
+    cellWidth: Dp,
+    longestMeld: Int,
+    meldCount: Int,
+    prominent: Boolean
+): Dp {
+    val maxCard = when {
+        meldCount >= 8 -> 44.dp
+        meldCount >= 5 -> 46.dp
+        prominent -> 54.dp
+        else -> 48.dp
+    }
+    val minimumCard = if (cellWidth < 180.dp) 24.dp else 28.dp
+    val estimatedNegativeSpacing = 6.dp * (longestMeld - 1).coerceAtLeast(0)
+    val horizontalPadding = if (prominent) 14.dp else 10.dp
+    val availableForCards = cellWidth - horizontalPadding + estimatedNegativeSpacing
+    return (availableForCards / longestMeld.coerceAtLeast(3))
+        .coerceIn(minimumCard, maxCard)
 }
 
 @Composable
@@ -2499,19 +2692,16 @@ private fun HandSection(
     val compactHand = state.myHand.size >= 13
     val cardW = if (compactHand) 52.dp else 64.dp
     val cardH = cardW * 1.5f
-    // Exposição visível: ~42% da carta aparece. O resto fica abaixo da tela.
-    val visibleFraction = 1f
-    val hiddenDp = 0.dp
-    // Quando selecionada, a carta sobe o valor inteiro do que estava escondido
-    // mais um extra para destacar
     val selectRise = 14.dp
-    val overlap = when {
-        handCount >= 24 -> -(cardW * 0.58f)
-        handCount >= 18 -> -(cardW * 0.50f)
-        handCount >= 13 -> -(cardW * 0.38f)
-        handCount >= 9 -> -(cardW * 0.24f)
-        else -> 8.dp
-    }
+    val handShine by rememberInfiniteTransition(label = "hand_shine").animateFloat(
+        initialValue = -0.6f,
+        targetValue = 1.6f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "hand_shine_x"
+    )
 
     Column(
         modifier = Modifier.fillMaxWidth()
@@ -2596,7 +2786,7 @@ private fun HandSection(
         // O Box tem altura = parte visível da carta, e as cartas transbordam para baixo
         // ficando escondidas pelo clip. Carta selecionada sobe com offset negativo.
 
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(cardH + selectRise + 8.dp)
@@ -2609,9 +2799,22 @@ private fun HandSection(
                     )
                 )
         ) {
+            val horizontalPadding = 24.dp
+            val availableWidth = (maxWidth - horizontalPadding).coerceAtLeast(cardW)
+            val minimumStep = 19.dp
+            val fittedStep = if (handCount <= 1) {
+                cardW
+            } else {
+                ((availableWidth - cardW) / (handCount - 1)).coerceAtMost(cardW + 8.dp)
+            }
+            val needsScrolling = fittedStep < minimumStep
+            val visibleStep = if (needsScrolling) minimumStep else fittedStep
+            val overlap = visibleStep - cardW
+
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(overlap, Alignment.CenterHorizontally),
+                userScrollEnabled = needsScrolling,
                 modifier = Modifier
                     .fillMaxWidth()
                     // Mantém o LazyRow sem clip para cartas selecionadas subirem acima da Box.
@@ -2636,15 +2839,6 @@ private fun HandSection(
                     val fanZ = dist * factorZ
                     val curveY = dist * -factorY
                     val dropY = kotlin.math.abs(dist) * factorDrop
-                    val shine by rememberInfiniteTransition(label = "shine_${card.id}").animateFloat(
-                        initialValue = -0.6f,
-                        targetValue = 1.6f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(durationMillis = 1200, easing = LinearEasing),
-                            repeatMode = RepeatMode.Restart
-                        ),
-                        label = "shine_x_${card.id}"
-                    )
                     // Carta não selecionada = 0 (topo colado no topo do Box)
                     // Carta selecionada = sobe selectRise (fica completamente visível + extra)
                     val yOffset by animateDpAsState(
@@ -2716,7 +2910,7 @@ private fun HandSection(
                         )
                         if (isSelected) {
                             Canvas(modifier = Modifier.matchParentSize().clip(RoundedCornerShape(12.dp))) {
-                                val x = size.width * shine
+                                val x = size.width * handShine
                                 drawLine(
                                     color = Color.White.copy(alpha = 0.55f),
                                     start = androidx.compose.ui.geometry.Offset(x - size.width * 0.35f, 0f),
@@ -2845,6 +3039,12 @@ fun MatchScreenCachetaPreview() {
 }
 
 @androidx.compose.ui.tooling.preview.Preview(showBackground = true, device = "spec:width=1280dp,height=800dp,dpi=240", name = "MatchScreen - Tranca")
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    device = "spec:width=800dp,height=360dp,dpi=320",
+    fontScale = 1.5f,
+    name = "Partida compacta - fonte grande"
+)
 @Composable
 fun MatchScreenTrancaPreview() {
     MaterialTheme {

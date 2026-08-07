@@ -23,7 +23,6 @@ import java.io.InputStreamReader
 import java.io.PrintWriter
 import java.net.ServerSocket
 import java.net.Socket
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
@@ -40,6 +39,7 @@ import java.util.concurrent.Executors
  * reaproveitando o mesmo protocolo para não quebrar o MatchViewModel.
  */
 class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRepository {
+    override val requiresClientReadyHandshake: Boolean = true
 
     private val sendExecutor = Executors.newSingleThreadExecutor()
 
@@ -64,6 +64,10 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
     private var clientSocket: Socket? = null
     private val connectedClients = CopyOnWriteArrayList<Socket>()
     private val playerSockets = ConcurrentHashMap<String, Socket>()
+    private val clientSeats = ConcurrentHashMap<Socket, Int>()
+    private val rememberedPlayerSeats = ConcurrentHashMap<String, Int>()
+    private val seatLock = Any()
+    @Volatile private var hostedMaxClients = 1
     private var hostJob: Job? = null
     private var clientJob: Job? = null
     private var heartbeatJob: Job? = null
@@ -84,6 +88,11 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
         override fun onServiceRegistered(nsdServiceInfo: NsdServiceInfo) {
             serviceName = nsdServiceInfo.serviceName
             Log.d("NSD", "Service registered: $serviceName")
+            _connectionStatus.value = if (connectedClients.isEmpty()) {
+                ConnectionStatus.ROOM_READY
+            } else {
+                ConnectionStatus.CONNECTED
+            }
         }
         override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
             Log.e("NSD", "Registration failed: $errorCode")
@@ -95,6 +104,7 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
 
     override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {
         stopHosting()
+        hostedMaxClients = ((config?.maxPlayers ?: 2) - 1).coerceIn(1, 3)
 
         hostJob = coroutineScope.launch {
             try {
@@ -104,7 +114,15 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
 
                 while (isActive) {
                     val socket = serverSocket?.accept() ?: break
+                    val assignedSeat = synchronized(seatLock) {
+                        (1..hostedMaxClients).firstOrNull { candidate -> candidate !in clientSeats.values }
+                    }
+                    if (assignedSeat == null) {
+                        socket.close()
+                        continue
+                    }
                     connectedClients.add(socket)
+                    clientSeats[socket] = assignedSeat
                     _connectedClientsCount.value = connectedClients.size
                     _connectionStatus.value = ConnectionStatus.CONNECTED
                     handleClientConnection(socket)
@@ -128,15 +146,23 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
                     // Ignora heartbeats
                     if (line.trim() == "PING") continue
                     
-                    val msg = parseNetworkMessage(line) ?: continue
+                    val parsed = parseNetworkMessage(line) ?: continue
+                    val provisionalSeat = clientSeats[socket] ?: continue
+                    val trustedSeat = bindClientSeat(socket, parsed.senderId, provisionalSeat) ?: run {
+                        Log.w(TAG, "Closing duplicate or conflicting player connection")
+                        break
+                    }
+                    val msg = parsed.copy(senderSeat = trustedSeat)
                     playerSockets[msg.senderId] = socket
-                    _incomingMessages.tryEmit(msg)
-                    broadcastMessage(line, socket)
+                    _incomingMessages.emit(msg)
+                    // Pedido de cliente vai somente ao host. Depois da validacao, o host publica
+                    // o PUBLIC_STATE canonico para todos e evita espalhar uma jogada forjada.
                 }
             } catch (e: Exception) {
                 if (isActive) Log.e(TAG, "Client read error: ${e.message}")
             } finally {
                 connectedClients.remove(socket)
+                clientSeats.remove(socket)
                 playerSockets.entries.removeIf { it.value == socket }
                 _connectedClientsCount.value = connectedClients.size
                 socket.close()
@@ -147,6 +173,29 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
                     _connectionStatus.value = ConnectionStatus.OPPONENT_DISCONNECTED
                 }
             }
+        }
+    }
+
+    /**
+     * Depois da primeira mensagem, o socket fica preso ao assento daquela identidade.
+     * Na reconexao eu reaproveito o assento antigo, mas nunca permito dois sockets no mesmo lugar.
+     */
+    private fun bindClientSeat(socket: Socket, playerId: String, provisionalSeat: Int): Int? {
+        return synchronized(seatLock) {
+            val previousSocket = playerSockets[playerId]
+            if (previousSocket != null && previousSocket !== socket && !previousSocket.isClosed) {
+                return@synchronized null
+            }
+
+            val desiredSeat = rememberedPlayerSeats[playerId] ?: provisionalSeat
+            val occupiedByAnotherSocket = clientSeats.entries.any { (otherSocket, seat) ->
+                otherSocket !== socket && seat == desiredSeat && !otherSocket.isClosed
+            }
+            if (occupiedByAnotherSocket) return@synchronized null
+
+            clientSeats[socket] = desiredSeat
+            rememberedPlayerSeats.putIfAbsent(playerId, desiredSeat)
+            desiredSeat
         }
     }
 
@@ -168,6 +217,8 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
         connectedClients.forEach { it.close() }
         connectedClients.clear()
         playerSockets.clear()
+        clientSeats.clear()
+        rememberedPlayerSeats.clear()
         serverSocket = null
         hostJob = null
         heartbeatJob = null
@@ -325,8 +376,12 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
                     
                     if (line.trim() == "PING") continue
                     
-                    val msg = parseNetworkMessage(line) ?: continue
-                    _incomingMessages.tryEmit(msg)
+                    val msg = parseNetworkMessage(
+                        line = line,
+                        acceptSenderSeatFromHost = true,
+                        defaultSenderSeat = 0
+                    ) ?: continue
+                    _incomingMessages.emit(msg)
                 }
                 
                 // Se chegou aqui, o host fechou a conexão
@@ -397,9 +452,45 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
         return sendJsonToSocket(socket, message)
     }
 
+    override fun sendMessageToSeat(seat: Int, message: NetworkMessage): Boolean {
+        if (seat !in 1..hostedMaxClients) return false
+        val socket = clientSeats.entries.firstOrNull { (candidate, assignedSeat) ->
+            assignedSeat == seat && !candidate.isClosed
+        }?.key ?: return false
+        return sendJsonToSocket(socket, message)
+    }
+
     override fun sendMessageToPlayer(playerId: String, message: NetworkMessage): Boolean {
         val socket = playerSockets[playerId] ?: return false
         return sendJsonToSocket(socket, message)
+    }
+
+    override fun sendMessageToSeatConfirmed(
+        seat: Int,
+        message: NetworkMessage,
+        onResult: (Boolean) -> Unit
+    ) {
+        val socket = clientSeats.entries.firstOrNull { (candidate, assignedSeat) ->
+            assignedSeat == seat && !candidate.isClosed
+        }?.key
+        if (socket == null) {
+            onResult(false)
+            return
+        }
+        sendJsonToSocketConfirmed(socket, message, onResult)
+    }
+
+    override fun sendMessageToPlayerConfirmed(
+        playerId: String,
+        message: NetworkMessage,
+        onResult: (Boolean) -> Unit
+    ) {
+        val socket = playerSockets[playerId]
+        if (socket == null) {
+            onResult(false)
+            return
+        }
+        sendJsonToSocketConfirmed(socket, message, onResult)
     }
 
     private fun sendJsonToSocket(socket: Socket, message: NetworkMessage): Boolean {
@@ -420,11 +511,35 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
         return true
     }
 
+    private fun sendJsonToSocketConfirmed(
+        socket: Socket,
+        message: NetworkMessage,
+        onResult: (Boolean) -> Unit
+    ) {
+        val json = message.toNetworkJson()
+        if (json.length > MAX_MESSAGE_LENGTH || socket.isClosed) {
+            onResult(false)
+            return
+        }
+        sendExecutor.execute {
+            val delivered = runCatching {
+                val writer = PrintWriter(socket.getOutputStream(), true)
+                writer.println(json)
+                !writer.checkError()
+            }.getOrDefault(false)
+            onResult(delivered)
+        }
+    }
+
     override fun resetConnectionStatus() {
         _connectionStatus.value = ConnectionStatus.CONNECTED
     }
 
-    private fun parseNetworkMessage(line: String): NetworkMessage? {
+    private fun parseNetworkMessage(
+        line: String,
+        acceptSenderSeatFromHost: Boolean = false,
+        defaultSenderSeat: Int? = null
+    ): NetworkMessage? {
         if (line.length > MAX_MESSAGE_LENGTH) {
             Log.w(TAG, "Ignoring oversized network message")
             return null
@@ -434,13 +549,18 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
             val json = JSONObject(line)
             val senderId = json.optString("senderId")
             val type = json.optString("type")
-            if (senderId.isBlank() || type.isBlank()) return null
+            val messageId = json.optString("messageId")
+            if (senderId.isBlank() || type.isBlank() || messageId.isBlank()) return null
+            val envelopeSeat = json.optInt("senderSeat", -1).takeIf { it >= 0 }
+            val roundId = json.optString("roundId").takeIf { it.isNotBlank() }
 
             NetworkMessage(
                 senderId = senderId,
                 type = type,
                 payload = json.optString("payload"),
-                messageId = json.optString("messageId", UUID.randomUUID().toString())
+                messageId = messageId,
+                senderSeat = if (acceptSenderSeatFromHost) envelopeSeat ?: defaultSenderSeat else defaultSenderSeat,
+                roundId = roundId
             )
         }.getOrElse {
             Log.w(TAG, "Ignoring malformed network message: ${it.message}")
@@ -465,5 +585,7 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
             put("type", type)
             put("payload", payload)
             put("messageId", messageId)
+            senderSeat?.let { put("senderSeat", it) }
+            roundId?.let { put("roundId", it) }
         }.toString()
 }

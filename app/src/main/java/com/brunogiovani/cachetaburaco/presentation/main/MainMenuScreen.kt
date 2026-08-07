@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import com.brunogiovani.cachetaburaco.R
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
+import com.brunogiovani.cachetaburaco.presentation.components.AdPlacement
+import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
 import com.brunogiovani.cachetaburaco.presentation.match.MatchViewModel
 
 private val ColorGreen = Color(0xFF2E7D32)
@@ -38,6 +40,10 @@ fun MainMenuScreen(
     onLogout: () -> Unit,
     onHostRoom: () -> Unit,
     onJoinRoom: () -> Unit,
+    onHostOnlineRoom: () -> Unit,
+    onJoinOnlineRoom: () -> Unit,
+    onOpenOnlineProfile: () -> Unit,
+    onOpenOnlineRanking: () -> Unit,
     onPlayBot: () -> Unit,
     onResumeGame: () -> Unit = {}
 ) {
@@ -83,9 +89,14 @@ fun MainMenuScreen(
             ) {
                 ProfilePanel(
                     playerName = player?.name ?: "Visitante",
+                    onOpenProfile = onOpenOnlineProfile,
                     onLogout = { showLogoutDialog = true }
                 )
-                RankingPanel(ranking = ranking, currentPlayerId = player?.id)
+                RankingPanel(
+                    ranking = ranking,
+                    currentPlayerId = player?.id,
+                    onOpenOnlineRanking = onOpenOnlineRanking
+                )
             }
 
             Column(
@@ -122,8 +133,8 @@ fun MainMenuScreen(
                 // Cada botao entra em um transporte diferente, mas a partida em si
                 // continua usando MatchScreen + MatchViewModel.
                 MenuButton(
-                    text = "Criar sala",
-                    subtitle = "Configure regras, jogadores e pontuação",
+                    text = "Criar sala local",
+                    subtitle = "Configure regras para jogar na mesma rede Wi-Fi",
                     color = ColorGreenLight,
                     onClick = onHostRoom
                 )
@@ -134,18 +145,31 @@ fun MainMenuScreen(
                     onClick = onPlayBot
                 )
                 MenuButton(
-                    text = "Entrar em sala",
+                    text = "Entrar em sala local",
                     subtitle = "Procure partidas na mesma rede Wi-Fi",
                     color = ColorBlue,
                     onClick = onJoinRoom
                 )
+                MenuButton(
+                    text = "Criar sala online - Beta",
+                    subtitle = "Publique as regras e jogue pela internet",
+                    color = Color(0xFF00897B),
+                    onClick = onHostOnlineRoom
+                )
+                MenuButton(
+                    text = "Encontrar sala online - Beta",
+                    subtitle = "Veja as regras antes de escolher uma mesa",
+                    color = Color(0xFF1565C0),
+                    onClick = onJoinOnlineRoom
+                )
                 Text(
-                    text = "Partidas locais para testes práticos. Online fica preparado para evoluir depois.",
+                    text = "O modo online usa o mesmo motor de regras das partidas locais.",
                     color = Color.White.copy(alpha = 0.48f),
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center,
                     lineHeight = 14.sp
                 )
+                SafeAdBannerSlot(compact = true, placement = AdPlacement.MAIN_MENU)
             }
         }
 
@@ -182,7 +206,11 @@ fun MainMenuScreen(
 }
 
 @Composable
-private fun ProfilePanel(playerName: String, onLogout: () -> Unit) {
+private fun ProfilePanel(
+    playerName: String,
+    onOpenProfile: () -> Unit,
+    onLogout: () -> Unit
+) {
     Surface(
         color = ColorCard.copy(alpha = 0.92f),
         shape = RoundedCornerShape(18.dp),
@@ -207,8 +235,13 @@ private fun ProfilePanel(playerName: String, onLogout: () -> Unit) {
                     Text("Modo Local - Wi-Fi", color = ColorGreenLight, fontSize = 12.sp)
                 }
             }
-            TextButton(onClick = onLogout) {
-                Text("Sair", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(onClick = onOpenProfile) {
+                    Text("Perfil online", color = ColorGreenLight, fontSize = 13.sp)
+                }
+                TextButton(onClick = onLogout) {
+                    Text("Sair", color = Color.White.copy(alpha = 0.62f), fontSize = 13.sp)
+                }
             }
         }
     }
@@ -217,7 +250,8 @@ private fun ProfilePanel(playerName: String, onLogout: () -> Unit) {
 @Composable
 private fun RankingPanel(
     ranking: List<FakeAuthRepository.LocalRankingEntry>,
-    currentPlayerId: String?
+    currentPlayerId: String?,
+    onOpenOnlineRanking: () -> Unit
 ) {
     Surface(
         color = ColorCard.copy(alpha = 0.88f),
@@ -254,6 +288,14 @@ private fun RankingPanel(
                         isCurrentPlayer = entry.playerId == currentPlayerId
                     )
                 }
+            }
+            Button(
+                onClick = onOpenOnlineRanking,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ColorBlue.copy(alpha = 0.92f)),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Ver ranking global", color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -298,19 +340,39 @@ private fun RankingRow(position: Int, name: String, wins: Int, isCurrentPlayer: 
 private fun MenuButton(text: String, subtitle: String, color: Color, onClick: () -> Unit) {
     Button(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(72.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp),
         colors = ButtonDefaults.buttonColors(containerColor = color.copy(alpha = 0.94f)),
         shape = RoundedCornerShape(16.dp),
-        elevation = ButtonDefaults.buttonElevation(6.dp)
+        elevation = ButtonDefaults.buttonElevation(6.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(text, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = Color.White.copy(alpha = 0.74f), fontSize = 11.sp, textAlign = TextAlign.Center)
+            Text(
+                text = text,
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = subtitle,
+                color = Color.White.copy(alpha = 0.74f),
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 2
+            )
         }
     }
 }
 
 @androidx.compose.ui.tooling.preview.Preview(showBackground = true, device = "spec:width=1280dp,height=800dp,dpi=240")
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    device = "spec:width=800dp,height=360dp,dpi=320",
+    fontScale = 1.5f,
+    name = "Menu compacto - fonte grande"
+)
 @Composable
 fun MainMenuScreenPreview() {
     MaterialTheme {
@@ -318,6 +380,10 @@ fun MainMenuScreenPreview() {
             onLogout = {},
             onHostRoom = {},
             onJoinRoom = {},
+            onHostOnlineRoom = {},
+            onJoinOnlineRoom = {},
+            onOpenOnlineProfile = {},
+            onOpenOnlineRanking = {},
             onPlayBot = {}
         )
     }

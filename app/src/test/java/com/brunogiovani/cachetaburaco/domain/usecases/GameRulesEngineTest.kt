@@ -403,7 +403,6 @@ class GameRulesEngineTest {
             allowWildcards = false,
             allowDrawFromDiscard = true,
             allowCharutos = false,
-            cachetaCardsPerPlayer = 10,
             cachetaStartsWithDiscard = true,
             requireCleanCanastraToWin = false,
             autoMeldTrancaRedThrees = false,
@@ -417,6 +416,21 @@ class GameRulesEngineTest {
         val restored = MatchConfig.deserialize(original.serialize())
 
         assertEquals(original, restored)
+    }
+
+    @Test
+    fun `legacy cacheta hand sizes are normalized to nine`() {
+        val sevenCardRoom = MatchConfig.deserialize(
+            "CACHETA,2,true,true,true,7,false,true,true,true,true,false,NORMAL,FREE,5"
+        )
+        val tenCardRoom = MatchConfig.deserialize(
+            "CACHETA,2,true,true,true,10,false,true,true,true,true,false,NORMAL,FREE,5"
+        )
+
+        assertEquals(MatchConfig.CACHETA_HAND_SIZE, sevenCardRoom.cardsPerPlayer)
+        assertEquals(MatchConfig.CACHETA_HAND_SIZE, tenCardRoom.cardsPerPlayer)
+        assertEquals("9", sevenCardRoom.serialize().split(",")[5])
+        assertEquals("9", tenCardRoom.serialize().split(",")[5])
     }
 
     @Test

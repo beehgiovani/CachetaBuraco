@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -32,7 +33,10 @@ import com.brunogiovani.cachetaburaco.domain.models.BotDifficulty
 import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.models.PointsMode
+import com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
+import com.brunogiovani.cachetaburaco.presentation.components.AdPlacement
+import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
 
 private val ColorGreenLight = Color(0xFF4CAF50)
 private val ColorGold = Color(0xFFFFD54F)
@@ -53,7 +57,6 @@ fun LobbyScreen(
     // O lobby não valida jogada; quem manda nisso é o motor de regras.
     var selectedGameType by remember { mutableStateOf(GameType.CACHETA) }
     var selectedPlayers by remember { mutableIntStateOf(2) }
-    var cachetaCardsPerPlayer by remember { mutableIntStateOf(9) }
     var allowWildcards by remember { mutableStateOf(true) }
     var allowDrawFromDiscard by remember { mutableStateOf(true) }
     var allowCharutos by remember { mutableStateOf(true) }
@@ -80,7 +83,6 @@ fun LobbyScreen(
         allowWildcards = allowWildcards,
         allowDrawFromDiscard = allowDrawFromDiscard,
         allowCharutos = allowCharutos,
-        cachetaCardsPerPlayer = cachetaCardsPerPlayer,
         cachetaStartsWithDiscard = cachetaStartsWithDiscard,
         requireCleanCanastraToWin = requireCleanCanastraToWin,
         autoMeldTrancaRedThrees = autoMeldTrancaRedThrees,
@@ -96,19 +98,81 @@ fun LobbyScreen(
     // Por isso a mesa fica fixa em 2 jogadores: jogador local x máquina.
     val discoveredRooms by networkRepository.discoveredRooms.collectAsState()
     val connectedClients by networkRepository.connectedClientsCount.collectAsState()
+    val connectionStatus by networkRepository.connectionStatus.collectAsState()
 
     var gameStarted by remember { mutableStateOf(false) }
+    var publishedConfig by remember { mutableStateOf<MatchConfig?>(null) }
+    var isPublishing by remember { mutableStateOf(false) }
+    var publicationError by remember { mutableStateOf<String?>(null) }
+    var pendingPublishConfig by remember { mutableStateOf<MatchConfig?>(null) }
+    var pendingJoinConfig by remember { mutableStateOf<MatchConfig?>(null) }
+    var joinError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(isHosting, currentConfig, connectedClients) {
-        // Antes de começar, qualquer mudança de regra atualiza a sala anunciada.
-        // Com cliente real conectado eu não reinicio o host para não derrubar a conexão.
-        if (isHosting) {
-            if (connectedClients == 0) {
-                networkRepository.startHosting(player.name, config = currentConfig)
+    LaunchedEffect(connectionStatus, pendingPublishConfig) {
+        val readyConfig = pendingPublishConfig ?: return@LaunchedEffect
+        when (connectionStatus) {
+            ConnectionStatus.ROOM_READY,
+            ConnectionStatus.CONNECTED -> {
+                pendingPublishConfig = null
+                isPublishing = false
+                if (singlePlayerMode) {
+                    gameStarted = true
+                    onGameStarted(readyConfig)
+                } else {
+                    publishedConfig = readyConfig
+                }
             }
-        } else {
+            ConnectionStatus.ERROR -> {
+                pendingPublishConfig = null
+                isPublishing = false
+                networkRepository.stopHosting()
+                publishedConfig = null
+                publicationError = "Não foi possível publicar a sala. Tente novamente."
+            }
+            else -> Unit
+        }
+    }
+
+    LaunchedEffect(connectionStatus, pendingJoinConfig) {
+        val joinedConfig = pendingJoinConfig ?: return@LaunchedEffect
+        when (connectionStatus) {
+            ConnectionStatus.CONNECTED -> {
+                pendingJoinConfig = null
+                gameStarted = true
+                onGameStarted(joinedConfig)
+            }
+            ConnectionStatus.ERROR,
+            ConnectionStatus.HOST_DISCONNECTED -> {
+                pendingJoinConfig = null
+                joinError = "Não foi possível entrar na sala. Verifique a rede e tente novamente."
+            }
+            else -> Unit
+        }
+    }
+
+    LaunchedEffect(isHosting) {
+        if (!isHosting) {
             networkRepository.startDiscovery()
         }
+    }
+
+    val publishOrStart = {
+        val frozenConfig = currentConfig
+        publicationError = null
+        isPublishing = true
+        pendingPublishConfig = frozenConfig
+
+        runCatching {
+            // Contra a máquina esta chamada apenas entrega as regras ao adaptador; nenhuma sala Wi-Fi é anunciada.
+            networkRepository.startHosting(player.name, config = frozenConfig)
+        }.onFailure { error ->
+            pendingPublishConfig = null
+            networkRepository.stopHosting()
+            publishedConfig = null
+            publicationError = error.message ?: "Não foi possível publicar a sala. Tente novamente."
+            isPublishing = false
+        }
+        Unit
     }
 
     DisposableEffect(Unit) {
@@ -169,16 +233,18 @@ fun LobbyScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             if (isHosting) {
+                val visibleConfig = publishedConfig ?: currentConfig
                 HostPanel(
-                    config = currentConfig,
+                    config = visibleConfig,
                     connectedClients = connectedClients,
                     singlePlayerMode = singlePlayerMode,
+                    isPublished = publishedConfig != null,
+                    isPublishing = isPublishing,
+                    publicationError = publicationError,
                     selectedGameType = selectedGameType,
                     onGameTypeChange = { selectedGameType = it },
                     selectedPlayers = selectedPlayers,
                     onPlayersChange = { selectedPlayers = it },
-                    cachetaCardsPerPlayer = cachetaCardsPerPlayer,
-                    onCachetaCardsPerPlayerChange = { cachetaCardsPerPlayer = it },
                     allowWildcards = allowWildcards,
                     onWildcardsChange = { allowWildcards = it },
                     allowDrawFromDiscard = allowDrawFromDiscard,
@@ -203,9 +269,14 @@ fun LobbyScreen(
                     onPointsModeChange = { pointsMode = it },
                     selectedPointLimit = selectedPointLimit,
                     onPointLimitChange = { selectedPointLimit = it },
+                    onPublish = publishOrStart,
                     onStart = {
-                        gameStarted = true
-                        onGameStarted(currentConfig)
+                        val configToStart = publishedConfig
+                        val requiredClients = (configToStart?.maxPlayers ?: 0) - 1
+                        if (configToStart != null && connectedClients >= requiredClients) {
+                            gameStarted = true
+                            onGameStarted(configToStart)
+                        }
                     },
 
                     modifier = Modifier.weight(1f).fillMaxWidth()
@@ -214,10 +285,17 @@ fun LobbyScreen(
             } else {
                 ClientPanel(
                     discoveredRooms = discoveredRooms,
+                    isJoining = pendingJoinConfig != null,
+                    joinError = joinError,
                     onJoin = { room ->
-                        networkRepository.connectToRoom(room.host, room.port)
-                        gameStarted = true
-                        onGameStarted(room.config ?: currentConfig)
+                        val roomConfig = room.config
+                        if (roomConfig == null) {
+                            joinError = "Esta sala não publicou as regras corretamente. Aguarde o host republicar."
+                        } else {
+                            joinError = null
+                            pendingJoinConfig = roomConfig
+                            networkRepository.connectToRoom(room.host, room.port)
+                        }
                     },
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
@@ -231,13 +309,15 @@ fun LobbyScreen(
 private fun HostPanel(
     config: MatchConfig,
     connectedClients: Int,
+    modifier: Modifier = Modifier,
     singlePlayerMode: Boolean = false,
+    isPublished: Boolean,
+    isPublishing: Boolean,
+    publicationError: String?,
     selectedGameType: GameType,
     onGameTypeChange: (GameType) -> Unit,
     selectedPlayers: Int,
     onPlayersChange: (Int) -> Unit,
-    cachetaCardsPerPlayer: Int,
-    onCachetaCardsPerPlayerChange: (Int) -> Unit,
     allowWildcards: Boolean,
     onWildcardsChange: (Boolean) -> Unit,
     allowDrawFromDiscard: Boolean,
@@ -262,65 +342,27 @@ private fun HostPanel(
     onPointsModeChange: (PointsMode) -> Unit,
     selectedPointLimit: Int,
     onPointLimitChange: (Int) -> Unit,
-    onStart: () -> Unit,
-    modifier: Modifier = Modifier
+    onPublish: () -> Unit,
+    onStart: () -> Unit
 ) {
     val requiredClients = config.maxPlayers - 1
-    val canStart = singlePlayerMode || connectedClients >= requiredClients
+    val canStart = isPublished && connectedClients >= requiredClients
 
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
         modifier = modifier
     ) {
-        item {
+        if (!isPublished) item {
             SectionCard(title = "Modo de Jogo") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    GameType.entries.forEach { type ->
-                        val isSelected = type == selectedGameType
-                        val (label, desc) = when (type) {
-                            GameType.CACHETA -> "Cacheta" to "7, 9 ou 10 cartas - Solo"
-                            GameType.BURACO -> "Buraco" to "11 cartas - Solo/Duplas"
-                            GameType.TRANCA -> "Tranca" to "11 cartas - Solo/Duplas"
-                        }
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .border(
-                                    2.dp,
-                                    if (isSelected) ColorGreenLight else Color.White.copy(alpha = 0.2f),
-                                    RoundedCornerShape(12.dp)
-                                )
-                                .background(
-                                    if (isSelected) Color(0x334CAF50) else ColorCard,
-                                    RoundedCornerShape(12.dp)
-                                )
-                                .clickable { onGameTypeChange(type) }
-                                .padding(vertical = 12.dp, horizontal = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = label,
-                                color = if (isSelected) ColorGreenLight else Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
-                            )
-                            Text(
-                                text = desc,
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 11.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
+                GameTypeOptions(
+                    selectedGameType = selectedGameType,
+                    onGameTypeChange = onGameTypeChange
+                )
             }
         }
 
-        item {
+        if (!isPublished) item {
             SectionCard(title = "Jogadores") {
                 val options = if (selectedGameType == GameType.CACHETA || singlePlayerMode) listOf(2) else listOf(2, 4)
                 if (options.size == 1) {
@@ -330,7 +372,10 @@ private fun HostPanel(
                         fontSize = 12.sp
                     )
                 } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         options.forEach { count ->
                             FilterChipOption(
                                 label = if (count == 2) "2 - Solo" else "4 - Duplas",
@@ -343,24 +388,15 @@ private fun HostPanel(
             }
         }
 
-        item {
+        if (!isPublished) item {
             SectionCard(title = "Opções da Partida") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (selectedGameType == GameType.CACHETA) {
                         Text(
-                            text = "A carta vira define o curinga da rodada. Escolha a quantidade de cartas conforme a regra da mesa.",
+                            text = "Cada jogador recebe 9 cartas. A décima só aparece durante a compra.",
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 12.sp
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(7, 9, 10).forEach { count ->
-                                FilterChipOption(
-                                    label = "$count cartas",
-                                    isSelected = cachetaCardsPerPlayer == count,
-                                    onClick = { onCachetaCardsPerPlayerChange(count) }
-                                )
-                            }
-                        }
                         ToggleRow(
                             label = "Curinga pela Vira",
                             description = "Carta acima da vira, no mesmo naipe",
@@ -465,36 +501,10 @@ private fun HostPanel(
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            BotDifficulty.entries.forEach { difficulty ->
-                                val profile = when (difficulty) {
-                                    BotDifficulty.EASY -> BotDifficultyProfile(
-                                        label = "Fácil",
-                                        description = "Compra pouco e protege o básico",
-                                        color = Color(0xFF66BB6A)
-                                    )
-                                    BotDifficulty.NORMAL -> BotDifficultyProfile(
-                                        label = "Normal",
-                                        description = "Compra lixo útil e monta jogos",
-                                        color = ColorGold
-                                    )
-                                    BotDifficulty.HARD -> BotDifficultyProfile(
-                                        label = "Difícil",
-                                        description = "Lê a mesa e evita entregar carta",
-                                        color = Color(0xFFEF5350)
-                                    )
-                                }
-                                BotDifficultyOption(
-                                    profile = profile,
-                                    isSelected = botDifficulty == difficulty,
-                                    onClick = { onBotDifficultyChange(difficulty) },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
+                        BotDifficultyOptions(
+                            selectedDifficulty = botDifficulty,
+                            onDifficultyChange = onBotDifficultyChange
+                        )
                     }
                 }
             }
@@ -504,9 +514,12 @@ private fun HostPanel(
             RuleSummaryCard(config = config)
         }
 
-        item {
+        if (!isPublished) item {
             SectionCard(title = "Pontuação") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     FilterChipOption(
                         label = "Gratuito",
                         isSelected = pointsMode == PointsMode.FREE,
@@ -521,11 +534,14 @@ private fun HostPanel(
             }
         }
 
-        item {
+        if (!isPublished) item {
             val title = if (selectedGameType == GameType.CACHETA) "Vidas (Limite)" else "Pontuação limite"
             SectionCard(title = title) {
                 val options = if (selectedGameType == GameType.CACHETA) listOf(5, 10, 15) else listOf(1500, 3000, 5000)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     options.forEach { limit ->
                         FilterChipOption(
                             label = if (selectedGameType == GameType.CACHETA) "$limit vidas" else "$limit pts",
@@ -538,62 +554,297 @@ private fun HostPanel(
         }
 
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = ColorCard),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "Aguardando Jogadores",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+            when {
+                singlePlayerMode -> PublishActionCard(
+                    title = "Configuração pronta?",
+                    description = "As regras serão fechadas e a partida começa em seguida.",
+                    buttonLabel = "Concluir e jogar",
+                    isPublishing = isPublishing,
+                    errorMessage = publicationError,
+                    onClick = onPublish
+                )
+
+                !isPublished -> PublishActionCard(
+                    title = "Concluir criação",
+                    description = "A sala só aparece para os outros jogadores depois desta confirmação.",
+                    buttonLabel = "Publicar sala",
+                    isPublishing = isPublishing,
+                    errorMessage = publicationError,
+                    onClick = onPublish
+                )
+
+                else -> PublishedRoomCard(
+                    connectedClients = connectedClients,
+                    requiredClients = requiredClients,
+                    canStart = canStart,
+                    onStart = onStart
+                )
+            }
+        }
+        item {
+            SafeAdBannerSlot(
+                compact = true,
+                placement = AdPlacement.LOBBY,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun GameTypeOptions(
+    selectedGameType: GameType,
+    onGameTypeChange: (GameType) -> Unit
+) {
+    val largeFont = LocalDensity.current.fontScale >= 1.25f
+
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val stackOptions = maxWidth < 600.dp || largeFont
+        if (stackOptions) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                GameType.entries.forEach { type ->
+                    GameTypeOption(
+                        type = type,
+                        isSelected = type == selectedGameType,
+                        onClick = { onGameTypeChange(type) },
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        repeat(requiredClients) { index ->
-                            val filled = index < connectedClients
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .background(
-                                        if (filled) ColorGreenLight else Color.White.copy(alpha = 0.2f),
-                                        shape = RoundedCornerShape(50)
-                                    )
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "$connectedClients / $requiredClients conectado(s)",
-                            color = Color.White.copy(alpha = 0.7f),
-                            fontSize = 13.sp
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = onStart,
-                        enabled = canStart,
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = ColorGreenLight,
-                            disabledContainerColor = Color.White.copy(alpha = 0.15f)
-                        )
-                    ) {
-                        Text(
-                            if (canStart) "Iniciar Partida" else "Aguardando jogadores...",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
-                    }
                 }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GameType.entries.forEach { type ->
+                    GameTypeOption(
+                        type = type,
+                        isSelected = type == selectedGameType,
+                        onClick = { onGameTypeChange(type) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GameTypeOption(
+    type: GameType,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val (label, description) = when (type) {
+        GameType.CACHETA -> "Cacheta" to "9 cartas - Individual"
+        GameType.BURACO -> "Buraco" to "11 cartas - Solo/Duplas"
+        GameType.TRANCA -> "Tranca" to "11 cartas - Solo/Duplas"
+    }
+
+    Column(
+        modifier = modifier
+            .heightIn(min = 68.dp)
+            .border(
+                2.dp,
+                if (isSelected) ColorGreenLight else Color.White.copy(alpha = 0.2f),
+                RoundedCornerShape(12.dp)
+            )
+            .background(
+                if (isSelected) Color(0x334CAF50) else ColorCard,
+                RoundedCornerShape(12.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 8.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = label,
+            color = if (isSelected) ColorGreenLight else Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp
+        )
+        Text(
+            text = description,
+            color = Color.White.copy(alpha = 0.6f),
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun BotDifficultyOptions(
+    selectedDifficulty: BotDifficulty,
+    onDifficultyChange: (BotDifficulty) -> Unit
+) {
+    val largeFont = LocalDensity.current.fontScale >= 1.25f
+
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val stackOptions = maxWidth < 600.dp || largeFont
+        if (stackOptions) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                BotDifficulty.entries.forEach { difficulty ->
+                    BotDifficultyOption(
+                        profile = botDifficultyProfile(difficulty),
+                        isSelected = selectedDifficulty == difficulty,
+                        onClick = { onDifficultyChange(difficulty) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BotDifficulty.entries.forEach { difficulty ->
+                    BotDifficultyOption(
+                        profile = botDifficultyProfile(difficulty),
+                        isSelected = selectedDifficulty == difficulty,
+                        onClick = { onDifficultyChange(difficulty) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun botDifficultyProfile(difficulty: BotDifficulty): BotDifficultyProfile {
+    return when (difficulty) {
+        BotDifficulty.EASY -> BotDifficultyProfile(
+            label = "Fácil",
+            description = "Compra pouco e protege o básico",
+            color = Color(0xFF66BB6A)
+        )
+        BotDifficulty.NORMAL -> BotDifficultyProfile(
+            label = "Normal",
+            description = "Compra lixo útil e monta jogos",
+            color = ColorGold
+        )
+        BotDifficulty.HARD -> BotDifficultyProfile(
+            label = "Difícil",
+            description = "Lê a mesa e evita entregar carta",
+            color = Color(0xFFEF5350)
+        )
+    }
+}
+
+@Composable
+private fun PublishActionCard(
+    title: String,
+    description: String,
+    buttonLabel: String,
+    isPublishing: Boolean,
+    errorMessage: String?,
+    onClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorCard),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = description,
+                color = Color.White.copy(alpha = 0.65f),
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center
+            )
+            errorMessage?.let { message ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = message,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Button(
+                onClick = onClick,
+                enabled = !isPublishing,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight)
+            ) {
+                if (isPublishing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(
+                    text = if (isPublishing) "Preparando..." else buttonLabel,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PublishedRoomCard(
+    connectedClients: Int,
+    requiredClients: Int,
+    canStart: Boolean,
+    onStart: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorCard),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("Sala publicada", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                itemVerticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(requiredClients) { index ->
+                    val filled = index < connectedClients
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .background(
+                                if (filled) ColorGreenLight else Color.White.copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(50)
+                            )
+                    )
+                }
+                Text(
+                    "$connectedClients / $requiredClients conectado(s)",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 13.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onStart,
+                enabled = canStart,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = ColorGreenLight,
+                    disabledContainerColor = Color.White.copy(alpha = 0.15f)
+                )
+            ) {
+                Text(
+                    if (canStart) "Iniciar partida" else "Aguardando jogadores...",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
@@ -603,6 +854,8 @@ private fun HostPanel(
 @Composable
 private fun ClientPanel(
     discoveredRooms: List<com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom>,
+    isJoining: Boolean,
+    joinError: String?,
     onJoin: (com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -612,6 +865,17 @@ private fun ClientPanel(
         contentPadding = PaddingValues(bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        if (joinError != null) {
+            item {
+                Text(
+                    text = joinError,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                )
+            }
+        }
         if (discoveredRooms.isEmpty()) {
             item {
                 Spacer(modifier = Modifier.height(48.dp))
@@ -633,7 +897,7 @@ private fun ClientPanel(
         } else {
             item {
                 Text(
-                    "Salas disponiveis",
+                    "Salas disponíveis",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
@@ -646,46 +910,115 @@ private fun ClientPanel(
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
+                    val largeFont = LocalDensity.current.fontScale >= 1.25f
+                    BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
-                        Column {
-                            Text(
-                                room.serviceName.removePrefix("Room_"),
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                            Text(
-                                room.host,
-                                color = Color.White.copy(alpha = 0.4f),
-                                fontSize = 11.sp
-                            )
-                            room.config?.let { config ->
-                                Spacer(modifier = Modifier.height(6.dp))
-                                RuleSummaryText(config = config)
+                        val stackContent = maxWidth < 560.dp || largeFont
+                        if (stackContent) {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                RoomDetails(
+                                    roomName = room.serviceName.removePrefix("Room_"),
+                                    host = room.host,
+                                    config = room.config
+                                )
+                                Button(
+                                    onClick = { onJoin(room) },
+                                    enabled = room.config != null && !isJoining,
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    if (isJoining) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                    } else {
+                                        Text(if (room.config == null) "Regras indisponíveis" else "Entrar", fontWeight = FontWeight.Bold)
+                                    }
+                                }
                             }
-                        }
-                        Button(
-                            onClick = { onJoin(room) },
-                            colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("Entrar >", fontWeight = FontWeight.Bold)
+                        } else {
+                            Row(
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RoomDetails(
+                                    roomName = room.serviceName.removePrefix("Room_"),
+                                    host = room.host,
+                                    config = room.config,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Button(
+                                    onClick = { onJoin(room) },
+                                    enabled = room.config != null && !isJoining,
+                                    colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    if (isJoining) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                    } else {
+                                        Text(if (room.config == null) "Regras indisponíveis" else "Entrar", fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+        item {
+            SafeAdBannerSlot(
+                compact = true,
+                placement = AdPlacement.LOBBY,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }
 
 
 // Componentes de UI Auxiliares
+@Composable
+private fun RoomDetails(
+    roomName: String,
+    host: String,
+    config: MatchConfig?,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Text(
+            roomName,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 15.sp
+        )
+        Text(
+            host,
+            color = Color.White.copy(alpha = 0.4f),
+            fontSize = 11.sp
+        )
+        config?.let {
+            Spacer(modifier = Modifier.height(6.dp))
+            RuleSummaryText(config = it)
+        } ?: run {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Regras não recebidas do host",
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 11.sp
+            )
+        }
+    }
+}
+
 @Composable
 private fun RuleSummaryCard(config: MatchConfig) {
     SectionCard(title = "Regras da sala") {
@@ -703,18 +1036,26 @@ private fun RuleSummaryText(config: MatchConfig) {
     val lines = buildList {
         add("$gameName - ${config.maxPlayers} jogadores - ${config.cardsPerPlayer} cartas")
         if (config.gameType == GameType.CACHETA) {
-            add("Curinga: carta acima da vira no mesmo naipe")
+            add(if (config.allowWildcards) "Curinga: carta acima da vira no mesmo naipe" else "Curinga desativado")
             add(if (config.cachetaStartsWithDiscard) "Lixo inicial com a vira" else "Lixo inicial vazio")
         } else {
             add("2 e curinga fixo; topo do lixo deve baixar ou encaixar")
             add(if (config.allowCharutos) "Charutos/trincas permitidos" else "Somente sequências do mesmo naipe")
             add(if (config.requireCleanCanastraToWin) "Precisa canastra limpa para bater" else "Pode bater com canastra suja")
             if (config.gameType == GameType.TRANCA) {
-                add("3 preto tranca o lixo; 3 vermelho baixa separado")
+                add(if (config.autoMeldTrancaRedThrees) {
+                    "3 preto tranca o lixo; 3 vermelho baixa automaticamente"
+                } else {
+                    "3 preto tranca o lixo; 3 vermelho permanece na mão"
+                })
                 add(if (config.penalizeBlackThreesInHand) "3 preto na mão desconta 100 pts" else "3 preto na mão vale normal")
             }
         }
         add(if (config.allowDrawFromDiscard) "Compra do lixo ligada" else "Compra do lixo desligada")
+        if (config.gameType != GameType.CACHETA) {
+            add(if (config.uniformCardPoints) "Cada carta vale 10 pts" else "Cartas usam valores tradicionais")
+        }
+        add(if (config.autoSortHand) "Mão organizada automaticamente" else "Ordem manual da mão")
         add("Limite: ${if (config.gameType == GameType.CACHETA) "${config.pointLimit} vidas" else "${config.pointLimit} pts"}")
     }
 
@@ -895,6 +1236,18 @@ fun LobbyScreenHostPreview() {
             onGameStarted = {}
         )
     }
+}
+
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    widthDp = 640,
+    heightDp = 360,
+    fontScale = 1.5f,
+    name = "LobbyScreen - Host compacto e fonte grande"
+)
+@Composable
+fun LobbyScreenHostCompactLargeFontPreview() {
+    LobbyScreenHostPreview()
 }
 
 @androidx.compose.ui.tooling.preview.Preview(

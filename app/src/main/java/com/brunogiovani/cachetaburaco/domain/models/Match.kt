@@ -27,7 +27,6 @@ data class MatchConfig(
     val allowWildcards: Boolean = true,         // Curingas habilitados
     val allowDrawFromDiscard: Boolean = true,    // Permitir compra do lixo
     val allowCharutos: Boolean = true,           // Permitir trincas/charutos quando a regra da sala habilitar
-    val cachetaCardsPerPlayer: Int = 9,          // Cacheta costuma usar 9 cartas, mas algumas mesas usam variações
     val cachetaStartsWithDiscard: Boolean = false, // Vira fica separado; lixo começa zerado por padrão
     val requireCleanCanastraToWin: Boolean = true, // Buraco exige canastra limpa para bater
     val autoMeldTrancaRedThrees: Boolean = true, // Tranca baixa 3 vermelho automaticamente
@@ -39,7 +38,8 @@ data class MatchConfig(
     val pointLimit: Int = 1500                   // Limite de pontos para a partida acabar
 ) {
     val isTeamMode: Boolean get() = maxPlayers == 4
-    val cardsPerPlayer: Int get() = if (gameType == GameType.CACHETA) cachetaCardsPerPlayer else 11
+    val cardsPerPlayer: Int
+        get() = if (gameType == GameType.CACHETA) CACHETA_HAND_SIZE else BURACO_TRANCA_HAND_SIZE
 
     fun serialize(): String {
         return listOf(
@@ -48,7 +48,8 @@ data class MatchConfig(
             allowWildcards,
             allowDrawFromDiscard,
             allowCharutos,
-            cachetaCardsPerPlayer,
+            // Mantenho este campo no CSV para salas antigas continuarem lendo os próximos valores no lugar certo.
+            CACHETA_HAND_SIZE,
             cachetaStartsWithDiscard,
             requireCleanCanastraToWin,
             autoMeldTrancaRedThrees,
@@ -62,6 +63,9 @@ data class MatchConfig(
     }
 
     companion object {
+        const val CACHETA_HAND_SIZE = 9
+        const val BURACO_TRANCA_HAND_SIZE = 11
+
         fun deserialize(serialized: String): MatchConfig {
             val parts = serialized.split(",")
             val defaults = MatchConfig()
@@ -88,11 +92,6 @@ data class MatchConfig(
                     parts.getOrNull(4)?.toBooleanStrictOrNull() ?: defaults.allowCharutos
                 } else {
                     defaults.allowCharutos
-                },
-                cachetaCardsPerPlayer = if (hasExpandedRules) {
-                    parts.getOrNull(5)?.toIntOrNull()?.coerceIn(7, 10) ?: defaults.cachetaCardsPerPlayer
-                } else {
-                    defaults.cachetaCardsPerPlayer
                 },
                 cachetaStartsWithDiscard = if (hasExpandedRules) {
                     parts.getOrNull(6)?.toBooleanStrictOrNull() ?: defaults.cachetaStartsWithDiscard

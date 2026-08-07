@@ -20,8 +20,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import com.brunogiovani.cachetaburaco.R
@@ -32,7 +30,7 @@ import com.brunogiovani.cachetaburaco.domain.models.DeckColor
 @Composable
 fun CardView(
     card: Card,
-    modifier: Modifier = Modifier.width(80.dp).height(120.dp),
+    modifier: Modifier = Modifier,
     isFaceUp: Boolean = true
 ) {
     val cardShape = RoundedCornerShape(12.dp)
@@ -42,6 +40,7 @@ fun CardView(
     ) {
         BoxWithConstraints(
             modifier = modifier
+                .defaultMinSize(minWidth = 80.dp, minHeight = 120.dp)
                 .shadow(6.dp, cardShape, clip = false)
                 .clip(cardShape)
                 .background(
@@ -155,36 +154,17 @@ fun CardView(
                     }
                 }
             } else {
-                val tintColor = if (card.deckColor == DeckColor.RED) Color(0xFFD32F2F) else Color(0xFF1976D2)
-    
-                // Card Back 
                 Image(
-                    painter = painterResource(id = R.drawable.card_back),
+                    painter = painterResource(
+                        id = if (card.deckColor == DeckColor.RED) {
+                            R.drawable.card_back_red
+                        } else {
+                            R.drawable.card_back
+                        }
+                    ),
                     contentDescription = "Verso da carta",
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                    colorFilter = ColorFilter.tint(tintColor, BlendMode.Modulate)
-                )
-            }
-            
-            // Premium Glass/Gloss Overlay
-            Canvas(modifier = Modifier.matchParentSize()) {
-                drawLine(
-                    color = Color.White.copy(alpha = 0.2f),
-                    start = Offset(0f, size.height * 0.18f),
-                    end = Offset(size.width, size.height * 0.02f),
-                    strokeWidth = 3f
-                )
-                drawLine(
-                    color = Color.Black.copy(alpha = 0.15f),
-                    start = Offset(size.width * 0.12f, 0f),
-                    end = Offset(size.width, size.height * 0.74f),
-                    strokeWidth = 4f
-                )
-                drawCircle(
-                    color = Color.White.copy(alpha = 0.12f),
-                    radius = size.minDimension * 0.32f,
-                    center = Offset(size.width * 0.35f, size.height * 0.36f)
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
