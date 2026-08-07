@@ -1559,7 +1559,58 @@ class MatchViewModelStartGameTest {
         assertEquals(275, state.myScore)
         assertEquals(610, state.opponentScore)
         assertEquals(11, state.myHand.size)
-        assertEquals(3, repo.privateClientMessages.count { it.message.type == "GAME_START" })
+        // 3 assentos remotos recebem GAME_START na distribuicao inicial (startGame)
+        // e de novo na redistribuicao da proxima rodada (nextRound) -- 3+3=6.
+        assertEquals(6, repo.privateClientMessages.count { it.message.type == "GAME_START" })
+    }
+
+    @Test
+    fun `tranca four player deal never leaves a red three stuck in any seat hand and melds it alone`() = runTest {
+        // Gap que ficou pendente da varredura da matriz de regras: o 3 vermelho
+        // automatico na Tranca em 4 jogadores passa pelo parceiro (mesmo time),
+        // nao só pelo host. A logica em teamForSeat(seat)==teamForSeat(localSeat)
+        // ja foi validada a fundo do lado do servidor (RPC start_online_round,
+        // testada com Postgres local rodando de verdade em varias rodadas
+        // aleatorias, inclusive com os dois times recebendo 3 vermelho na mesma
+        // rodada) -- essa logica no Kotlin e a mesma comparação. startGame()
+        // embaralha um baralho novo a cada chamada e não dá pra fixar a ordem sem
+        // duplicar a distribuição aqui no teste, então repito até algum dos 4
+        // assentos sortear um 3 vermelho e confirmo que ele nunca fica preso na
+        // mão de ninguém e sempre vira uma baixa isolada (uma carta só) em
+        // alguma das duas mesas.
+        var checkedAtLeastOnce = false
+        val isRedThree: (Card) -> Boolean = { it.rank == Rank.THREE && (it.suit == Suit.HEARTS || it.suit == Suit.DIAMONDS) }
+
+        repeat(30) {
+            val viewModel = MatchViewModel(
+                networkRepository = FakeLocalNetworkRepository(),
+                playerId = "host",
+                isHost = true,
+                config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 4)
+            )
+            viewModel.startGame()
+            advanceUntilIdle()
+
+            val state = viewModel.gameState.value
+            val redThreeMelds = (state.myTableMelds + state.opponentTableMelds).filter { it.any(isRedThree) }
+            if (redThreeMelds.isEmpty()) return@repeat
+
+            checkedAtLeastOnce = true
+            assertFalse("3 vermelho não pode sobrar na mão do host", state.myHand.any(isRedThree))
+            for (seat in 1..3) {
+                assertFalse(
+                    "3 vermelho não pode sobrar na mão do assento $seat",
+                    viewModel.remoteHandsForTest()[seat]?.any(isRedThree) ?: false
+                )
+            }
+            redThreeMelds.forEach { meld ->
+                assertEquals("3 vermelho vira sempre uma baixa isolada", 1, meld.size)
+            }
+        }
+        assertTrue(
+            "Nenhuma das 30 rodadas sorteou um 3 vermelho -- probabilidade quase nula, ajuste a repetição",
+            checkedAtLeastOnce
+        )
     }
 
     @Test

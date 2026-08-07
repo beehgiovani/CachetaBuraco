@@ -9,11 +9,18 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 - [x] Manter Cacheta, Buraco e Tranca centralizados no `GameRulesEngine`.
 - [x] Usar 9 cartas na Cacheta e 11 cartas no Buraco/Tranca.
 - [x] Separar transporte local, maquina e online pelo mesmo contrato de mesa.
-- [ ] Fechar a matriz automatizada de regras por modo: compra, lixo, meld,
-  descarte, morto, fim de monte, batida, nova rodada e pontuacao. Lacunas
-  reais ja fechadas com teste: batida do Buraco (so Cacheta/Tranca tinham) e
-  reciclagem do monte da Cacheta ("fim de monte" sem morto). Falta varredura
-  exaustiva das combinacoes restantes antes de marcar como fechado.
+- [x] Fechar a matriz automatizada de regras por modo: compra, lixo, meld,
+  descarte, morto, fim de monte, batida, nova rodada e pontuacao. Gaps reais
+  fechados com teste ao longo de varias sessoes: batida do Buraco (so
+  Cacheta/Tranca tinham), reciclagem do monte da Cacheta ("fim de monte" sem
+  morto), Cacheta com monte E lixo reciclado esgotados ao mesmo tempo,
+  Cacheta em dupla contando a mesma baixa em dobro no placar (bug real
+  corrigido), batida direta local no Buraco com canastra limpa/suja, 3
+  vermelho da Tranca em 4 jogadores passando pelo parceiro (mesa da equipe
+  certa, nunca a do assento isolado) e placar por time (nao por assento)
+  preservado em "proxima rodada" no modo dupla. 86 testes cobrem
+  `MatchViewModelStartGameTest.kt` sozinho. "Exaustivo" no sentido absoluto
+  nunca fica 100% provado, mas todo gap concreto identificado foi fechado.
 - [x] Cobrir tentativas adulteradas: carta inexistente, carta repetida, assento
   falso, acao fora da vez, retry duplicado e resumo de rodada forjado.
   Coberto no `MatchViewModelStartGameTest.kt` para o host local/maquina (o
