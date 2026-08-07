@@ -1,34 +1,25 @@
 package com.brunogiovani.cachetaburaco.presentation.profile
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,26 +30,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.brunogiovani.cachetaburaco.R
 import com.brunogiovani.cachetaburaco.domain.models.OnlineAvatar
 import com.brunogiovani.cachetaburaco.domain.models.OnlineProfile
 import com.brunogiovani.cachetaburaco.domain.repositories.OnlineProfileRepository
+import com.brunogiovani.cachetaburaco.presentation.components.MenuBackdrop
+import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
+import com.brunogiovani.cachetaburaco.presentation.components.MenuEntrance
+import com.brunogiovani.cachetaburaco.presentation.components.MenuFilledButton
+import com.brunogiovani.cachetaburaco.presentation.components.MenuPressScale
+import com.brunogiovani.cachetaburaco.presentation.components.MenuSectionCard
+import com.brunogiovani.cachetaburaco.presentation.components.MenuShapes
+import com.brunogiovani.cachetaburaco.presentation.components.MenuStatusMessage
+import com.brunogiovani.cachetaburaco.presentation.components.MenuTopBar
 import com.brunogiovani.cachetaburaco.presentation.components.OnlineAvatarView
 import com.brunogiovani.cachetaburaco.presentation.components.avatarLabel
 import kotlinx.coroutines.launch
-
-private val ProfilePanel = Color(0xED101820)
-private val ProfileGreen = Color(0xFF4CAF50)
-private val ProfileGold = Color(0xFFFFD54F)
 
 internal sealed interface OnlineProfileUiState {
     data object Loading : OnlineProfileUiState
@@ -131,130 +123,110 @@ internal fun OnlineProfileContent(
     onAvatarSelected: (OnlineAvatar) -> Unit,
     onSave: () -> Unit
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val compact = maxWidth < 760.dp || maxHeight < 430.dp
-        Image(
-            painter = painterResource(R.drawable.table_background),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(Color(0xE6070B10), Color(0xF0071510))))
-        )
+    MenuBackdrop {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val compact = maxWidth < 760.dp || maxHeight < 430.dp
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(if (compact) 10.dp else 18.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 14.dp)
-        ) {
-            ProfileHeader(compact = compact, onBack = onBack)
-            when (state) {
-                OnlineProfileUiState.Loading -> {
-                    Spacer(Modifier.height(24.dp))
-                    CircularProgressIndicator(color = ProfileGold)
-                }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .verticalScroll(rememberScrollState())
+                    .padding(if (compact) 10.dp else 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 14.dp)
+            ) {
+                MenuTopBar(title = "Perfil online", onBack = onBack)
+                when (state) {
+                    OnlineProfileUiState.Loading -> {
+                        Spacer(Modifier.height(24.dp))
+                        MenuStatusMessage(text = "Carregando seu perfil online...")
+                    }
 
-                is OnlineProfileUiState.Error -> {
-                    Text(state.message, color = Color.White, textAlign = TextAlign.Center)
-                    Button(onClick = onRetry) { Text("Tentar novamente") }
-                }
+                    is OnlineProfileUiState.Error -> {
+                        Spacer(Modifier.height(24.dp))
+                        MenuStatusMessage(text = state.message, showSpinner = false)
+                        Spacer(Modifier.height(4.dp))
+                        MenuFilledButton(
+                            text = "Tentar novamente",
+                            onClick = onRetry,
+                            modifier = Modifier.heightIn(min = 44.dp)
+                        )
+                    }
 
-                is OnlineProfileUiState.Ready -> {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = ProfilePanel,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(if (compact) 12.dp else 18.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp)
-                        ) {
-                            OnlineAvatarView(
-                                avatar = state.selectedAvatar,
-                                playerName = state.profile.playerName,
-                                size = if (compact) 68.dp else 92.dp
-                            )
-                            Text(
-                                state.profile.playerName,
-                                color = Color.White,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = if (compact) 18.sp else 24.sp
-                            )
-                            Text(
-                                "Escolha como você aparece no ranking e nas salas online.",
-                                color = Color.White.copy(alpha = 0.64f),
-                                textAlign = TextAlign.Center,
-                                fontSize = if (compact) 11.sp else 13.sp
-                            )
-                            FlowRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                maxItemsInEachRow = if (compact) 6 else 6,
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OnlineAvatar.entries.forEach { avatar ->
-                                    AvatarOption(
-                                        avatar = avatar,
+                    is OnlineProfileUiState.Ready -> {
+                        val hasPendingChange = state.selectedAvatar != state.profile.avatar
+
+                        MenuEntrance {
+                            MenuSectionCard {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OnlineAvatarView(
+                                        avatar = state.selectedAvatar,
                                         playerName = state.profile.playerName,
-                                        selected = avatar == state.selectedAvatar,
-                                        compact = compact,
-                                        onClick = { onAvatarSelected(avatar) }
+                                        size = if (compact) 72.dp else 96.dp
+                                    )
+                                    Text(
+                                        state.profile.playerName,
+                                        color = MenuColors.OnDark,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = if (compact) 20.sp else 26.sp
+                                    )
+                                    Text(
+                                        "É assim que você aparece no ranking e nas salas online.",
+                                        color = MenuColors.OnDarkMuted,
+                                        textAlign = TextAlign.Center,
+                                        fontSize = if (compact) 11.sp else 13.sp
                                     )
                                 }
                             }
-                            Button(
-                                onClick = onSave,
-                                enabled = !state.saving && state.selectedAvatar != state.profile.avatar,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = ProfileGreen)
-                            ) {
-                                if (state.saving) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        color = Color.White,
-                                        strokeWidth = 2.dp
+                        }
+
+                        MenuEntrance(delayMillis = 60) {
+                            MenuSectionCard(title = "Escolha seu avatar") {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 14.dp)
+                                ) {
+                                    FlowRow(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        maxItemsInEachRow = 6,
+                                        horizontalArrangement = Arrangement.SpaceEvenly,
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OnlineAvatar.entries.forEach { avatar ->
+                                            AvatarOption(
+                                                avatar = avatar,
+                                                playerName = state.profile.playerName,
+                                                selected = avatar == state.selectedAvatar,
+                                                compact = compact,
+                                                onClick = { onAvatarSelected(avatar) }
+                                            )
+                                        }
+                                    }
+                                    MenuFilledButton(
+                                        text = if (hasPendingChange) "Salvar avatar" else "Avatar salvo",
+                                        onClick = onSave,
+                                        enabled = !state.saving && hasPendingChange,
+                                        loading = state.saving,
+                                        containerColor = MenuColors.TableGreenLight
                                     )
-                                } else {
-                                    Text("Salvar avatar", fontWeight = FontWeight.Bold)
+                                    state.feedback?.let {
+                                        Text(
+                                            it,
+                                            color = if (it.startsWith("Avatar")) MenuColors.TableGreenLight else MenuColors.Gold,
+                                            fontSize = 12.sp
+                                        )
+                                    }
                                 }
-                            }
-                            state.feedback?.let {
-                                Text(
-                                    it,
-                                    color = if (it.startsWith("Avatar")) ProfileGreen else Color(0xFFFFB74D),
-                                    fontSize = 12.sp
-                                )
                             }
                         }
                     }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun ProfileHeader(compact: Boolean, onBack: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        TextButton(onClick = onBack) { Text("Voltar", color = Color.White) }
-        Text(
-            "Perfil online",
-            color = ProfileGold,
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = if (compact) 18.sp else 24.sp
-        )
-        Spacer(Modifier.size(64.dp))
     }
 }
 
@@ -266,32 +238,41 @@ private fun AvatarOption(
     compact: Boolean,
     onClick: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .clickable(onClick = onClick)
-            .then(
-                if (selected) Modifier.border(2.dp, ProfileGold, RoundedCornerShape(8.dp))
-                else Modifier
+    MenuPressScale(onClick = onClick) {
+        Column(
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .background(
+                    if (selected) MenuColors.Gold.copy(alpha = 0.16f) else Color.Transparent,
+                    MenuShapes.Card
+                )
+                .border(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = if (selected) MenuColors.Gold else Color.White.copy(alpha = 0.12f),
+                    shape = MenuShapes.Card
+                )
+                .padding(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            OnlineAvatarView(
+                avatar = avatar,
+                playerName = playerName,
+                size = if (compact) 40.dp else 52.dp
             )
-            .padding(6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        OnlineAvatarView(
-            avatar = avatar,
-            playerName = playerName,
-            size = if (compact) 40.dp else 52.dp
-        )
-        Text(
-            avatarLabel(avatar),
-            color = if (selected) ProfileGold else Color.White.copy(alpha = 0.7f),
-            fontSize = if (compact) 8.sp else 10.sp,
-            maxLines = 1
-        )
+            Text(
+                avatarLabel(avatar),
+                color = if (selected) MenuColors.Gold else MenuColors.OnDarkMuted,
+                fontSize = if (compact) 8.sp else 10.sp,
+                maxLines = 1
+            )
+        }
     }
 }
 
-@Preview(showBackground = true, device = "spec:width=1280dp,height=800dp,dpi=240")
+// ─── Previews ─────────────────────────────────────────────────────────────
+
+@Preview(showBackground = true, device = "spec:width=1280dp,height=800dp,dpi=240", name = "Perfil - tablet/paisagem")
 @Preview(
     showBackground = true,
     device = "spec:width=800dp,height=360dp,dpi=320",
@@ -305,6 +286,69 @@ private fun OnlineProfilePreview() {
             state = OnlineProfileUiState.Ready(
                 profile = OnlineProfile("preview", "Jogador", OnlineAvatar.SAPPHIRE),
                 selectedAvatar = OnlineAvatar.RUBY
+            ),
+            onBack = {},
+            onRetry = {},
+            onAvatarSelected = {},
+            onSave = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "Perfil - celular compacto")
+@Composable
+private fun OnlineProfileCompactPreview() {
+    MaterialTheme {
+        OnlineProfileContent(
+            state = OnlineProfileUiState.Ready(
+                profile = OnlineProfile("preview", "Bruno", OnlineAvatar.GOLD),
+                selectedAvatar = OnlineAvatar.GOLD
+            ),
+            onBack = {},
+            onRetry = {},
+            onAvatarSelected = {},
+            onSave = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "Perfil - carregando")
+@Composable
+private fun OnlineProfileLoadingPreview() {
+    MaterialTheme {
+        OnlineProfileContent(
+            state = OnlineProfileUiState.Loading,
+            onBack = {},
+            onRetry = {},
+            onAvatarSelected = {},
+            onSave = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "Perfil - erro")
+@Composable
+private fun OnlineProfileErrorPreview() {
+    MaterialTheme {
+        OnlineProfileContent(
+            state = OnlineProfileUiState.Error("Não foi possível carregar seu perfil online."),
+            onBack = {},
+            onRetry = {},
+            onAvatarSelected = {},
+            onSave = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 812, heightDp = 375, name = "Perfil - celular paisagem")
+@Composable
+private fun OnlineProfileLandscapePreview() {
+    MaterialTheme {
+        OnlineProfileContent(
+            state = OnlineProfileUiState.Ready(
+                profile = OnlineProfile("preview", "Bruno", OnlineAvatar.VIOLET),
+                selectedAvatar = OnlineAvatar.VIOLET,
+                saving = true
             ),
             onBack = {},
             onRetry = {},

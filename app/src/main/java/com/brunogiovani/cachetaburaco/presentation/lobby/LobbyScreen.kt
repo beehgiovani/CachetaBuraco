@@ -1,47 +1,80 @@
-﻿package com.brunogiovani.cachetaburaco.presentation.lobby
+package com.brunogiovani.cachetaburaco.presentation.lobby
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.brunogiovani.cachetaburaco.R
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
 import com.brunogiovani.cachetaburaco.domain.models.BotDifficulty
 import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
+import com.brunogiovani.cachetaburaco.domain.models.Player
 import com.brunogiovani.cachetaburaco.domain.models.PointsMode
 import com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus
+import com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
+import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
 import com.brunogiovani.cachetaburaco.presentation.components.AdPlacement
+import com.brunogiovani.cachetaburaco.presentation.components.MenuBackdrop
+import com.brunogiovani.cachetaburaco.presentation.components.MenuBadge
+import com.brunogiovani.cachetaburaco.presentation.components.MenuChipOption
+import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
+import com.brunogiovani.cachetaburaco.presentation.components.MenuExpandableSection
+import com.brunogiovani.cachetaburaco.presentation.components.MenuFilledButton
+import com.brunogiovani.cachetaburaco.presentation.components.MenuGroupLabel
+import com.brunogiovani.cachetaburaco.presentation.components.MenuMetrics
+import com.brunogiovani.cachetaburaco.presentation.components.MenuOptionTile
+import com.brunogiovani.cachetaburaco.presentation.components.MenuSectionCard
+import com.brunogiovani.cachetaburaco.presentation.components.MenuShapes
+import com.brunogiovani.cachetaburaco.presentation.components.MenuStatusMessage
+import com.brunogiovani.cachetaburaco.presentation.components.MenuToggleRow
+import com.brunogiovani.cachetaburaco.presentation.components.MenuTopBar
 import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
-
-private val ColorGreenLight = Color(0xFF4CAF50)
-private val ColorGold = Color(0xFFFFD54F)
-private val ColorSurface = Color(0xCC0D0D1E)
-private val ColorCard = Color(0x99111133)
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 
 @Composable
 fun LobbyScreen(
@@ -189,46 +222,24 @@ fun LobbyScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Fundo
-        Image(
-            painter = painterResource(id = R.drawable.table_background),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
-
-        // Conteudo principal
+    MenuBackdrop {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(16.dp)
-                .widthIn(max = 1040.dp)
+                .widthIn(max = MenuMetrics.MaxContentWidth)
                 .align(Alignment.Center),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Cabecalho
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = onBack) {
-                    Text("Voltar", color = Color.White.copy(alpha = 0.8f))
-                }
-                Text(
-                    text = when {
-                        singlePlayerMode -> "Jogar contra a máquina"
-                        isHosting -> "Criar sala"
-                        else -> "Procurar sala"
-                    },
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.width(72.dp))
-            }
+            MenuTopBar(
+                title = when {
+                    singlePlayerMode -> "Jogar contra a máquina"
+                    isHosting -> "Criar sala"
+                    else -> "Procurar sala"
+                },
+                onBack = onBack
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -278,15 +289,14 @@ fun LobbyScreen(
                             onGameStarted(configToStart)
                         }
                     },
-
                     modifier = Modifier.weight(1f).fillMaxWidth()
-                    
                 )
             } else {
                 ClientPanel(
                     discoveredRooms = discoveredRooms,
                     isJoining = pendingJoinConfig != null,
                     joinError = joinError,
+                    isOnlineTransport = networkRepository.isOnlineTransport,
                     onJoin = { room ->
                         val roomConfig = room.config
                         if (roomConfig == null) {
@@ -354,7 +364,7 @@ private fun HostPanel(
         modifier = modifier
     ) {
         if (!isPublished) item {
-            SectionCard(title = "Modo de Jogo") {
+            MenuSectionCard(title = "Modo de jogo", stepNumber = 1) {
                 GameTypeOptions(
                     selectedGameType = selectedGameType,
                     onGameTypeChange = onGameTypeChange
@@ -363,12 +373,12 @@ private fun HostPanel(
         }
 
         if (!isPublished) item {
-            SectionCard(title = "Jogadores") {
+            MenuSectionCard(title = "Jogadores", stepNumber = 2) {
                 val options = if (selectedGameType == GameType.CACHETA || singlePlayerMode) listOf(2) else listOf(2, 4)
                 if (options.size == 1) {
                     Text(
                         if (singlePlayerMode) "Modo contra a máquina usa 2 jogadores (você x máquina)." else "Cacheta é sempre 2 jogadores (solo).",
-                        color = Color.White.copy(alpha = 0.6f),
+                        color = MenuColors.OnDarkMuted,
                         fontSize = 12.sp
                     )
                 } else {
@@ -377,7 +387,7 @@ private fun HostPanel(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         options.forEach { count ->
-                            FilterChipOption(
+                            MenuChipOption(
                                 label = if (count == 2) "2 - Solo" else "4 - Duplas",
                                 isSelected = count == selectedPlayers,
                                 onClick = { onPlayersChange(count) }
@@ -389,21 +399,23 @@ private fun HostPanel(
         }
 
         if (!isPublished) item {
-            SectionCard(title = "Opções da Partida") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            MenuExpandableSection(title = "Regras da partida", stepNumber = 3) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MenuGroupLabel("Curinga e baralho")
                     if (selectedGameType == GameType.CACHETA) {
                         Text(
                             text = "Cada jogador recebe 9 cartas. A décima só aparece durante a compra.",
-                            color = Color.White.copy(alpha = 0.62f),
-                            fontSize = 12.sp
+                            color = MenuColors.OnDarkMuted,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(bottom = 4.dp)
                         )
-                        ToggleRow(
+                        MenuToggleRow(
                             label = "Curinga pela Vira",
                             description = "Carta acima da vira, no mesmo naipe",
                             checked = allowWildcards,
                             onCheckedChange = onWildcardsChange
                         )
-                        ToggleRow(
+                        MenuToggleRow(
                             label = "Lixo Inicial",
                             description = if (cachetaStartsWithDiscard)
                                 "A vira também começa no lixo"
@@ -415,12 +427,14 @@ private fun HostPanel(
                     } else {
                         Text(
                             text = "No ${selectedGameType.name.lowercase().replaceFirstChar { it.uppercase() }}, o 2 é curinga fixo e sempre suja a canastra.",
-                            color = Color.White.copy(alpha = 0.62f),
-                            fontSize = 12.sp
+                            color = MenuColors.OnDarkMuted,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(bottom = 4.dp)
                         )
                     }
 
-                    ToggleRow(
+                    MenuGroupLabel("Compra e jogadas")
+                    MenuToggleRow(
                         label = "Compra do Lixo",
                         description = if (selectedGameType == GameType.TRANCA)
                             "3 preto tranca automaticamente"
@@ -429,9 +443,8 @@ private fun HostPanel(
                         checked = allowDrawFromDiscard,
                         onCheckedChange = onDrawDiscardChange
                     )
-
                     if (selectedGameType != GameType.CACHETA) {
-                        ToggleRow(
+                        MenuToggleRow(
                             label = "Charutos / Trincas",
                             description = if (allowCharutos)
                                 "Permite jogos de cartas do mesmo valor"
@@ -442,8 +455,11 @@ private fun HostPanel(
                         )
                     }
 
+                    if (selectedGameType != GameType.CACHETA) {
+                        MenuGroupLabel("Batida e pontuação das cartas")
+                    }
                     if (selectedGameType == GameType.BURACO) {
-                        ToggleRow(
+                        MenuToggleRow(
                             label = "Canastra Limpa",
                             description = if (requireCleanCanastraToWin)
                                 "Obrigatória para bater"
@@ -453,9 +469,8 @@ private fun HostPanel(
                             onCheckedChange = onRequireCleanCanastraToWinChange
                         )
                     }
-
                     if (selectedGameType == GameType.TRANCA) {
-                        ToggleRow(
+                        MenuToggleRow(
                             label = "3 Vermelho",
                             description = if (autoMeldTrancaRedThrees)
                                 "Baixa automaticamente e vale 100"
@@ -464,7 +479,7 @@ private fun HostPanel(
                             checked = autoMeldTrancaRedThrees,
                             onCheckedChange = onAutoMeldTrancaRedThreesChange
                         )
-                        ToggleRow(
+                        MenuToggleRow(
                             label = "3 Preto Pesado",
                             description = if (penalizeBlackThreesInHand)
                                 "3 preto na mão desconta 100 pontos"
@@ -474,9 +489,8 @@ private fun HostPanel(
                             onCheckedChange = onPenalizeBlackThreesInHandChange
                         )
                     }
-
                     if (selectedGameType != GameType.CACHETA) {
-                        ToggleRow(
+                        MenuToggleRow(
                             label = "Cartas Uniformes",
                             description = if (uniformCardPoints)
                                 "Todas as cartas valem 10 pts"
@@ -487,19 +501,20 @@ private fun HostPanel(
                         )
                     }
 
-                    ToggleRow(
+                    MenuGroupLabel("Preferências")
+                    MenuToggleRow(
                         label = "Ordenar Mão Auto",
                         description = "Organiza cartas por naipe e valor",
                         checked = autoSortHand,
                         onCheckedChange = onAutoSortChange
                     )
-
                     if (singlePlayerMode) {
                         Text(
                             text = "Nível da máquina",
-                            color = Color.White,
+                            color = MenuColors.OnDark,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
                         )
                         BotDifficultyOptions(
                             selectedDifficulty = botDifficulty,
@@ -510,47 +525,49 @@ private fun HostPanel(
             }
         }
 
-        item {
-            RuleSummaryCard(config = config)
-        }
-
         if (!isPublished) item {
-            SectionCard(title = "Pontuação") {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChipOption(
-                        label = "Gratuito",
-                        isSelected = pointsMode == PointsMode.FREE,
-                        onClick = { onPointsModeChange(PointsMode.FREE) }
-                    )
-                    FilterChipOption(
-                        label = "Fichas",
-                        isSelected = pointsMode == PointsMode.CHIPS,
-                        onClick = { onPointsModeChange(PointsMode.CHIPS) }
-                    )
-                }
-            }
-        }
-
-        if (!isPublished) item {
-            val title = if (selectedGameType == GameType.CACHETA) "Vidas (Limite)" else "Pontuação limite"
-            SectionCard(title = title) {
-                val options = if (selectedGameType == GameType.CACHETA) listOf(5, 10, 15) else listOf(1500, 3000, 5000)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    options.forEach { limit ->
-                        FilterChipOption(
-                            label = if (selectedGameType == GameType.CACHETA) "$limit vidas" else "$limit pts",
-                            isSelected = limit == selectedPointLimit,
-                            onClick = { onPointLimitChange(limit) }
-                        )
+            MenuSectionCard(title = "Pontuação", stepNumber = 4) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        MenuGroupLabel("Formato")
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            MenuChipOption(
+                                label = "Gratuito",
+                                isSelected = pointsMode == PointsMode.FREE,
+                                onClick = { onPointsModeChange(PointsMode.FREE) }
+                            )
+                            MenuChipOption(
+                                label = "Fichas",
+                                isSelected = pointsMode == PointsMode.CHIPS,
+                                onClick = { onPointsModeChange(PointsMode.CHIPS) }
+                            )
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        MenuGroupLabel(if (selectedGameType == GameType.CACHETA) "Vidas (limite)" else "Pontuação limite")
+                        val options = if (selectedGameType == GameType.CACHETA) listOf(5, 10, 15) else listOf(1500, 3000, 5000)
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            options.forEach { limit ->
+                                MenuChipOption(
+                                    label = if (selectedGameType == GameType.CACHETA) "$limit vidas" else "$limit pts",
+                                    isSelected = limit == selectedPointLimit,
+                                    onClick = { onPointLimitChange(limit) }
+                                )
+                            }
+                        }
                     }
                 }
             }
+        }
+
+        item {
+            RuleSummaryCard(config = config)
         }
 
         item {
@@ -603,8 +620,10 @@ private fun GameTypeOptions(
         if (stackOptions) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 GameType.entries.forEach { type ->
-                    GameTypeOption(
-                        type = type,
+                    val (label, description) = gameTypeCopy(type)
+                    MenuOptionTile(
+                        title = label,
+                        description = description,
                         isSelected = type == selectedGameType,
                         onClick = { onGameTypeChange(type) },
                         modifier = Modifier.fillMaxWidth()
@@ -614,8 +633,10 @@ private fun GameTypeOptions(
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 GameType.entries.forEach { type ->
-                    GameTypeOption(
-                        type = type,
+                    val (label, description) = gameTypeCopy(type)
+                    MenuOptionTile(
+                        title = label,
+                        description = description,
                         isSelected = type == selectedGameType,
                         onClick = { onGameTypeChange(type) },
                         modifier = Modifier.weight(1f)
@@ -626,49 +647,10 @@ private fun GameTypeOptions(
     }
 }
 
-@Composable
-private fun GameTypeOption(
-    type: GameType,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val (label, description) = when (type) {
-        GameType.CACHETA -> "Cacheta" to "9 cartas - Individual"
-        GameType.BURACO -> "Buraco" to "11 cartas - Solo/Duplas"
-        GameType.TRANCA -> "Tranca" to "11 cartas - Solo/Duplas"
-    }
-
-    Column(
-        modifier = modifier
-            .heightIn(min = 68.dp)
-            .border(
-                2.dp,
-                if (isSelected) ColorGreenLight else Color.White.copy(alpha = 0.2f),
-                RoundedCornerShape(12.dp)
-            )
-            .background(
-                if (isSelected) Color(0x334CAF50) else ColorCard,
-                RoundedCornerShape(12.dp)
-            )
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp, horizontal = 8.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = label,
-            color = if (isSelected) ColorGreenLight else Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = 14.sp
-        )
-        Text(
-            text = description,
-            color = Color.White.copy(alpha = 0.6f),
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center
-        )
-    }
+private fun gameTypeCopy(type: GameType): Pair<String, String> = when (type) {
+    GameType.CACHETA -> "Cacheta" to "9 cartas - Individual"
+    GameType.BURACO -> "Buraco" to "11 cartas - Solo/Duplas"
+    GameType.TRANCA -> "Tranca" to "11 cartas - Solo/Duplas"
 }
 
 @Composable
@@ -683,10 +665,14 @@ private fun BotDifficultyOptions(
         if (stackOptions) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 BotDifficulty.entries.forEach { difficulty ->
-                    BotDifficultyOption(
-                        profile = botDifficultyProfile(difficulty),
+                    val profile = botDifficultyProfile(difficulty)
+                    MenuOptionTile(
+                        title = profile.label,
+                        description = profile.description,
                         isSelected = selectedDifficulty == difficulty,
                         onClick = { onDifficultyChange(difficulty) },
+                        accentColor = profile.color,
+                        minHeight = 86.dp,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -694,10 +680,14 @@ private fun BotDifficultyOptions(
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 BotDifficulty.entries.forEach { difficulty ->
-                    BotDifficultyOption(
-                        profile = botDifficultyProfile(difficulty),
+                    val profile = botDifficultyProfile(difficulty)
+                    MenuOptionTile(
+                        title = profile.label,
+                        description = profile.description,
                         isSelected = selectedDifficulty == difficulty,
                         onClick = { onDifficultyChange(difficulty) },
+                        accentColor = profile.color,
+                        minHeight = 86.dp,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -706,22 +696,24 @@ private fun BotDifficultyOptions(
     }
 }
 
+private data class BotDifficultyProfile(val label: String, val description: String, val color: Color)
+
 private fun botDifficultyProfile(difficulty: BotDifficulty): BotDifficultyProfile {
     return when (difficulty) {
         BotDifficulty.EASY -> BotDifficultyProfile(
             label = "Fácil",
             description = "Compra pouco e protege o básico",
-            color = Color(0xFF66BB6A)
+            color = MenuColors.TableGreenLight
         )
         BotDifficulty.NORMAL -> BotDifficultyProfile(
             label = "Normal",
             description = "Compra lixo útil e monta jogos",
-            color = ColorGold
+            color = MenuColors.Gold
         )
         BotDifficulty.HARD -> BotDifficultyProfile(
             label = "Difícil",
             description = "Lê a mesa e evita entregar carta",
-            color = Color(0xFFEF5350)
+            color = MenuColors.Red
         )
     }
 }
@@ -735,20 +727,16 @@ private fun PublishActionCard(
     errorMessage: String?,
     onClick: () -> Unit
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = ColorCard),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
+    MenuSectionCard {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(title, color = MenuColors.OnDark, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = description,
-                color = Color.White.copy(alpha = 0.65f),
+                color = MenuColors.OnDarkMuted,
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center
             )
@@ -756,34 +744,18 @@ private fun PublishActionCard(
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = message,
-                    color = MaterialTheme.colorScheme.error,
+                    color = MenuColors.Red,
                     fontSize = 12.sp,
                     textAlign = TextAlign.Center
                 )
             }
             Spacer(modifier = Modifier.height(14.dp))
-            Button(
+            MenuFilledButton(
+                text = if (isPublishing) "Preparando..." else buttonLabel,
                 onClick = onClick,
-                enabled = !isPublishing,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight)
-            ) {
-                if (isPublishing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        color = Color.White,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-                Text(
-                    text = if (isPublishing) "Preparando..." else buttonLabel,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    textAlign = TextAlign.Center
-                )
-            }
+                loading = isPublishing,
+                containerColor = MenuColors.TableGreenLight
+            )
         }
     }
 }
@@ -795,16 +767,12 @@ private fun PublishedRoomCard(
     canStart: Boolean,
     onStart: () -> Unit
 ) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = ColorCard),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
+    MenuSectionCard {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Sala publicada", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("Sala publicada", color = MenuColors.OnDark, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Spacer(modifier = Modifier.height(8.dp))
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
@@ -817,35 +785,24 @@ private fun PublishedRoomCard(
                         modifier = Modifier
                             .size(12.dp)
                             .background(
-                                if (filled) ColorGreenLight else Color.White.copy(alpha = 0.2f),
+                                if (filled) MenuColors.TableGreenLight else Color.White.copy(alpha = 0.2f),
                                 shape = RoundedCornerShape(50)
                             )
                     )
                 }
                 Text(
                     "$connectedClients / $requiredClients conectado(s)",
-                    color = Color.White.copy(alpha = 0.7f),
+                    color = MenuColors.OnDarkMuted,
                     fontSize = 13.sp
                 )
             }
             Spacer(modifier = Modifier.height(16.dp))
-            Button(
+            MenuFilledButton(
+                text = if (canStart) "Iniciar partida" else "Aguardando jogadores...",
                 onClick = onStart,
                 enabled = canStart,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = ColorGreenLight,
-                    disabledContainerColor = Color.White.copy(alpha = 0.15f)
-                )
-            ) {
-                Text(
-                    if (canStart) "Iniciar partida" else "Aguardando jogadores...",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    textAlign = TextAlign.Center
-                )
-            }
+                containerColor = MenuColors.TableGreenLight
+            )
         }
     }
 }
@@ -853,11 +810,12 @@ private fun PublishedRoomCard(
 //Painel do Cliente (Discovery)
 @Composable
 private fun ClientPanel(
-    discoveredRooms: List<com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom>,
+    discoveredRooms: List<DiscoveredRoom>,
     isJoining: Boolean,
     joinError: String?,
-    onJoin: (com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom) -> Unit,
-    modifier: Modifier = Modifier
+    onJoin: (DiscoveredRoom) -> Unit,
+    modifier: Modifier = Modifier,
+    isOnlineTransport: Boolean = false
 ) {
     LazyColumn(
         modifier = modifier,
@@ -869,7 +827,7 @@ private fun ClientPanel(
             item {
                 Text(
                     text = joinError,
-                    color = MaterialTheme.colorScheme.error,
+                    color = MenuColors.Red,
                     fontSize = 12.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
@@ -879,26 +837,16 @@ private fun ClientPanel(
         if (discoveredRooms.isEmpty()) {
             item {
                 Spacer(modifier = Modifier.height(48.dp))
-                CircularProgressIndicator(color = ColorGreenLight, strokeWidth = 3.dp)
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    "Procurando salas na rede local...",
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 14.sp
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    "Certifique-se de estar na mesma rede Wi-Fi",
-                    color = Color.White.copy(alpha = 0.4f),
-                    fontSize = 12.sp,
-                    textAlign = TextAlign.Center
+                MenuStatusMessage(
+                    text = if (isOnlineTransport) "Procurando salas online..." else "Procurando salas na rede local...",
+                    caption = if (isOnlineTransport) "Isso pode levar alguns segundos" else "Certifique-se de estar na mesma rede Wi-Fi"
                 )
             }
         } else {
             item {
                 Text(
                     "Salas disponíveis",
-                    color = Color.White,
+                    color = MenuColors.OnDark,
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
                     modifier = Modifier.padding(bottom = 12.dp)
@@ -906,9 +854,9 @@ private fun ClientPanel(
             }
             items(discoveredRooms) { room ->
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = ColorCard),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    colors = CardDefaults.cardColors(containerColor = MenuColors.InkPanel),
+                    shape = MenuShapes.Card,
+                    modifier = Modifier.fillMaxWidth().border(1.dp, MenuColors.Border, MenuShapes.Card)
                 ) {
                     val largeFont = LocalDensity.current.fontScale >= 1.25f
                     BoxWithConstraints(
@@ -924,22 +872,13 @@ private fun ClientPanel(
                                     host = room.host,
                                     config = room.config
                                 )
-                                Button(
+                                MenuFilledButton(
+                                    text = if (room.config == null) "Regras indisponíveis" else "Entrar",
                                     onClick = { onJoin(room) },
                                     enabled = room.config != null && !isJoining,
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    if (isJoining) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(20.dp),
-                                            strokeWidth = 2.dp
-                                        )
-                                    } else {
-                                        Text(if (room.config == null) "Regras indisponíveis" else "Entrar", fontWeight = FontWeight.Bold)
-                                    }
-                                }
+                                    loading = isJoining,
+                                    containerColor = MenuColors.TableGreenLight
+                                )
                             }
                         } else {
                             Row(
@@ -953,21 +892,16 @@ private fun ClientPanel(
                                     modifier = Modifier.weight(1f)
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
-                                Button(
+                                MenuFilledButton(
+                                    text = if (room.config == null) "Regras indisponíveis" else "Entrar",
                                     onClick = { onJoin(room) },
                                     enabled = room.config != null && !isJoining,
-                                    colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    if (isJoining) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(20.dp),
-                                            strokeWidth = 2.dp
-                                        )
-                                    } else {
-                                        Text(if (room.config == null) "Regras indisponíveis" else "Entrar", fontWeight = FontWeight.Bold)
-                                    }
-                                }
+                                    loading = isJoining,
+                                    containerColor = MenuColors.TableGreenLight,
+                                    // width fixo: MenuFilledButton sempre pede fillMaxWidth por dentro,
+                                    // e aqui ele divide a linha com RoomDetails(weight = 1f).
+                                    modifier = Modifier.width(148.dp)
+                                )
                             }
                         }
                     }
@@ -996,13 +930,13 @@ private fun RoomDetails(
     Column(modifier = modifier) {
         Text(
             roomName,
-            color = Color.White,
+            color = MenuColors.OnDark,
             fontWeight = FontWeight.Bold,
             fontSize = 15.sp
         )
         Text(
             host,
-            color = Color.White.copy(alpha = 0.4f),
+            color = MenuColors.OnDarkFaint,
             fontSize = 11.sp
         )
         config?.let {
@@ -1012,7 +946,7 @@ private fun RoomDetails(
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "Regras não recebidas do host",
-                color = MaterialTheme.colorScheme.error,
+                color = MenuColors.Red,
                 fontSize = 11.sp
             )
         }
@@ -1021,10 +955,14 @@ private fun RoomDetails(
 
 @Composable
 private fun RuleSummaryCard(config: MatchConfig) {
-    SectionCard(title = "Regras da sala") {
+    MenuSectionCard(title = "Regras da sala") {
         RuleSummaryText(config = config)
     }
 }
+
+// null = regra fixa do modo (informativa, não é liga/desliga) — vira badge dourado
+// em vez de verde/cinza para não parecer uma opção que o host escolheu.
+private data class RuleChip(val label: String, val enabled: Boolean?)
 
 @Composable
 private fun RuleSummaryText(config: MatchConfig) {
@@ -1033,212 +971,116 @@ private fun RuleSummaryText(config: MatchConfig) {
         GameType.BURACO -> "Buraco"
         GameType.TRANCA -> "Tranca"
     }
-    val lines = buildList {
-        add("$gameName - ${config.maxPlayers} jogadores - ${config.cardsPerPlayer} cartas")
+
+    val chips = buildList {
         if (config.gameType == GameType.CACHETA) {
-            add(if (config.allowWildcards) "Curinga: carta acima da vira no mesmo naipe" else "Curinga desativado")
-            add(if (config.cachetaStartsWithDiscard) "Lixo inicial com a vira" else "Lixo inicial vazio")
+            add(RuleChip(if (config.allowWildcards) "Curinga: acima da vira" else "Sem curinga", config.allowWildcards))
+            add(RuleChip(if (config.cachetaStartsWithDiscard) "Lixo abre com a vira" else "Lixo abre vazio", null))
         } else {
-            add("2 e curinga fixo; topo do lixo deve baixar ou encaixar")
-            add(if (config.allowCharutos) "Charutos/trincas permitidos" else "Somente sequências do mesmo naipe")
-            add(if (config.requireCleanCanastraToWin) "Precisa canastra limpa para bater" else "Pode bater com canastra suja")
+            add(RuleChip("2 é curinga fixo", null))
+            add(RuleChip(if (config.allowCharutos) "Charutos permitidos" else "Só sequência, mesmo naipe", config.allowCharutos))
+            add(RuleChip(if (config.requireCleanCanastraToWin) "Canastra limpa p/ bater" else "Pode bater suja", config.requireCleanCanastraToWin))
             if (config.gameType == GameType.TRANCA) {
-                add(if (config.autoMeldTrancaRedThrees) {
-                    "3 preto tranca o lixo; 3 vermelho baixa automaticamente"
-                } else {
-                    "3 preto tranca o lixo; 3 vermelho permanece na mão"
-                })
-                add(if (config.penalizeBlackThreesInHand) "3 preto na mão desconta 100 pts" else "3 preto na mão vale normal")
+                add(RuleChip("3 preto tranca o lixo", null))
+                add(RuleChip(if (config.autoMeldTrancaRedThrees) "3 vermelho baixa sozinho" else "3 vermelho fica na mão", config.autoMeldTrancaRedThrees))
+                add(RuleChip(if (config.penalizeBlackThreesInHand) "3 preto na mão: -100" else "3 preto na mão: normal", config.penalizeBlackThreesInHand))
+            }
+            add(RuleChip(if (config.uniformCardPoints) "Toda carta vale 10" else "Pontos tradicionais", config.uniformCardPoints))
+        }
+        add(RuleChip(if (config.allowDrawFromDiscard) "Compra do lixo ligada" else "Compra do lixo desligada", config.allowDrawFromDiscard))
+        add(RuleChip(if (config.autoSortHand) "Mão organiza sozinha" else "Ordem manual da mão", config.autoSortHand))
+        add(
+            RuleChip(
+                if (config.gameType == GameType.CACHETA) "Limite: ${config.pointLimit} vidas" else "Limite: ${config.pointLimit} pts",
+                null
+            )
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(gameName, color = MenuColors.Gold, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+            Text(
+                "${config.maxPlayers} jogadores · ${config.cardsPerPlayer} cartas",
+                color = MenuColors.OnDarkFaint,
+                fontSize = 11.sp
+            )
+        }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            chips.forEach { chip ->
+                MenuBadge(
+                    text = chip.label,
+                    color = when (chip.enabled) {
+                        true -> MenuColors.TableGreenLight
+                        false -> MenuColors.OnDarkFaint
+                        null -> MenuColors.Gold
+                    }
+                )
             }
         }
-        add(if (config.allowDrawFromDiscard) "Compra do lixo ligada" else "Compra do lixo desligada")
-        if (config.gameType != GameType.CACHETA) {
-            add(if (config.uniformCardPoints) "Cada carta vale 10 pts" else "Cartas usam valores tradicionais")
-        }
-        add(if (config.autoSortHand) "Mão organizada automaticamente" else "Ordem manual da mão")
-        add("Limite: ${if (config.gameType == GameType.CACHETA) "${config.pointLimit} vidas" else "${config.pointLimit} pts"}")
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        lines.forEach { line ->
-            Text(
-                text = line,
-                color = Color.White.copy(alpha = 0.65f),
-                fontSize = 11.sp,
-                lineHeight = 14.sp
-            )
-        }
-    }
-}
-
-@Composable
-private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xDD121820)),
-        shape = RoundedCornerShape(14.dp),
-        elevation = CardDefaults.cardElevation(4.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                title,
-                color = Color.White.copy(alpha = 0.88f),
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(bottom = 10.dp)
-            )
-            content()
-        }
-    }
-}
-
-@Composable
-private fun FilterChipOption(label: String, isSelected: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .border(
-                1.5.dp,
-                if (isSelected) ColorGreenLight else Color.White.copy(alpha = 0.25f),
-                RoundedCornerShape(10.dp)
-            )
-            .background(
-                if (isSelected) Color(0x334CAF50) else Color.Transparent,
-                RoundedCornerShape(10.dp)
-            )
-            .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-    ) {
-        Text(
-            label,
-            color = if (isSelected) ColorGreenLight else Color.White.copy(alpha = 0.7f),
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-            fontSize = 13.sp
-        )
-    }
-}
-
-private data class BotDifficultyProfile(
-    val label: String,
-    val description: String,
-    val color: Color
-)
-
-@Composable
-private fun BotDifficultyOption(
-    profile: BotDifficultyProfile,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .heightIn(min = 86.dp)
-            .border(
-                width = if (isSelected) 2.dp else 1.dp,
-                color = if (isSelected) profile.color else Color.White.copy(alpha = 0.18f),
-                shape = RoundedCornerShape(12.dp)
-            )
-            .background(
-                color = if (isSelected) profile.color.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.04f),
-                shape = RoundedCornerShape(12.dp)
-            )
-            .clickable { onClick() }
-            .padding(10.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = profile.label,
-            color = if (isSelected) profile.color else Color.White.copy(alpha = 0.82f),
-            fontWeight = FontWeight.Bold,
-            fontSize = 13.sp,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = profile.description,
-            color = Color.White.copy(alpha = if (isSelected) 0.82f else 0.58f),
-            fontSize = 10.sp,
-            lineHeight = 12.sp,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@Composable
-private fun ToggleRow(
-    label: String,
-    description: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Text(description, color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = ColorGreenLight,
-                uncheckedThumbColor = Color.White,
-                uncheckedTrackColor = Color.White.copy(alpha = 0.3f)
-            )
-        )
     }
 }
 
 // ─── Previews ─────────────────────────────────────────────────────────────────
 
-@androidx.compose.ui.tooling.preview.Preview(
+private fun previewNetworkRepository(
+    rooms: List<DiscoveredRoom> = emptyList(),
+    clients: Int = 0,
+    status: ConnectionStatus = ConnectionStatus.CONNECTED
+): LocalNetworkRepository = object : LocalNetworkRepository {
+    override val discoveredRooms = MutableStateFlow(rooms)
+    override val connectedClientsCount = MutableStateFlow(clients)
+    override val incomingMessages = MutableSharedFlow<NetworkMessage>()
+    override val connectionStatus = MutableStateFlow(status)
+    override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
+    override fun stopHosting() {}
+    override fun startDiscovery() {}
+    override fun stopDiscovery() {}
+    override fun connectToRoom(host: String, port: Int) {}
+    override fun reconnect(): Boolean = false
+    override fun disconnect() {}
+    override fun sendMessage(message: NetworkMessage) {}
+    override fun sendMessageToClient(clientIndex: Int, message: NetworkMessage) = true
+    override fun sendMessageToPlayer(playerId: String, message: NetworkMessage) = true
+    override fun resetConnectionStatus() {}
+}
+
+@Preview(
     showBackground = true,
     device = "spec:width=1280dp,height=800dp,dpi=240",
     name = "LobbyScreen - Host"
 )
 @Composable
 fun LobbyScreenHostPreview() {
-    FakeAuthRepository.forceSetForPreview(
-        com.brunogiovani.cachetaburaco.domain.models.Player("preview_host", "Jogador")
-    )
-    val dummyRepo = object : LocalNetworkRepository {
-        override val discoveredRooms = kotlinx.coroutines.flow.MutableStateFlow(emptyList<com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom>())
-        override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(1)
-        override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage>()
-        override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus.CONNECTED)
-        override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
-        override fun stopHosting() {}
-        override fun startDiscovery() {}
-        override fun stopDiscovery() {}
-        override fun connectToRoom(host: String, port: Int) {}
-        override fun reconnect(): Boolean = false
-        override fun disconnect() {}
-        override fun sendMessage(message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) {}
-        override fun sendMessageToClient(clientIndex: Int, message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) = true
-        override fun sendMessageToPlayer(playerId: String, message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) = true
-        override fun resetConnectionStatus() {}
-    }
-    androidx.compose.material3.MaterialTheme {
+    FakeAuthRepository.forceSetForPreview(Player("preview_host", "Jogador"))
+    MaterialTheme {
         LobbyScreen(
             isHosting = true,
-            networkRepository = dummyRepo,
+            networkRepository = previewNetworkRepository(clients = 1),
             onBack = {},
             onGameStarted = {}
         )
     }
 }
 
-@androidx.compose.ui.tooling.preview.Preview(
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "LobbyScreen - Host celular compacto")
+@Composable
+fun LobbyScreenHostCompactPreview() {
+    FakeAuthRepository.forceSetForPreview(Player("preview_host_compact", "Jogador"))
+    MaterialTheme {
+        LobbyScreen(
+            isHosting = true,
+            networkRepository = previewNetworkRepository(),
+            onBack = {},
+            onGameStarted = {}
+        )
+    }
+}
+
+@Preview(
     showBackground = true,
     widthDp = 640,
     heightDp = 360,
@@ -1250,53 +1092,75 @@ fun LobbyScreenHostCompactLargeFontPreview() {
     LobbyScreenHostPreview()
 }
 
-@androidx.compose.ui.tooling.preview.Preview(
+@Preview(
     showBackground = true,
     device = "spec:width=1280dp,height=800dp,dpi=240",
-    name = "LobbyScreen - Cliente"
+    name = "LobbyScreen - Cliente procurando"
+)
+@Composable
+fun LobbyScreenClientSearchingPreview() {
+    FakeAuthRepository.forceSetForPreview(Player("preview_client_empty", "Joao"))
+    MaterialTheme {
+        LobbyScreen(
+            isHosting = false,
+            networkRepository = previewNetworkRepository(),
+            onBack = {},
+            onGameStarted = {}
+        )
+    }
+}
+
+@Preview(
+    showBackground = true,
+    device = "spec:width=1280dp,height=800dp,dpi=240",
+    name = "LobbyScreen - Cliente com salas"
 )
 @Composable
 fun LobbyScreenClientPreview() {
-    FakeAuthRepository.forceSetForPreview(
-        com.brunogiovani.cachetaburaco.domain.models.Player("preview_client", "Joao")
-    )
+    FakeAuthRepository.forceSetForPreview(Player("preview_client", "Joao"))
     val sampleRooms = listOf(
-        com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom(
+        DiscoveredRoom(
             serviceName = "Room_Local",
             host = "192.168.1.10",
             port = 9090,
             config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 4)
         ),
-        com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom(
+        DiscoveredRoom(
             serviceName = "Room_Carlos",
             host = "192.168.1.11",
             port = 9090,
             config = MatchConfig(gameType = GameType.CACHETA)
         )
     )
-    val dummyRepo = object : LocalNetworkRepository {
-        override val discoveredRooms = kotlinx.coroutines.flow.MutableStateFlow(sampleRooms)
-        override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(0)
-        override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage>()
-        override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus.CONNECTED)
-        override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
-        override fun stopHosting() {}
-        override fun startDiscovery() {}
-        override fun stopDiscovery() {}
-        override fun connectToRoom(host: String, port: Int) {}
-        override fun reconnect(): Boolean = false
-        override fun disconnect() {}
-        override fun sendMessage(message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) {}
-        override fun sendMessageToClient(clientIndex: Int, message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) = true
-        override fun sendMessageToPlayer(playerId: String, message: com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage) = true
-        override fun resetConnectionStatus() {}
-    }
-    androidx.compose.material3.MaterialTheme {
+    MaterialTheme {
         LobbyScreen(
             isHosting = false,
-            networkRepository = dummyRepo,
+            networkRepository = previewNetworkRepository(rooms = sampleRooms),
             onBack = {},
             onGameStarted = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "LobbyScreen - sala publicada")
+@Composable
+private fun LobbyScreenPublishedRoomPreview() {
+    MaterialTheme {
+        Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            PublishedRoomCard(connectedClients = 1, requiredClients = 3, canStart = false, onStart = {})
+        }
+    }
+}
+
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "LobbyScreen - erro ao entrar")
+@Composable
+private fun LobbyScreenJoinErrorPreview() {
+    MaterialTheme {
+        ClientPanel(
+            discoveredRooms = emptyList(),
+            isJoining = false,
+            joinError = "Não foi possível entrar na sala. Verifique a rede e tente novamente.",
+            onJoin = {}
         )
     }
 }

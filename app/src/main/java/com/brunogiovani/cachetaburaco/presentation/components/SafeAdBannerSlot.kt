@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -58,8 +57,8 @@ fun SafeAdBannerSlot(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = if (compact) 50.dp else 60.dp)
-            .background(Color.Black.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(alpha = 0.18f), MenuShapes.Card)
+            .border(1.dp, Color.White.copy(alpha = 0.06f), MenuShapes.Card)
             .padding(vertical = 2.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -108,8 +107,8 @@ private fun AdPlaceholder(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = if (compact) 34.dp else 44.dp)
-            .background(Color.Black.copy(alpha = 0.28f), RoundedCornerShape(10.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(alpha = 0.28f), MenuShapes.Card)
+            .border(1.dp, Color.White.copy(alpha = 0.08f), MenuShapes.Card)
             .padding(horizontal = 12.dp, vertical = if (compact) 6.dp else 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -122,7 +121,7 @@ private fun AdPlaceholder(
             maxLines = 1
         )
         Text(
-            text = "Espaco reservado fora da mesa",
+            text = "Espaço reservado fora da mesa",
             color = Color.White.copy(alpha = 0.46f),
             fontSize = if (compact) 10.sp else 11.sp,
             textAlign = TextAlign.Start,

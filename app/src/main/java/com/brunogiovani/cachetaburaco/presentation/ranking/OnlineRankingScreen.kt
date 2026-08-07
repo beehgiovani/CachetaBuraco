@@ -1,6 +1,6 @@
 package com.brunogiovani.cachetaburaco.presentation.ranking
 
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -10,28 +10,25 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,30 +38,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.brunogiovani.cachetaburaco.R
 import com.brunogiovani.cachetaburaco.domain.models.OnlineRankingEntry
 import com.brunogiovani.cachetaburaco.domain.models.OnlineRankingPeriod
 import com.brunogiovani.cachetaburaco.domain.models.OnlineRankingSnapshot
 import com.brunogiovani.cachetaburaco.domain.repositories.OnlineRankingRepository
 import com.brunogiovani.cachetaburaco.presentation.components.AdPlacement
+import com.brunogiovani.cachetaburaco.presentation.components.MenuBackdrop
+import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
+import com.brunogiovani.cachetaburaco.presentation.components.MenuEntrance
+import com.brunogiovani.cachetaburaco.presentation.components.MenuFilledButton
+import com.brunogiovani.cachetaburaco.presentation.components.MenuShapes
+import com.brunogiovani.cachetaburaco.presentation.components.MenuStatusMessage
+import com.brunogiovani.cachetaburaco.presentation.components.MenuTopBar
 import com.brunogiovani.cachetaburaco.presentation.components.OnlineAvatarView
 import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
-
-private val RankingGold = Color(0xFFFFD54F)
-private val RankingGreen = Color(0xFF4CAF50)
-private val RankingBlue = Color(0xFF42A5F5)
-private val RankingPanel = Color(0xED101820)
 
 internal sealed interface OnlineRankingUiState {
     data object Loading : OnlineRankingUiState
@@ -112,54 +106,49 @@ internal fun OnlineRankingContent(
     onBack: () -> Unit,
     onRetry: () -> Unit
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val compact = maxWidth < 760.dp || maxHeight < 430.dp
-        val pagePadding = if (compact) 10.dp else 18.dp
+    MenuBackdrop {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val compact = maxWidth < 760.dp || maxHeight < 430.dp
+            val pagePadding = if (compact) 10.dp else 18.dp
 
-        Image(
-            painter = painterResource(R.drawable.table_background),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color(0xE6070B10), Color(0xF0071510))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(pagePadding),
+                verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp)
+            ) {
+                MenuTopBar(
+                    title = "Ranking online",
+                    onBack = onBack,
+                    subtitle = if (!compact) "Classificação por partidas concluídas" else null
+                )
+                MenuEntrance {
+                    RankingPeriodSelector(
+                        selectedPeriod = selectedPeriod,
+                        onPeriodSelected = onPeriodSelected,
+                        compact = compact
                     )
-                )
-        )
+                }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(pagePadding),
-            verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp)
-        ) {
-            RankingHeader(compact = compact, onBack = onBack)
-            RankingPeriodSelector(
-                selectedPeriod = selectedPeriod,
-                onPeriodSelected = onPeriodSelected,
-                compact = compact
-            )
+                when (state) {
+                    OnlineRankingUiState.Loading -> RankingLoading(Modifier.weight(1f))
+                    is OnlineRankingUiState.Error -> RankingError(
+                        message = state.message,
+                        onRetry = onRetry,
+                        modifier = Modifier.weight(1f)
+                    )
+                    is OnlineRankingUiState.Ready -> MenuEntrance(modifier = Modifier.weight(1f)) {
+                        RankingReady(
+                            snapshot = state.snapshot,
+                            compact = compact,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
 
-            when (state) {
-                OnlineRankingUiState.Loading -> RankingLoading(Modifier.weight(1f))
-                is OnlineRankingUiState.Error -> RankingError(
-                    message = state.message,
-                    onRetry = onRetry,
-                    modifier = Modifier.weight(1f)
-                )
-                is OnlineRankingUiState.Ready -> RankingReady(
-                    snapshot = state.snapshot,
-                    compact = compact,
-                    modifier = Modifier.weight(1f)
-                )
+                SafeAdBannerSlot(compact = true, placement = AdPlacement.RANKING)
             }
-
-            SafeAdBannerSlot(compact = true, placement = AdPlacement.RANKING)
         }
     }
 }
@@ -174,7 +163,7 @@ private fun RankingPeriodSelector(
     SingleChoiceSegmentedButtonRow(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = if (compact) 36.dp else 42.dp)
+            .heightIn(min = if (compact) 44.dp else 48.dp)
     ) {
         periods.forEachIndexed { index, period ->
             SegmentedButton(
@@ -193,34 +182,16 @@ private fun RankingPeriodSelector(
     }
 }
 
-@Composable
-private fun RankingHeader(compact: Boolean, onBack: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        TextButton(onClick = onBack) {
-            Text("Voltar", color = Color.White, fontWeight = FontWeight.SemiBold)
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                "Ranking online",
-                color = RankingGold,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = if (compact) 18.sp else 24.sp,
-                maxLines = 1
-            )
-            if (!compact) {
-                Text(
-                    "Classificação por partidas concluídas",
-                    color = Color.White.copy(alpha = 0.62f),
-                    fontSize = 12.sp
-                )
-            }
-        }
-        Spacer(modifier = Modifier.width(64.dp))
-    }
+internal fun rankingPeriodLabel(period: OnlineRankingPeriod): String = when (period) {
+    OnlineRankingPeriod.OVERALL -> "Geral"
+    OnlineRankingPeriod.WEEKLY -> "Semana"
+    OnlineRankingPeriod.MONTHLY -> "Mês"
+}
+
+internal fun rankingEmptyMessage(period: OnlineRankingPeriod): String = when (period) {
+    OnlineRankingPeriod.OVERALL -> "O ranking abre assim que a primeira partida online terminar."
+    OnlineRankingPeriod.WEEKLY -> "Nenhuma partida online foi concluída nesta semana."
+    OnlineRankingPeriod.MONTHLY -> "Nenhuma partida online foi concluída neste mês."
 }
 
 @Composable
@@ -234,7 +205,7 @@ private fun RankingReady(
         Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(
                 rankingEmptyMessage(snapshot.period),
-                color = Color.White.copy(alpha = 0.72f),
+                color = MenuColors.OnDark.copy(alpha = 0.72f),
                 textAlign = TextAlign.Center
             )
         }
@@ -274,53 +245,63 @@ private fun RankingReady(
     }
 }
 
-internal fun rankingPeriodLabel(period: OnlineRankingPeriod): String = when (period) {
-    OnlineRankingPeriod.OVERALL -> "Geral"
-    OnlineRankingPeriod.WEEKLY -> "Semana"
-    OnlineRankingPeriod.MONTHLY -> "Mês"
-}
-
-internal fun rankingEmptyMessage(period: OnlineRankingPeriod): String = when (period) {
-    OnlineRankingPeriod.OVERALL -> "O ranking abre assim que a primeira partida online terminar."
-    OnlineRankingPeriod.WEEKLY -> "Nenhuma partida online foi concluída nesta semana."
-    OnlineRankingPeriod.MONTHLY -> "Nenhuma partida online foi concluída neste mês."
-}
-
 @Composable
 private fun CurrentPlayerSummary(entry: OnlineRankingEntry?, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
-        color = RankingPanel,
-        shape = RoundedCornerShape(8.dp),
-        tonalElevation = 4.dp
+        color = MenuColors.InkPanel,
+        shape = MenuShapes.Card,
+        tonalElevation = 4.dp,
+        border = BorderStroke(1.dp, MenuColors.Border)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically)
         ) {
+            Text(
+                "SUA POSIÇÃO",
+                color = MenuColors.OnDarkFaint,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .background(MenuColors.Gold.copy(alpha = 0.14f), CircleShape)
+                    .border(2.dp, MenuColors.Gold.copy(alpha = 0.5f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    entry?.position?.let { "#$it" } ?: "-",
+                    color = MenuColors.Gold,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
             OnlineAvatarView(
                 avatarId = entry?.avatarUrl,
                 playerName = entry?.playerName ?: "Jogador",
-                size = 68.dp
+                size = 56.dp
             )
-            Text("Sua posição", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
-            Text(
-                entry?.position?.let { "#$it" } ?: "Fora do top 50",
-                color = RankingGold,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.ExtraBold
-            )
+            if (entry == null) {
+                Text(
+                    "Fora do top 50",
+                    color = MenuColors.OnDarkMuted,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
             entry?.let {
                 Text(
                     "${it.totalWins} vitórias em ${it.totalMatches} partidas",
-                    color = Color.White,
+                    color = MenuColors.OnDark,
                     textAlign = TextAlign.Center,
                     fontSize = 13.sp
                 )
                 Text(
                     "${it.winRatePercent}% de aproveitamento  |  ${it.xp} XP",
-                    color = RankingGreen,
+                    color = MenuColors.TableGreenLight,
                     textAlign = TextAlign.Center,
                     fontSize = 12.sp
                 )
@@ -334,13 +315,26 @@ private fun CompactCurrentPlayerSummary(entry: OnlineRankingEntry) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(RankingGreen.copy(alpha = 0.16f), RoundedCornerShape(8.dp))
+            .heightIn(min = 48.dp)
+            .background(MenuColors.TableGreenLight.copy(alpha = 0.16f), MenuShapes.Card)
+            .border(1.dp, MenuColors.TableGreenLight.copy(alpha = 0.35f), MenuShapes.Card)
             .padding(horizontal = 10.dp, vertical = 7.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("Você está em #${entry.position}", color = RankingGreen, fontWeight = FontWeight.Bold)
-        Text("${entry.totalWins} vitórias  |  ${entry.xp} XP", color = Color.White, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .background(MenuColors.TableGreenLight.copy(alpha = 0.22f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("#${entry.position}", color = MenuColors.TableGreenLight, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Você", color = MenuColors.TableGreenLight, fontWeight = FontWeight.Bold)
+        }
+        Text("${entry.totalWins} vitórias  |  ${entry.xp} XP", color = MenuColors.OnDark, fontSize = 12.sp)
     }
 }
 
@@ -351,20 +345,20 @@ private fun RankingEntryRow(
     compact: Boolean
 ) {
     val medalColor = when (entry.position) {
-        1 -> RankingGold
-        2 -> Color(0xFFB0BEC5)
+        1 -> MenuColors.Gold
+        2 -> MenuColors.OnDark.copy(alpha = 0.55f)
         3 -> Color(0xFFCD7F32)
-        else -> RankingBlue
+        else -> MenuColors.TableGreenLight
     }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .then(
-                if (isCurrentPlayer) Modifier.border(1.dp, RankingGreen, RoundedCornerShape(8.dp))
+                if (isCurrentPlayer) Modifier.border(1.dp, MenuColors.TableGreenLight, MenuShapes.Card)
                 else Modifier
             ),
-        color = if (isCurrentPlayer) Color(0xF0193326) else RankingPanel,
-        shape = RoundedCornerShape(8.dp)
+        color = if (isCurrentPlayer) Color(0xF0193326) else MenuColors.InkPanel,
+        shape = MenuShapes.Card
     ) {
         Row(
             modifier = Modifier
@@ -395,7 +389,7 @@ private fun RankingEntryRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     entry.playerName,
-                    color = if (isCurrentPlayer) RankingGreen else Color.White,
+                    color = if (isCurrentPlayer) MenuColors.TableGreenLight else MenuColors.OnDark,
                     fontWeight = FontWeight.Bold,
                     fontSize = if (compact) 13.sp else 15.sp,
                     maxLines = 1,
@@ -403,7 +397,7 @@ private fun RankingEntryRow(
                 )
                 Text(
                     "C ${entry.cachetaWins}  |  B ${entry.buracoWins}  |  T ${entry.trancaWins}  |  Sequência ${entry.bestStreak}",
-                    color = Color.White.copy(alpha = 0.56f),
+                    color = MenuColors.OnDarkMuted,
                     fontSize = if (compact) 10.sp else 11.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -412,14 +406,14 @@ private fun RankingEntryRow(
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     "${entry.totalWins} vitórias",
-                    color = RankingGold,
+                    color = MenuColors.Gold,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = if (compact) 12.sp else 14.sp,
                     maxLines = 1
                 )
                 Text(
                     "${entry.totalMatches} partidas  |  ${entry.winRatePercent}%  |  ${entry.xp} XP",
-                    color = Color.White.copy(alpha = 0.62f),
+                    color = MenuColors.OnDarkMuted,
                     fontSize = if (compact) 9.sp else 10.sp,
                     maxLines = 1
                 )
@@ -431,11 +425,7 @@ private fun RankingEntryRow(
 @Composable
 private fun RankingLoading(modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(color = RankingGold)
-            Spacer(Modifier.height(10.dp))
-            Text("Atualizando classificação...", color = Color.White.copy(alpha = 0.72f))
-        }
+        MenuStatusMessage(text = "Atualizando classificação...")
     }
 }
 
@@ -446,13 +436,13 @@ private fun RankingError(message: String, onRetry: () -> Unit, modifier: Modifie
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(message, color = Color.White, textAlign = TextAlign.Center)
-            Button(
+            Text(message, color = MenuColors.OnDark, textAlign = TextAlign.Center)
+            MenuFilledButton(
+                text = "Tentar novamente",
                 onClick = onRetry,
-                colors = ButtonDefaults.buttonColors(containerColor = RankingGreen)
-            ) {
-                Text("Tentar novamente")
-            }
+                modifier = Modifier.heightIn(min = 44.dp),
+                containerColor = MenuColors.TableGreenLight
+            )
         }
     }
 }
@@ -466,7 +456,9 @@ private val rankingPreview = OnlineRankingSnapshot(
     )
 )
 
-@Preview(showBackground = true, device = "spec:width=1280dp,height=800dp,dpi=240")
+// ─── Previews ─────────────────────────────────────────────────────────────
+
+@Preview(showBackground = true, device = "spec:width=1280dp,height=800dp,dpi=240", name = "Ranking - tablet/paisagem")
 @Preview(
     showBackground = true,
     device = "spec:width=800dp,height=360dp,dpi=320",
@@ -475,6 +467,78 @@ private val rankingPreview = OnlineRankingSnapshot(
 )
 @Composable
 private fun OnlineRankingPreview() {
+    MaterialTheme {
+        OnlineRankingContent(
+            state = OnlineRankingUiState.Ready(rankingPreview),
+            selectedPeriod = OnlineRankingPeriod.OVERALL,
+            onPeriodSelected = {},
+            onBack = {},
+            onRetry = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "Ranking - celular compacto")
+@Composable
+private fun OnlineRankingCompactPreview() {
+    MaterialTheme {
+        OnlineRankingContent(
+            state = OnlineRankingUiState.Ready(rankingPreview),
+            selectedPeriod = OnlineRankingPeriod.WEEKLY,
+            onPeriodSelected = {},
+            onBack = {},
+            onRetry = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "Ranking - vazio")
+@Composable
+private fun OnlineRankingEmptyPreview() {
+    MaterialTheme {
+        OnlineRankingContent(
+            state = OnlineRankingUiState.Ready(
+                OnlineRankingSnapshot(localPlayerId = "player-1", entries = emptyList())
+            ),
+            selectedPeriod = OnlineRankingPeriod.MONTHLY,
+            onPeriodSelected = {},
+            onBack = {},
+            onRetry = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "Ranking - carregando")
+@Composable
+private fun OnlineRankingLoadingPreview() {
+    MaterialTheme {
+        OnlineRankingContent(
+            state = OnlineRankingUiState.Loading,
+            selectedPeriod = OnlineRankingPeriod.OVERALL,
+            onPeriodSelected = {},
+            onBack = {},
+            onRetry = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 375, heightDp = 812, name = "Ranking - erro")
+@Composable
+private fun OnlineRankingErrorPreview() {
+    MaterialTheme {
+        OnlineRankingContent(
+            state = OnlineRankingUiState.Error("Não foi possível carregar o ranking agora. Confira sua conexão."),
+            selectedPeriod = OnlineRankingPeriod.OVERALL,
+            onPeriodSelected = {},
+            onBack = {},
+            onRetry = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 812, heightDp = 375, name = "Ranking - celular paisagem")
+@Composable
+private fun OnlineRankingLandscapePreview() {
     MaterialTheme {
         OnlineRankingContent(
             state = OnlineRankingUiState.Ready(rankingPreview),

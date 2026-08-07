@@ -59,7 +59,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
+import android.app.Activity
 import com.brunogiovani.cachetaburaco.R
+import com.brunogiovani.cachetaburaco.presentation.components.PostMatchInterstitialAd
 import com.brunogiovani.cachetaburaco.domain.models.Card
 import com.brunogiovani.cachetaburaco.domain.models.DeckColor
 import com.brunogiovani.cachetaburaco.domain.models.GameType
@@ -73,6 +75,8 @@ import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
 import com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom
 import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
 import com.brunogiovani.cachetaburaco.presentation.components.CardView
+import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
+import com.brunogiovani.cachetaburaco.presentation.components.MenuShapes
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -82,14 +86,12 @@ import kotlin.random.Random
 // ─── Paleta ───────────────────────────────────────────────
 private val ColorGreen = Color(0xFF2E7D32)
 private val ColorGreenLight = Color(0xFF4CAF50)
-private val ColorBlue = Color(0xFF1565C0)
 private val ColorBlueLight = Color(0xFF42A5F5)
 private val ColorGold = Color(0xFFFFD54F)
 private val ColorRed = Color(0xFFB71C1C)
 private val ColorRedLight = Color(0xFFEF5350)
 private val ColorSurface = Color(0xAA000000)
 private val ColorLockRed = Color(0xFFEF5350)
-private val ColorCard = Color(0xFF161B22)
 
 private fun String.isErrorFeedback(): Boolean {
     return contains("nao", ignoreCase = true) ||
@@ -204,6 +206,11 @@ fun MatchScreen(
             recordedMatchWinKey = winKey
         } else if (details.isMatchOver || state.showRoundEndDialog) {
             feedback.play(FeedbackCue.RoundEnd)
+        }
+        // Carrega o intersticial de pos-partida com antecedencia para estar pronto
+        // quando o jogador tocar em "Voltar ao Menu"/"Jogar Novamente".
+        if (details.isMatchOver) {
+            PostMatchInterstitialAd.preload(context)
         }
     }
 
@@ -354,13 +361,26 @@ fun MatchScreen(
             )
         }
 
-        // ── Diálogo de Fim de Rodada / Partida ──────────────────────────────────────────────────────
-        state.roundEndDetails?.takeIf { state.showRoundEndDialog }?.let { details ->
+        // ── Diálogo de Reinício de Partida (consentimento de todos) ─────────────────────────────────
+        // Tem prioridade sobre o resumo: quem recebe o pedido vê o convite no lugar do resumo antigo,
+        // e volta a ver o resumo automaticamente se recusar ou se o host cancelar.
+        if (state.showRestartMatchDialog) {
+            RestartMatchDialog(
+                onConfirm = { viewModel.requestRestartMatch() },
+                onDecline = { viewModel.declineRestartMatch() }
+            )
+        } else state.roundEndDetails?.takeIf { state.showRoundEndDialog }?.let { details ->
+            // ── Diálogo de Fim de Rodada / Partida ──────────────────────────────────────────────────
             RoundEndDialog(
                 details = details,
                 config = state.config,
+                isHost = isHost,
                 onNextRound = { viewModel.nextRound() },
+                onRequestRestart = { viewModel.requestRestartMatch() },
                 onLeave = {
+                    if (details.isMatchOver) {
+                        (context as? Activity)?.let { PostMatchInterstitialAd.showIfReady(it) }
+                    }
                     networkRepository.stopHosting()
                     networkRepository.disconnect()
                     onLeaveMatch()
@@ -671,25 +691,28 @@ private fun VictoryConfetti(visible: Boolean) {
 private fun RoundEndDialog(
     details: RoundEndDetails,
     config: MatchConfig,
+    isHost: Boolean,
     onNextRound: () -> Unit,
+    onRequestRestart: () -> Unit,
     onLeave: () -> Unit
 ) {
+    var restartRequested by remember(details) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = {},
-        containerColor = ColorCard,
-        shape = RoundedCornerShape(24.dp),
+        containerColor = MenuColors.Ink,
+        shape = MenuShapes.Card,
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = if (details.isMatchOver) "🏆 PARTIDA ENCERRADA!" else "🎴 FIM DE RODADA",
-                    color = if (details.isMatchOver) ColorGold else Color.White,
+                    color = if (details.isMatchOver) MenuColors.Gold else Color.White,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 20.sp,
                     textAlign = TextAlign.Center
                 )
                 Text(
                     text = if (details.winnerName == "Contagem") "Contagem" else "Vencedor: ${details.winnerName}",
-                    color = ColorGreenLight,
+                    color = MenuColors.TableGreenLight,
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center
                 )
@@ -709,65 +732,92 @@ private fun RoundEndDialog(
 
                 HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
 
-                // Placar acumulado — orientado pela perspectiva local (localTeam)
+                // Placar acumulado — orientado pela perspectiva local (localTeam).
+                // Botei num cartão próprio com um "×" central pra ficar claro que é um
+                // confronto entre dois lados, em vez de uma linha solta perdida no meio.
                 val isTeamMode = config.maxPlayers == 4
                 val opponentSideLabel = if (details.opponentLabel == "Máquina") "Lado da Máquina" else "Lado do Oponente"
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White.copy(alpha = 0.05f), MenuShapes.Card)
+                        .border(1.dp, Color.White.copy(alpha = 0.08f), MenuShapes.Card)
+                        .padding(vertical = 12.dp, horizontal = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    if (isTeamMode) {
-                        // Modo 4 jogadores: exibe Equipe A / Equipe B pelos índices absolutos
-                        val teamScores = details.teamScores
-                        if (teamScores.size >= 2) {
-                            val leftIsLocal = details.localTeam == 0
+                    Text(
+                        text = "Placar acumulado",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (isTeamMode) {
+                            // Modo 4 jogadores: exibe Equipe A / Equipe B pelos índices absolutos
+                            val teamScores = details.teamScores
+                            if (teamScores.size >= 2) {
+                                val leftIsLocal = details.localTeam == 0
+                                ScoreColumn(
+                                    label = if (leftIsLocal) "Seu lado (Equipe A)" else "$opponentSideLabel (Equipe A)",
+                                    score = teamScores[0],
+                                    limit = config.pointLimit,
+                                    gameType = config.gameType,
+                                    isWinner = details.winnerTeam == 0
+                                )
+                                Text("×", color = Color.White.copy(alpha = 0.28f), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                ScoreColumn(
+                                    label = if (!leftIsLocal) "Seu lado (Equipe B)" else "$opponentSideLabel (Equipe B)",
+                                    score = teamScores[1],
+                                    limit = config.pointLimit,
+                                    gameType = config.gameType,
+                                    isWinner = details.winnerTeam == 1
+                                )
+                            }
+                        } else {
+                            // Modo 2 jogadores: usa myNewTotal/opponentNewTotal já orientados localmente
                             ScoreColumn(
-                                label = if (leftIsLocal) "Seu lado (Equipe A)" else "$opponentSideLabel (Equipe A)",
-                                score = teamScores[0],
+                                label = details.myLabel,
+                                score = details.myNewTotal,
                                 limit = config.pointLimit,
                                 gameType = config.gameType,
-                                isWinner = details.winnerTeam == 0
+                                isWinner = details.winnerTeam != null && details.winnerTeam == details.localTeam
                             )
+                            Text("×", color = Color.White.copy(alpha = 0.28f), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                             ScoreColumn(
-                                label = if (!leftIsLocal) "Seu lado (Equipe B)" else "$opponentSideLabel (Equipe B)",
-                                score = teamScores[1],
+                                label = details.opponentLabel,
+                                score = details.opponentNewTotal,
                                 limit = config.pointLimit,
                                 gameType = config.gameType,
-                                isWinner = details.winnerTeam == 1
+                                isWinner = details.winnerTeam != null && details.winnerTeam != details.localTeam
                             )
                         }
-                    } else {
-                        // Modo 2 jogadores: usa myNewTotal/opponentNewTotal já orientados localmente
-                        ScoreColumn(
-                            label = details.myLabel,
-                            score = details.myNewTotal,
-                            limit = config.pointLimit,
-                            gameType = config.gameType,
-                            isWinner = details.winnerTeam != null && details.winnerTeam == details.localTeam
-                        )
-                        ScoreColumn(
-                            label = details.opponentLabel,
-                            score = details.opponentNewTotal,
-                            limit = config.pointLimit,
-                            gameType = config.gameType,
-                            isWinner = details.winnerTeam != null && details.winnerTeam != details.localTeam
-                        )
                     }
                 }
-
 
                 if (details.isMatchOver) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(ColorGold.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(MenuColors.Gold.copy(alpha = 0.22f), MenuColors.Gold.copy(alpha = 0.10f))
+                                ),
+                                MenuShapes.Card
+                            )
+                            .border(1.dp, MenuColors.Gold.copy(alpha = 0.4f), MenuShapes.Card)
                             .padding(12.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             "🎉 ${details.winnerName} venceu a partida!",
-                            color = ColorGold,
-                            fontWeight = FontWeight.Bold,
+                            color = MenuColors.Gold,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 15.sp,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -778,7 +828,7 @@ private fun RoundEndDialog(
             if (!details.isMatchOver) {
                 Button(
                     onClick = onNextRound,
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight),
+                    colors = ButtonDefaults.buttonColors(containerColor = MenuColors.TableGreenLight),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("▶  Próxima Rodada", fontWeight = FontWeight.Bold)
@@ -786,7 +836,7 @@ private fun RoundEndDialog(
             } else {
                 Button(
                     onClick = onLeave,
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight),
+                    colors = ButtonDefaults.buttonColors(containerColor = MenuColors.TableGreenLight),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Voltar ao Menu", fontWeight = FontWeight.Bold)
@@ -797,6 +847,22 @@ private fun RoundEndDialog(
             if (!details.isMatchOver) {
                 TextButton(onClick = onLeave) {
                     Text("Sair", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            } else if (isHost) {
+                // So o host propoe a revanche; os demais confirmam pelo RestartMatchDialog
+                // quando o pedido chegar (fluxo de consentimento ja existente no ViewModel).
+                TextButton(
+                    onClick = {
+                        restartRequested = true
+                        onRequestRestart()
+                    },
+                    enabled = !restartRequested
+                ) {
+                    Text(
+                        if (restartRequested) "Aguardando jogadores..." else "🔁  Jogar Novamente",
+                        color = if (restartRequested) Color.White.copy(alpha = 0.5f) else MenuColors.Gold,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -816,14 +882,14 @@ private fun RoundBreakdownTable(breakdown: String) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(14.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.06f), MenuShapes.Card)
+            .border(1.dp, Color.White.copy(alpha = 0.08f), MenuShapes.Card)
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
             text = "Detalhes da contagem",
-            color = ColorGold,
+            color = MenuColors.Gold,
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp
         )
@@ -838,10 +904,15 @@ private fun RoundBreakdownTable(breakdown: String) {
         }
 
         BreakdownHeaderRow()
-        rows.groupBy { it.owner }.forEach { (owner, ownerRows) ->
+        val ownerGroups = rows.groupBy { it.owner }
+        ownerGroups.entries.forEachIndexed { groupIndex, (owner, ownerRows) ->
+            // Divisor entre jogador/equipe pra separar visualmente cada grupo da tabela.
+            if (groupIndex > 0) {
+                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+            }
             Text(
                 text = owner,
-                color = ColorGreenLight,
+                color = MenuColors.TableGreenLight,
                 fontWeight = FontWeight.Bold,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 2.dp)
@@ -861,7 +932,7 @@ private fun BreakdownHeaderRow() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.18f), MenuShapes.Card)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -873,16 +944,19 @@ private fun BreakdownHeaderRow() {
 
 @Composable
 private fun BreakdownDataRow(row: BreakdownRow, background: Color) {
+    // A linha de "Total da rodada" fecha cada grupo, entao destaco ela em dourado
+    // pra dar pra ver de relance quanto cada lado somou sem ler a tabela inteira.
+    val isTotal = row.item.equals("Total da rodada", ignoreCase = true)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(background, RoundedCornerShape(8.dp))
+            .background(if (isTotal) MenuColors.Gold.copy(alpha = 0.12f) else background, MenuShapes.Card)
             .padding(horizontal = 8.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        BreakdownCell(row.item, weight = 1.45f)
-        BreakdownCell(row.quantity.ifBlank { "-" }, weight = 0.55f, alignEnd = true)
-        BreakdownCell(row.points.ifBlank { "-" }, weight = 0.8f, alignEnd = true)
+        BreakdownCell(row.item, weight = 1.45f, emphasize = isTotal)
+        BreakdownCell(row.quantity.ifBlank { "-" }, weight = 0.55f, alignEnd = true, emphasize = isTotal)
+        BreakdownCell(row.points.ifBlank { "-" }, weight = 0.8f, alignEnd = true, emphasize = isTotal)
     }
 }
 
@@ -891,14 +965,19 @@ private fun RowScope.BreakdownCell(
     text: String,
     weight: Float,
     isHeader: Boolean = false,
-    alignEnd: Boolean = false
+    alignEnd: Boolean = false,
+    emphasize: Boolean = false
 ) {
     Text(
         text = text,
         modifier = Modifier.weight(weight),
-        color = if (isHeader) Color.White.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.9f),
+        color = when {
+            isHeader -> Color.White.copy(alpha = 0.72f)
+            emphasize -> MenuColors.Gold
+            else -> Color.White.copy(alpha = 0.9f)
+        },
         fontSize = if (isHeader) 11.sp else 12.sp,
-        fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Medium,
+        fontWeight = if (isHeader || emphasize) FontWeight.Bold else FontWeight.Medium,
         textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
         maxLines = 2,
         lineHeight = 15.sp
@@ -966,13 +1045,16 @@ private fun ScoreColumn(
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
-            text = label,
-            color = Color.White.copy(alpha = 0.6f),
-            fontSize = 12.sp
+            text = if (isWinner) "👑 $label" else label,
+            color = if (isWinner) MenuColors.TableGreenLight else Color.White.copy(alpha = 0.6f),
+            fontWeight = if (isWinner) FontWeight.Bold else FontWeight.Normal,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 2
         )
         Text(
             text = if (gameType == GameType.CACHETA) "$score ❤️" else "$score pts",
-            color = if (isWinner) ColorGreenLight else Color.White,
+            color = if (isWinner) MenuColors.TableGreenLight else Color.White,
             fontWeight = if (isWinner) FontWeight.ExtraBold else FontWeight.Medium,
             fontSize = 22.sp
         )
@@ -2443,11 +2525,11 @@ private fun MeldInspectorDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             color = Color(0xEE101820),
-            shape = RoundedCornerShape(20.dp),
+            shape = MenuShapes.Card,
             shadowElevation = 18.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, ColorGold.copy(alpha = 0.45f * glow), RoundedCornerShape(20.dp))
+                .border(1.dp, MenuColors.Gold.copy(alpha = 0.45f * glow), MenuShapes.Card)
         ) {
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -2472,7 +2554,7 @@ private fun MeldInspectorDialog(
                         )
                     }
                     TextButton(onClick = onDismiss) {
-                        Text("Fechar", color = ColorGold)
+                        Text("Fechar", color = MenuColors.Gold)
                     }
                 }
 
@@ -2483,12 +2565,12 @@ private fun MeldInspectorDialog(
                         .background(
                             Brush.radialGradient(
                                 listOf(
-                                    ColorGold.copy(alpha = 0.14f * glow),
-                                    ColorGreenLight.copy(alpha = 0.08f),
+                                    MenuColors.Gold.copy(alpha = 0.14f * glow),
+                                    MenuColors.TableGreenLight.copy(alpha = 0.08f),
                                     Color.Transparent
                                 )
                             ),
-                            RoundedCornerShape(16.dp)
+                            MenuShapes.Card
                         )
                         .padding(vertical = 10.dp),
                     contentAlignment = Alignment.Center
@@ -2542,11 +2624,11 @@ private fun MeldTargetSelectionDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             color = Color(0xFF121D24),
-            shape = RoundedCornerShape(20.dp),
+            shape = MenuShapes.Card,
             shadowElevation = 18.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, ColorGold.copy(alpha = 0.45f * glow), RoundedCornerShape(20.dp))
+                .border(1.dp, MenuColors.Gold.copy(alpha = 0.45f * glow), MenuShapes.Card)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -2596,8 +2678,8 @@ private fun MeldTargetSelectionDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
-                                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.05f), MenuShapes.Card)
+                                .border(1.dp, Color.White.copy(alpha = 0.08f), MenuShapes.Card)
                                 .clickable { onMeldSelected(index) }
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -2620,13 +2702,13 @@ private fun MeldTargetSelectionDialog(
 
                             Box(
                                 modifier = Modifier
-                                    .background(ColorGreenLight.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
-                                    .border(1.dp, ColorGreenLight, RoundedCornerShape(8.dp))
+                                    .background(MenuColors.TableGreenLight.copy(alpha = 0.15f), MenuShapes.Card)
+                                    .border(1.dp, MenuColors.TableGreenLight, MenuShapes.Card)
                                     .padding(horizontal = 10.dp, vertical = 6.dp)
                             ) {
                                 Text(
                                     text = "Encaixar",
-                                    color = ColorGreenLight,
+                                    color = MenuColors.TableGreenLight,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -2651,8 +2733,8 @@ private fun MeldTargetSelectionDialog(
                     if (canMeldNew) {
                         Button(
                             onClick = onMeldNew,
-                            colors = ButtonDefaults.buttonColors(containerColor = ColorGold),
-                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MenuColors.Gold),
+                            shape = MenuShapes.Card,
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("Novo Jogo", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -2931,8 +3013,8 @@ private fun HandSection(
 private fun RestartMatchDialog(onConfirm: () -> Unit, onDecline: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDecline,
-        containerColor = Color(0xFF1A1A2E),
-        shape = RoundedCornerShape(20.dp),
+        containerColor = MenuColors.Ink,
+        shape = MenuShapes.Card,
         title = {
             Text("Novo Jogo", color = Color.White, fontWeight = FontWeight.Bold)
         },
@@ -2940,7 +3022,7 @@ private fun RestartMatchDialog(onConfirm: () -> Unit, onDecline: () -> Unit) {
         confirmButton = {
             Button(
                 onClick = onConfirm,
-                colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight)
+                colors = ButtonDefaults.buttonColors(containerColor = MenuColors.TableGreenLight)
             ) { Text("Aceitar") }
         },
         dismissButton = {
@@ -2954,8 +3036,8 @@ private fun RestartMatchDialog(onConfirm: () -> Unit, onDecline: () -> Unit) {
 private fun DisconnectDialog(message: String, isClient: Boolean, onBack: () -> Unit, onWait: () -> Unit, onReconnect: () -> Unit) {
     AlertDialog(
         onDismissRequest = onWait,
-        containerColor = Color(0xFF1A1A2E),
-        shape = RoundedCornerShape(20.dp),
+        containerColor = MenuColors.Ink,
+        shape = MenuShapes.Card,
         title = {
             Text("Conexão interrompida", color = Color.White, fontWeight = FontWeight.Bold)
         },
@@ -2964,17 +3046,17 @@ private fun DisconnectDialog(message: String, isClient: Boolean, onBack: () -> U
             if (isClient) {
                 Button(
                     onClick = onReconnect,
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorBlue)
-                ) { Text("Tentar Reconectar") }
+                    colors = ButtonDefaults.buttonColors(containerColor = MenuColors.Gold)
+                ) { Text("Tentar Reconectar", color = Color.Black) }
             } else {
                 Button(
                     onClick = onWait,
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorGreenLight)
+                    colors = ButtonDefaults.buttonColors(containerColor = MenuColors.TableGreenLight)
                 ) { Text("Aguardar") }
             }
         },
         dismissButton = {
-            TextButton(onClick = onBack) { Text("Sair e Salvar", color = Color(0xFFE53935)) }
+            TextButton(onClick = onBack) { Text("Sair e Salvar", color = MenuColors.Red) }
         }
     )
 }
