@@ -44,6 +44,7 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
         CLOSED
     }
 
+    override val isBotRepository: Boolean = true
     override val discoveredRooms: StateFlow<List<DiscoveredRoom>> = MutableStateFlow(emptyList())
     override val connectedClientsCount: StateFlow<Int> = MutableStateFlow(1)
     override val incomingMessages: SharedFlow<NetworkMessage> get() = incoming
@@ -108,6 +109,7 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
                 closeRoundForBot()
                 replyCountRound()
             }
+            "RESTART_MATCH" -> if (message.payload != "CANCEL") replyRestartMatch()
             "PICK_MORTO" -> mortosLeft = runCatching {
                 JSONObject(message.payload).optInt("mortosLeft", mortosLeft)
             }.getOrDefault(mortosLeft)
@@ -255,7 +257,7 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
         if (currentConfig.gameType == GameType.CACHETA) return
         val json = runCatching { JSONObject(payload) }.getOrNull() ?: return
         val morto = cardsFromJson(json.optJSONArray("hand") ?: JSONArray())
-        if (morto.size != 11) return
+        if (morto.size != currentConfig.cardsPerPlayer) return
         hand = sort(morto)
         hasPickedMorto = true
         mortosLeft = json.optInt("mortosLeft", (mortosLeft - 1).coerceAtLeast(0))
@@ -554,6 +556,11 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
                 })
                 .toString()
         )
+    }
+
+    private fun replyRestartMatch() {
+        // A maquina nunca recusa uma revanche.
+        emitToHost("REPLY_RESTART", "YES")
     }
 
     private fun replyWinRound() {

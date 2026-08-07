@@ -50,6 +50,14 @@ interface LocalNetworkRepository {
     // Wi-Fi local e maquina continuam usando o id salvo no aparelho.
     val authenticatedPlayerId: String? get() = null
 
+    // Identifica o transporte da maquina sem depender do nome da classe, que o
+    // R8/ProGuard pode renomear em builds de release.
+    val isBotRepository: Boolean get() = false
+
+    // Diferencia sala online (Supabase/internet) de sala Wi-Fi local, para a UI
+    // nao dizer "mesma rede Wi-Fi" enquanto procura uma sala online.
+    val isOnlineTransport: Boolean get() = false
+
     val discoveredRooms: StateFlow<List<DiscoveredRoom>>
     val connectedClientsCount: StateFlow<Int>
 
@@ -94,4 +102,14 @@ interface LocalNetworkRepository {
         onResult(sendMessageToPlayer(playerId, message))
     }
     fun resetConnectionStatus()
+
+    // So o transporte online implementa isto de verdade: pede pro servidor
+    // embaralhar e distribuir a rodada (RPC start_online_round) em vez do host
+    // fazer isso sozinho no aparelho. Wi-Fi local e maquina nao tem servidor,
+    // entao ficam com o padrao (null) e o ViewModel continua com a distribuicao
+    // local de sempre. O JSON bruto e repassado pro ViewModel interpretar,
+    // igual qualquer outro payload de NetworkMessage.
+    fun requestServerDeal(onResult: (String?) -> Unit) {
+        onResult(null)
+    }
 }

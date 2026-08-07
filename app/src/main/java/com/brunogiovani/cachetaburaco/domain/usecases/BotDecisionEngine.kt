@@ -221,7 +221,19 @@ object BotDecisionEngine {
             )
         }.ifEmpty { withoutAutomaticRedThrees }
 
-        return safeCandidates.minWithOrNull(
+        // Nenhuma dificuldade pode entregar de bandeja um jogo pronto do adversario.
+        // O bonus de risco em keepScore e apenas um peso (varia por dificuldade), e um
+        // cluster de cartas do mesmo rank na mao pode superar esse peso por pontuacao
+        // pura -- isso faria ate o nivel Facil descartar a carta certa "sem querer".
+        // Por isso, so aceitamos um descarte que completa jogo alheio quando nao sobra
+        // nenhuma alternativa segura na mao.
+        val nonFeedingCandidates = safeCandidates.filterNot { card ->
+            opponentTableMelds.any {
+                GameRulesEngine.validateMeld(it + card, config, cachetaTurnCard).isValid
+            }
+        }.ifEmpty { safeCandidates }
+
+        return nonFeedingCandidates.minWithOrNull(
             compareBy<Card> { card ->
                 keepScore(card, hand, tableMelds, opponentTableMelds, config, cachetaTurnCard)
             }.thenByDescending { cardPoints(it) }

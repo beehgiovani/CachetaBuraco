@@ -836,6 +836,16 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
 
     override fun observeConnectedSeats(session: OnlineRoomSession): Flow<Set<Int>> = connectedSeats
 
+    var startRoundResult: String = "{}"
+    var startRoundCalls: Int = 0
+    var failStartRound: Boolean = false
+
+    override suspend fun startRound(session: OnlineRoomSession): String {
+        startRoundCalls++
+        if (failStartRound) error("start round failed")
+        return startRoundResult
+    }
+
     fun emitEvent(event: OnlineStoredEvent) {
         assertTrue(events.tryEmit(event))
     }

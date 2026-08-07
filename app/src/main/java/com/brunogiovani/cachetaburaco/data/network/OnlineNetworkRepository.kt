@@ -49,6 +49,7 @@ class OnlineNetworkRepository(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) : LocalNetworkRepository {
     override val requiresClientReadyHandshake: Boolean = true
+    override val isOnlineTransport: Boolean = true
     override val authenticatedPlayerId: String?
         get() = currentSession?.playerId
 
@@ -313,6 +314,24 @@ class OnlineNetworkRepository(
             currentSession == null -> ConnectionStatus.IDLE
             hadCompleteRoom -> ConnectionStatus.CONNECTED
             else -> ConnectionStatus.IDLE
+        }
+    }
+
+    override fun requestServerDeal(onResult: (String?) -> Unit) {
+        val session = currentSession
+        if (session == null) {
+            onResult(null)
+            return
+        }
+        scope.launch {
+            val result = try {
+                dataSource.startRound(session)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                null
+            }
+            onResult(result)
         }
     }
 

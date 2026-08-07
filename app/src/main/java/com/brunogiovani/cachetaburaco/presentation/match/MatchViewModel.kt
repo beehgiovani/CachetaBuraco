@@ -161,7 +161,9 @@ class MatchViewModel(
     )
 
     private fun isMachineMatch(): Boolean {
-        return networkRepository::class.simpleName == "SoloBotNetworkRepository"
+        // Propriedade do contrato em vez do nome da classe: R8/ProGuard pode
+        // renomear a classe em builds de release e quebrar uma comparacao por string.
+        return networkRepository.isBotRepository
     }
 
     private fun opponentDisplayLabel(): String = if (isMachineMatch()) "Máquina" else "Oponente"
@@ -261,6 +263,22 @@ class MatchViewModel(
         pendingDiscardDrawCardId = null
         pendingDiscardDrawRest = emptyList()
         pendingRemoteDiscardDraws.clear()
+
+        // No online, quem embaralha e distribui a rodada e o servidor (RPC
+        // start_online_round), nao o proprio aparelho -- assim um host mal
+        // intencionado nao escolhe mais quem recebe o que. Wi-Fi local e
+        // maquina nao tem servidor, entao continuam com a distribuicao local
+        // de sempre logo abaixo.
+        if (networkRepository.isOnlineTransport) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Preparando distribuição no servidor..."
+            )
+            networkRepository.requestServerDeal { rawJson ->
+                viewModelScope.launch { applyServerDeal(rawJson) }
+            }
+            return
+        }
+
         masterDeck = DeckFactory.createDecks(2, includeJokers = false).toMutableList()
 
         val myCards = dealCards(currentConfig.cardsPerPlayer, isInitialDeal = true)
@@ -332,6 +350,53 @@ class MatchViewModel(
         // A distribuicao privada vai primeiro; depois todos recebem a mesma fotografia publica.
         // Isso evita que um 3 vermelho baixado na abertura desapareca no cliente ou na maquina.
         publishPublicTableState()
+    }
+
+    /**
+     * Aplica o resultado de `start_online_round`: o servidor ja embaralhou, ja
+     * distribuiu a mao de cada assento e ja mandou o GAME_START/PUBLIC_STATE
+     * pros outros jogadores sozinho (dentro da RPC). Aqui eu so preciso montar
+     * o mesmo estado local que o host sempre teve -- mao propria, mesa da
+     * equipe, monte restante pra continuar puxando carta e mortos -- porque
+     * o proprio host nunca recebe de volta os eventos que ele mesmo disparou
+     * (handleNetworkMessage descarta qualquer coisa com senderId igual ao seu).
+     */
+    private fun applyServerDeal(rawJson: String?) {
+        val json = rawJson?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (json == null) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Não foi possível preparar a rodada. Tente novamente."
+            )
+            gameStartRequested = true
+            return
+        }
+
+        currentRoundId = json.optString("roundId").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+        masterDeck = cardsFromJson(json.optJSONArray("deck") ?: JSONArray()).toMutableList()
+
+        val mortosJson = json.optJSONArray("mortos") ?: JSONArray()
+        repeat(mortosJson.length()) { index ->
+            val morto = cardsFromJson(mortosJson.optJSONArray(index) ?: JSONArray())
+            if (morto.isNotEmpty()) mortos.add(morto)
+        }
+
+        val handsJson = json.optJSONObject("hands") ?: JSONObject()
+        val myCards = cardsFromJson(handsJson.optJSONArray("0") ?: JSONArray())
+        for (seat in 1 until currentConfig.maxPlayers) {
+            remoteHandsBySeat[seat] = cardsFromJson(handsJson.optJSONArray(seat.toString()) ?: JSONArray())
+        }
+
+        val turnCard = allCardsMap[json.optString("turnCard")]
+        val firstDiscard = allCardsMap[json.optString("discard")]
+        val sortedHand = sortHandIfEnabled(myCards)
+
+        val team0Melds = handsFromJson(json.optJSONArray("team0Melds") ?: JSONArray())
+        val team1Melds = handsFromJson(json.optJSONArray("team1Melds") ?: JSONArray())
+        val localTeamMelds = if (teamForSeat(localSeat) == 0) team0Melds else team1Melds
+        val opponentTeamMelds = if (teamForSeat(localSeat) == 0) team1Melds else team0Melds
+
+        updateDiscardState(sortedHand, firstDiscard, turnCard, localTeamMelds, activeSeat = 1)
+        _gameState.value = _gameState.value.copy(opponentTableMelds = opponentTeamMelds)
     }
 
     /**
@@ -1109,9 +1174,11 @@ class MatchViewModel(
         val breakdownLines = mutableListOf<String>()
 
         if (currentConfig.gameType == GameType.CACHETA) {
-            val winnerCardCount = pendingRoundReports.values
-                .filter { teamForSeat(it.seat) == winnerTeam }
-                .sumOf { report -> report.tableMelds.sumOf { it.size } }
+            // Em modo de dupla a mesa da equipe e compartilhada (remoteTableForSeat retorna
+            // o mesmo myTableMelds/opponentTableMelds para os dois parceiros), entao somar o
+            // relatorio de cada assento contaria a mesma baixa duas vezes. Precisa deduplicar
+            // por carta antes de contar, igual ja e feito no ramo Buraco/Tranca abaixo.
+            val winnerCardCount = uniqueTableMeldsForTeam(reports, winnerTeam).sumOf { it.size }
             val lostLives = if (winnerCardCount >= 10) 2 else 1
             teamRoundScores[opposingTeam(winnerTeam)] = -lostLives
             breakdownLines += "Equipe [TEAM_${opposingTeam(winnerTeam)}] perdeu $lostLives vida(s)."
@@ -1151,7 +1218,21 @@ class MatchViewModel(
                     penalizeBlackThreesInHand = currentConfig.penalizeBlackThreesInHand
                 )
                 teamRoundScores[team] += handScore.totalRoundPoints
-                breakdownLines += "Jogador [PLAYER_${report.seat}]: mão ${handScore.handCardCount} carta(s) = -${handScore.handPenalty} pts"
+                val specialHandCards = handScore.redThreesInHand + handScore.blackThreesInHand
+                if (currentConfig.gameType == GameType.TRANCA && specialHandCards > 0) {
+                    val regularCards = (handScore.handCardCount - handScore.blackThreesInHand).coerceAtLeast(0)
+                    val regularPenalty = (
+                        handScore.handPenalty -
+                            handScore.redThreeHandPenalty -
+                            handScore.blackThreePenalty
+                        ).coerceAtLeast(0)
+                    breakdownLines += "Jogador [PLAYER_${report.seat}]: mão comum $regularCards carta(s) = -$regularPenalty pts"
+                } else {
+                    breakdownLines += "Jogador [PLAYER_${report.seat}]: mão ${handScore.handCardCount} carta(s) = -${handScore.handPenalty} pts"
+                }
+                if (currentConfig.gameType == GameType.TRANCA && handScore.redThreesInHand > 0) {
+                    breakdownLines += "Jogador [PLAYER_${report.seat}]: 3 vermelhos na mão ${handScore.redThreesInHand} = -${handScore.redThreeHandPenalty} pts"
+                }
                 if (currentConfig.gameType == GameType.TRANCA && handScore.blackThreesInHand > 0) {
                     breakdownLines += "Jogador [PLAYER_${report.seat}]: 3 pretos na mão ${handScore.blackThreesInHand} = -${handScore.blackThreePenalty} pts (${if (currentConfig.penalizeBlackThreesInHand) "regra pesada ligada" else "regra pesada desligada"})"
                 }
@@ -2085,6 +2166,9 @@ class MatchViewModel(
         )
     }
 
+    // So o cliente chega aqui (dispatch: "MELD" -> handleRemoteMeld quando isHost).
+    // O host valida e decide vitoria/contagem em handleRemoteMeld -> resolveRemoteEmptyHand,
+    // que ja usa remoteTableForSeat(actorSeat) para ler o time certo.
     private fun handleOpponentMeld(payload: String) {
         val (meld, actorSeat) = parseMeldPayload(payload)
         val replaceIndex = parseMeldReplaceIndex(payload)
@@ -2100,25 +2184,6 @@ class MatchViewModel(
                     opponentHandCount = remoteHandCountForSeat(actorSeat)
                 )
             }
-            if (isHost && remoteHandCountForSeat(actorSeat) == 0 && mortos.isEmpty()
-                && !teamsThatPickedMorto.contains(teamForSeat(actorSeat))
-                && currentConfig.gameType != GameType.CACHETA
-            ) {
-                val opponentMelds = _gameState.value.opponentTableMelds
-                val canOpponentWin = GameRulesEngine.canDeclareWin(emptyList(), opponentMelds, false, currentConfig).canWin
-                if (canOpponentWin) {
-                    val winReport = RoundSeatReport(
-                        playerId = remotePlayerSeats.entries.firstOrNull { it.value == actorSeat }?.key ?: "",
-                        seat = actorSeat,
-                        hand = emptyList(),
-                        tableMelds = opponentMelds
-                    )
-                    beginPendingRoundSummary(winReport.playerId, winReport)
-                } else {
-                    beginCountOnlyRound()
-                }
-            }
-            if (isHost) publishPublicTableState()
         }
     }
 
@@ -3013,6 +3078,12 @@ class MatchViewModel(
         val opponentSeat = trustedRemoteSeat(message, requestedSeat) ?: return
         val requestingPlayerId = message.senderId
         val remoteHand = remoteHandsBySeat[opponentSeat].orEmpty()
+        // Em 4 jogadores, quem reconecta pode ser o parceiro do host (mesma equipe):
+        // nesse caso a "minha mesa" dele e a mesa do host, nao a do time adversario.
+        val reconnectingSameTeamAsHost = currentConfig.maxPlayers == 4 &&
+            teamForSeat(opponentSeat) == teamForSeat(localSeat)
+        val reconnectingOwnMelds = if (reconnectingSameTeamAsHost) state.myTableMelds else state.opponentTableMelds
+        val reconnectingOtherMelds = if (reconnectingSameTeamAsHost) state.opponentTableMelds else state.myTableMelds
         val reconnectPayload = JSONObject()
             .put("v", 2)
             .put("roundId", currentRoundId.orEmpty())
@@ -3020,8 +3091,8 @@ class MatchViewModel(
             .put("seat", opponentSeat)
             .put("activeSeat", state.activeSeat)
             .put("hand", cardsToJson(remoteHand))
-            .put("myTableMelds", handsToJson(state.opponentTableMelds))
-            .put("hostTableMelds", handsToJson(state.myTableMelds))
+            .put("myTableMelds", handsToJson(reconnectingOwnMelds))
+            .put("hostTableMelds", handsToJson(reconnectingOtherMelds))
             .put("discard", state.discardPile.lastOrNull()?.id ?: "")
             .put("discardPile", cardsToJson(state.discardPile))
             .put("turnCard", state.turnCard?.id ?: "")

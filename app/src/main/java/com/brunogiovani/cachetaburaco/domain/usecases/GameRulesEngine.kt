@@ -81,6 +81,9 @@ object GameRulesEngine {
         cachetaTurnCard: Card? = null
     ): MeldValidationResult {
         if (cards.size < 3) return MeldValidationResult(false, reason = "Mínimo 3 cartas")
+        if (!config.allowWildcards && cards.any(Card::isJoker)) {
+            return MeldValidationResult(false, reason = "Curingas estão desabilitados nesta sala")
+        }
 
         // Toda baixada/encaixe passa por aqui. Assim a tela, o bot e a rede
         // obedecem a mesma regra, sem cada um inventar sua própria validação.
@@ -382,13 +385,34 @@ object GameRulesEngine {
      * Ordena a mão para facilitar a visão do jogador.
      * Agrupa por naipe e ordena por valor dentro de cada naipe.
      * Curingas ficam ao final.
+     *
+     * Posição do Ás dentro do naipe: por padrão ele conta como carta de valor 1
+     * (mais baixa), pois é assim que ele participa de sequências baixas
+     * (Ás-2-3-4...) nesses modos — ver [checkSequencia], que testa tanto a
+     * leitura de Ás baixo quanto Ás alto.
+     *
+     * Na Tranca, porém, o 3 nunca entra em jogo comum (ver
+     * [validateTrancaMeld]) e o 2 já é sempre curinga (ver [isWildcard]). Uma
+     * sequência baixa com Ás nesse modo precisaria "pular" tanto o 2 quanto o
+     * 3, ou seja, exigiria 2 curingas — acima do limite de 1 curinga por jogo
+     * já validado em [validateTrancaMeld]. Isso torna a sequência baixa
+     * inalcançável na prática, então na Tranca o Ás só participa de
+     * sequências altas (Q-K-Ás) e deve ser ordenado como carta alta (depois
+     * do Rei). Buraco e Cacheta não têm essa restrição extra sobre o 3 e
+     * continuam permitindo Ás baixo normalmente (no Buraco, um curinga pode
+     * inclusive preencher a lacuna do 2 numa sequência Ás-3-4-5...), então
+     * mantêm o Ás como carta de valor 1.
      */
     fun sortHand(cards: List<Card>, gameType: GameType): List<Card> {
         val wildcards = cards.filter { isWildcard(it, gameType) }
         val normal = cards.filter { !isWildcard(it, gameType) }
 
+        val rankValue: (Card) -> Int = { c ->
+            if (gameType == GameType.TRANCA && c.rank == Rank.ACE) 14 else c.rank.value
+        }
+
         val sorted = normal.sortedWith(
-            compareBy({ it.suit.ordinal }, { it.rank.value })
+            compareBy({ it.suit.ordinal }, rankValue)
         )
 
         return sorted + wildcards
@@ -512,6 +536,8 @@ object GameRulesEngine {
         val dirtyCanastras: Int = 0,
         val redThreesOnTable: Int = 0,
         val redThreePoints: Int = 0,
+        val redThreesInHand: Int = 0,
+        val redThreeHandPenalty: Int = 0,
         val blackThreesInHand: Int = 0,
         val blackThreePenalty: Int = 0
     )
@@ -532,6 +558,8 @@ object GameRulesEngine {
         var cleanCanastras = 0
         var dirtyCanastras = 0
         var redThreePoints = 0
+        var redThreesInHand = 0
+        var redThreeHandPenalty = 0
         var blackThreesInHand = 0
         var blackThreePenalty = 0
         val winBonus = if (didWin) 100 else 0
@@ -574,9 +602,17 @@ object GameRulesEngine {
         for (card in hand) {
             val value = getCardPointsValue(card, gameType, uniformCardPoints, penalizeBlackThreesInHand)
             handPenalty += value
-            if (gameType == GameType.TRANCA && isBlackThree(card)) {
-                blackThreesInHand++
-                blackThreePenalty += value
+            if (gameType == GameType.TRANCA) {
+                when {
+                    isRedThree(card) -> {
+                        redThreesInHand++
+                        redThreeHandPenalty += value
+                    }
+                    isBlackThree(card) -> {
+                        blackThreesInHand++
+                        blackThreePenalty += value
+                    }
+                }
             }
         }
 
@@ -594,6 +630,8 @@ object GameRulesEngine {
             dirtyCanastras = dirtyCanastras,
             redThreesOnTable = trancaRedThreesOnTable,
             redThreePoints = redThreePoints,
+            redThreesInHand = redThreesInHand,
+            redThreeHandPenalty = redThreeHandPenalty,
             blackThreesInHand = blackThreesInHand,
             blackThreePenalty = blackThreePenalty
         )

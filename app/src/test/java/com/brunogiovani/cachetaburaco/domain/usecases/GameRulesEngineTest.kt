@@ -55,7 +55,7 @@ class GameRulesEngineTest {
 
     @Test
     fun `buraco two always makes canastra dirty`() {
-        val config = MatchConfig(gameType = GameType.BURACO)
+        val config = MatchConfig(gameType = GameType.BURACO, allowWildcards = false)
         val meld = listOf(
             card(Rank.THREE, Suit.HEARTS),
             card(Rank.FOUR, Suit.HEARTS),
@@ -70,6 +70,33 @@ class GameRulesEngineTest {
 
         assertTrue(result.reason, result.isValid)
         assertEquals(MeldType.CANASTRA_SUJA, result.meldType)
+    }
+
+    @Test
+    fun `printed joker cannot masquerade as natural card when wildcards are disabled`() {
+        val forgedJoker = Card(
+            suit = Suit.CLUBS,
+            rank = Rank.FIVE,
+            isJoker = true
+        )
+
+        GameType.entries.forEach { gameType ->
+            val result = GameRulesEngine.validateMeld(
+                cards = listOf(
+                    card(Rank.FIVE, Suit.HEARTS),
+                    card(Rank.FIVE, Suit.SPADES),
+                    forgedJoker
+                ),
+                config = MatchConfig(
+                    gameType = gameType,
+                    allowWildcards = false,
+                    allowCharutos = true
+                )
+            )
+
+            assertFalse("$gameType aceitou um Joker desabilitado como carta natural", result.isValid)
+            assertTrue(result.reason.contains("desabilitados"))
+        }
     }
 
     @Test
@@ -599,9 +626,125 @@ class GameRulesEngineTest {
             didWin = false,
             gameType = GameType.TRANCA
         )
-        // 3 preto = 100 pts. Ace = 10 pts. total = 110 pts penalty.
+        // O 3 preto vale 100 pontos e o Ás vale 15, totalizando 115 de penalidade.
         assertEquals(115, score.handPenalty)
         assertEquals(-115, score.totalRoundPoints)
+    }
+
+    @Test
+    fun `tranca reports red three hand penalty separately from regular cards`() {
+        val score = GameRulesEngine.calculateBuracoTrancaScore(
+            hand = listOf(card(Rank.THREE, Suit.HEARTS), card(Rank.ACE, Suit.DIAMONDS)),
+            tableMelds = emptyList(),
+            hasMorto = false,
+            didWin = false,
+            gameType = GameType.TRANCA
+        )
+
+        assertEquals(1, score.handCardCount)
+        assertEquals(1, score.redThreesInHand)
+        assertEquals(100, score.redThreeHandPenalty)
+        assertEquals(115, score.handPenalty)
+        assertEquals(-115, score.totalRoundPoints)
+    }
+
+    @Test
+    fun `sortHand keeps ace as lowest card in buraco same suit`() {
+        val hand = listOf(
+            card(Rank.KING, Suit.HEARTS),
+            card(Rank.ACE, Suit.HEARTS),
+            card(Rank.THREE, Suit.HEARTS)
+        )
+
+        val sorted = GameRulesEngine.sortHand(hand, GameType.BURACO)
+
+        // No Buraco o Ás continua contando como carta de valor 1: um curinga
+        // pode preencher a lacuna do 2 e formar Ás-3-4-5..., então ele deve
+        // aparecer antes das demais cartas do naipe (comportamento já existente).
+        assertEquals(
+            listOf(Rank.ACE, Rank.THREE, Rank.KING),
+            sorted.map { it.rank }
+        )
+    }
+
+    @Test
+    fun `sortHand orders ace after king in tranca same suit`() {
+        val hand = listOf(
+            card(Rank.KING, Suit.SPADES),
+            card(Rank.ACE, Suit.SPADES),
+            card(Rank.FOUR, Suit.SPADES)
+        )
+
+        val sorted = GameRulesEngine.sortHand(hand, GameType.TRANCA)
+
+        // Na Tranca o 3 não entra em jogo comum (validateTrancaMeld) e o 2 já
+        // é sempre curinga, então uma sequência baixa com Ás exigiria 2
+        // curingas (acima do limite de 1 por jogo). O Ás só forma sequência
+        // alta (Q-K-Ás) e deve aparecer depois do Rei.
+        assertEquals(
+            listOf(Rank.FOUR, Rank.KING, Rank.ACE),
+            sorted.map { it.rank }
+        )
+    }
+
+    @Test
+    fun `sortHand keeps wildcards after every natural card regardless of ace handling`() {
+        val hand = listOf(
+            card(Rank.ACE, Suit.CLUBS),
+            card(Rank.KING, Suit.CLUBS),
+            card(Rank.TWO, Suit.DIAMONDS),
+            joker()
+        )
+
+        val trancaSorted = GameRulesEngine.sortHand(hand, GameType.TRANCA)
+        val buracoSorted = GameRulesEngine.sortHand(hand, GameType.BURACO)
+
+        assertEquals(
+            listOf(Rank.KING, Rank.ACE, Rank.TWO, Rank.ACE), // último ACE é o joker
+            trancaSorted.map { it.rank }
+        )
+        assertEquals(
+            listOf(Rank.ACE, Rank.KING, Rank.TWO, Rank.ACE),
+            buracoSorted.map { it.rank }
+        )
+    }
+
+    @Test
+    fun `buraco allows ace low sequence when a wildcard fills the missing two`() {
+        // Confirma, a partir da validação já existente (não alterada), que o
+        // Buraco permite Ás-3-4 com um curinga cobrindo a lacuna do 2 — por
+        // isso sortHand não move o Ás para depois do Rei nesse modo.
+        val result = GameRulesEngine.validateMeld(
+            cards = listOf(
+                card(Rank.ACE, Suit.HEARTS),
+                card(Rank.THREE, Suit.HEARTS),
+                card(Rank.FOUR, Suit.HEARTS),
+                joker()
+            ),
+            config = MatchConfig(gameType = GameType.BURACO)
+        )
+
+        assertTrue(result.reason, result.isValid)
+        assertEquals(MeldType.SEQUENCIA, result.meldType)
+    }
+
+    @Test
+    fun `tranca cannot build ace low sequence even with a wildcard`() {
+        // Como o 3 é banido de jogos comuns na Tranca (validateTrancaMeld) e o
+        // 2 já é sempre curinga, a lacuna entre Ás e 4 tem tamanho 2 (cobrindo
+        // 2 e 3), exigindo 2 curingas — acima do limite de 1 por jogo. Por
+        // isso a sequência baixa com Ás é inalcançável na Tranca, e sortHand
+        // trata o Ás como carta alta nesse modo.
+        val result = GameRulesEngine.validateMeld(
+            cards = listOf(
+                card(Rank.ACE, Suit.HEARTS),
+                card(Rank.FOUR, Suit.HEARTS),
+                joker()
+            ),
+            config = MatchConfig(gameType = GameType.TRANCA)
+        )
+
+        assertFalse(result.reason, result.isValid)
     }
 
 }
