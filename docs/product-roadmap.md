@@ -10,20 +10,36 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 - [x] Usar 9 cartas na Cacheta e 11 cartas no Buraco/Tranca.
 - [x] Separar transporte local, maquina e online pelo mesmo contrato de mesa.
 - [ ] Fechar a matriz automatizada de regras por modo: compra, lixo, meld,
-  descarte, morto, fim de monte, batida, nova rodada e pontuacao.
-- [ ] Cobrir tentativas adulteradas: carta inexistente, carta repetida, assento
+  descarte, morto, fim de monte, batida, nova rodada e pontuacao. Lacunas
+  reais ja fechadas com teste: batida do Buraco (so Cacheta/Tranca tinham) e
+  reciclagem do monte da Cacheta ("fim de monte" sem morto). Falta varredura
+  exaustiva das combinacoes restantes antes de marcar como fechado.
+- [x] Cobrir tentativas adulteradas: carta inexistente, carta repetida, assento
   falso, acao fora da vez, retry duplicado e resumo de rodada forjado.
+  Coberto no `MatchViewModelStartGameTest.kt` para o host local/maquina (o
+  lado Supabase ja tinha isso via migrations 0012-0019).
 - [ ] Homologar partidas completas de cada modo em dois aparelhos fisicos.
+  Testado fisico + emulador (Buraco, rodada completa online): descoberta de
+  sala, entrada e jogo funcionaram apos corrigir o engine Ktor (ver secao 6).
+  Falta repetir com dois aparelhos fisicos e cobrir Cacheta/Tranca e 4p.
 
 ## 2. Maquina e dificuldades
 
 - [x] Manter o bot no mesmo fluxo de mensagens usado por um oponente real.
 - [x] Separar decisoes do bot em `BotDecisionEngine` com testes unitarios.
-- [ ] Calibrar Facil, Normal e Dificil com comportamentos realmente distintos,
-  sem fazer o nivel facil entregar a partida.
-- [ ] Fazer o bot avaliar mao, lixo, jogos proprios, jogos adversarios, risco do
-  descarte, morto, canastra e condicao de batida.
-- [ ] Criar cenarios fixos para medir a decisao esperada de cada dificuldade.
+- [x] Calibrar Facil, Normal e Dificil com comportamentos realmente distintos,
+  sem fazer o nivel facil entregar a partida. Pesos e limiares diferentes por
+  nivel em `BotDecisionEngine.kt` (compra do lixo, uso de curinga, risco do
+  descarte); Facil erra por estrategia (aceita a 2a melhor jogada dentro de um
+  limite), nunca por regra invalida.
+- [x] Fazer o bot avaliar mao, lixo, jogos proprios, jogos adversarios, risco do
+  descarte, morto, canastra e condicao de batida. Cobre todos esses sinais;
+  morto fica restrito a seguranca (nao esvaziar a mao sem poder concluir o
+  turno), sem estrategia de antecipar a compra do morto.
+- [x] Criar cenarios fixos para medir a decisao esperada de cada dificuldade.
+  18 testes em `BotDecisionEngineTest.kt` comparando Facil/Normal/Dificil lado
+  a lado (compra do lixo, nao alimentar adversario, 3 preto defensivo,
+  timing de curinga, qualidade da baixa).
 
 ## 3. Interface adaptativa da partida
 
@@ -60,15 +76,30 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 ## 6. Online e antitrapaca
 
 - [x] Criar salas, presenca, eventos Realtime, reconexao e ranking no Supabase.
+- [x] Corrigir o engine HTTP do Supabase (`ktor-client-android` nao suporta
+  WebSocket, entao o Realtime nunca conectava e a descoberta de sala online
+  travava para sempre). Trocado para `ktor-client-okhttp` em
+  `app/build.gradle.kts`; validado com fisico+emulador.
 - [x] Deduplicar eventos e validar identidade, direcao e turno no banco.
 - [x] Validar no servidor posse das cartas, lixo, morto e vitoria dos assentos clientes.
 - [x] Identificar rodadas no app e aguardar confirmacao antes de uma nova distribuicao.
 - [x] Aplicar e homologar no remoto a protecao de eventos atrasados da migration `0017`.
 - [ ] Mover baralho, mao do host e transicoes completas para autoridade server-side antes do competitivo.
+  Distribuicao inicial (embaralhar, mao de cada assento, vira, mortos, lixo de
+  abertura) ja e server-side (migrations `0020`-`0023` + `MatchViewModel`
+  ligado). Detalhe completo em `online-roadmap.md`. Falta homologar num
+  aparelho de verdade e mover as transicoes seguintes (compra durante a
+  rodada, nova rodada completa) -- essas continuam no mesmo nivel de
+  confianca no host que ja tinham antes.
 - [ ] Manter cartas privadas fora do estado publico e apagar payload privado apos
   o resultado confirmado.
-- [ ] Tratar falhas esperadas com resultados explicitos; nao usar `try/catch`
-  generico para esconder erro de regra ou aceitar jogada duvidosa.
+- [x] Tratar falhas esperadas com resultados explicitos; nao usar `try/catch`
+  generico para esconder erro de regra ou aceitar jogada duvidosa. Auditado
+  `OnlineNetworkRepository.kt` e `data/online/*`: toda falha (rede, rejeicao
+  do servidor, payload invalido) vira "nao entregue"/`ConnectionStatus.ERROR`,
+  nunca sucesso silencioso. A regra em si e validada nas RPCs (`0014`-`0019`).
+  Melhoria possivel, nao bloqueante: distinguir rejeicao de regra (mostrar
+  "jogada invalida") de falha de rede (mostrar "sessao caiu") na UI.
 - [ ] Adicionar telemetria de falhas sem registrar mao, token ou dado privado.
 
 ## 7. Conta Google e perfil

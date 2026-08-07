@@ -20,6 +20,59 @@ publicacao esta em `product-roadmap.md`.
 - [x] Validar posse da carta, mao vazia, lixo, morto e vitoria dos assentos clientes no servidor (migration `0016`).
 - [x] Aplicar a migration `0017` para rejeitar eventos atrasados de outra rodada no projeto remoto correto.
 - [ ] Tornar o servidor autoridade integral do baralho e tambem da mao do host antes de um modo competitivo.
+  Fase 1 escrita e validada localmente: `0020_server_authoritative_deal.sql`
+  (RPC `start_online_round`) embaralha e distribui a rodada inteira (Cacheta/
+  Buraco/Tranca, curinga/vira/mortos/3 vermelho na Tranca) dentro do Postgres,
+  reaproveitando o `append_match_event` (0013) pra publicar os mesmos
+  GAME_START/PUBLIC_STATE que eu ja mandava do host.
+
+  Revisei sozinho antes de rodar e achei/corrigi 3 bugs so lendo o codigo:
+  indice de array errado nas mesas de equipe, host tentando mandar evento pra
+  si mesmo, mortos removidos do baralho sem eu devolver pra lugar nenhum.
+
+  Depois consegui subir um Postgres local de verdade (`supabase start` com
+  `[analytics] enabled = false` no `config.toml` -- o analytics/logflare
+  estava estourando o healthcheck neste ambiente, desliguei so localmente) e
+  simular duas salas reais via `psql` (JWT simulado com `set_config`/`set
+  role authenticated`, exatamente como o PostgREST faria): Tranca 4 jogadores
+  com 3 vermelho automatico, e Cacheta 2 jogadores com lixo abrindo na vira.
+  Rodando de verdade eu achei mais 2 bugs que a leitura sozinha nao pegou:
+  gerava dois `messageId` aleatorios diferentes pro mesmo evento (o
+  `append_match_event` exige que batam, `EVENT_ENVELOPE_MISMATCH`), e o
+  `PUBLIC_STATE` nao carimbava o `roundId` (no Kotlin isso e automatico via
+  `prepareOutgoingMessage`, aqui eu tive que fazer a mao -- senao o guard da
+  0017 recusa com `ROUND_ID_REQUIRED`). Os dois testes passaram depois do
+  fix: mao com o tamanho certo em cada assento, mortos intactos, descarte de
+  abertura nunca com 3 vermelho na Tranca, vira e lixo compartilhando a carta
+  certa na Cacheta.
+
+  **Aplicado em producao e ligado no app** (migrations `0020`-`0023`). No
+  meio do caminho, tracei com calma o que `MatchViewModel.startGame()`
+  precisava e achei mais 2 lacunas que so apareceram ao pensar no host de
+  verdade (nao so na SQL isolada): o host nunca ve a propria transmissao de
+  volta (`handleNetworkMessage` descarta evento com `senderId` igual ao seu),
+  entao a RPC precisou devolver pro host, alem da propria mao, a mao de TODOS
+  os assentos (`hands`, pro `remoteHandsBySeat` que ele mantem localmente pra
+  validar jogada alheia) e os jogos de 3 vermelho ja formados na Tranca
+  (`team0Melds`/`team1Melds`). Tambem percebi que mover so a distribuicao
+  inicial pro servidor quebraria a compra de carta durante a rodada (o host
+  precisa continuar puxando localmente) -- por isso a RPC tambem devolve o
+  `deck` restante pro host, mantendo a compra durante a rodada no mesmo nivel
+  de confianca que ja tinha hoje (fase 3, futura, e mover isso tambem).
+
+  No lado Kotlin: `LocalNetworkRepository.requestServerDeal()` (novo, default
+  no-op pra Wi-Fi local/maquina), `OnlineRoomDataSource.startRound()`/
+  `SupabaseOnlineRoomDataSource` chamando a RPC, e `MatchViewModel.startGame()`
+  bifurcando pro `applyServerDeal()` quando `isOnlineTransport` -- sem tocar
+  em nada do caminho local/maquina. 2 testes novos com `FakeLocalNetworkRepository`
+  confirmam o host aplicando mao/mortos/monte/mesa vindos do servidor (Buraco)
+  e os jogos de 3 vermelho pre-formados (Tranca) sem depender do evento de
+  rede de volta. Build+lint+teste completos passando.
+
+  Falta ainda: testar Buraco explicitamente num aparelho de verdade (so testei
+  o caminho mais simples por analogia com a Tranca, que e um superconjunto do
+  mesmo fluxo dentro da SQL), e homologar numa partida online real com dois
+  aparelhos antes de confiar 100% nisso em produção de fato.
 
 ## Fase 1 - Base online sem mudar o jogo local
 
@@ -38,6 +91,8 @@ publicacao esta em `product-roadmap.md`.
 - [x] Habilitar autenticacao anonima no painel para o primeiro teste pratico.
 - [x] Ligar os fluxos de criar e encontrar sala online na UI com identificacao Beta.
 - [ ] Validar os dois fluxos em aparelhos fisicos depois da aplicacao remota das migracoes.
+  Testado fisico + emulador ate uma rodada completa de Buraco. Falta repetir
+  com dois aparelhos fisicos e outros modos/tamanhos de sala.
 
 ## Fase 2 - Perfil e ranking global
 
@@ -102,7 +157,7 @@ publicacao esta em `product-roadmap.md`.
 
 ## Estado do teste remoto
 
-As migracoes `0001` a `0017` foram sincronizadas no projeto remoto e o lint do banco nao
+As migracoes `0001` a `0019` foram sincronizadas no projeto remoto e o lint do banco nao
 encontrou erros. A `0005` permite varias partidas na mesma sala, valida o resumo persistido e
 impede pontuacao duplicada. A `0006` registra a ultima partida e disponibiliza o ranking global
 autenticado, limitado e ordenado no servidor. A `0007` impede que perfis sem partida ocupem uma
@@ -183,3 +238,23 @@ confirmou o inicio de duas rodadas, o cancelamento entre elas, a rejeicao de eve
 `roundId` ou com token antigo e a idempotencia de retries. O teste especifico de resultado
 antigo fica para a homologacao controlada, pois a RPC publica grava uma partida e alteraria o
 ranking real. A validacao final em dois aparelhos fisicos continua pendente.
+
+A migracao `0018_optional_tranca_red_three_ledger.sql` alinha o ledger privado com a
+configuracao `autoMeldTrancaRedThrees`. Com a opcao desligada, o 3 vermelho servido permanece
+na mao do cliente e nao pode ser forjado como baixa automatica. O fallback tambem le o campo
+serializado das salas antigas. O lint remoto ficou limpo e o smoke autenticado confirmou os
+dois comportamentos antes de encerrar a sala temporaria, sem registrar resultado no ranking.
+
+A migracao `0019_disabled_printed_joker_guard.sql` rejeita um Joker impresso enviado como
+carta natural quando `allowWildcards` esta desligado. O 2 continua sendo curinga obrigatorio
+no Buraco e na Tranca. A suite isolada passou com 163 testes e o smoke remoto confirmou os
+dois lados da regra antes de encerrar a sala temporaria. O lint do banco permaneceu limpo.
+
+O teste pratico com dois aparelhos (fisico + emulador) mostrou que a sala online nunca
+aparecia na busca do lado cliente. A causa nao era o banco: `app/build.gradle.kts` usava
+`ktor-client-android`, cujo engine (`HttpURLConnection`) nao suporta WebSocket. O canal
+Realtime `waiting-match-rooms` nunca terminava de assinar (`IllegalArgumentException: Engine
+doesn't support WebSocketCapability`, retry a cada 7s para sempre), entao a primeira busca de
+salas nunca rodava. Trocado para `ktor-client-okhttp:3.5.2`, que suporta WebSocket. Depois da
+troca, fisico e emulador se descobriram e uma rodada completa de Buraco rodou sem erros nos
+dois lados.
