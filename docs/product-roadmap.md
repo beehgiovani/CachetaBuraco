@@ -145,11 +145,24 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 - [x] Aplicar e homologar no remoto a protecao de eventos atrasados da migration `0017`.
 - [ ] Mover baralho, mao do host e transicoes completas para autoridade server-side antes do competitivo.
   Distribuicao inicial (embaralhar, mao de cada assento, vira, mortos, lixo de
-  abertura) ja e server-side (migrations `0020`-`0023` + `MatchViewModel`
-  ligado). Detalhe completo em `online-roadmap.md`. Falta homologar num
-  aparelho de verdade e mover as transicoes seguintes (compra durante a
-  rodada, nova rodada completa) -- essas continuam no mesmo nivel de
-  confianca no host que ja tinham antes.
+  abertura) e server-side desde as migrations `0020`-`0023`. Migration `0025`
+  (fase 3a) fecha o proximo pedaco: compra do monte principal durante a
+  rodada, reciclagem do lixo (Cacheta) e morto virando novo monte
+  (Buraco/Tranca) agora sao decididos pela RPC `online_draw_deck_card`, nao
+  mais pelo host em memoria. `start_online_round` tambem parou de devolver o
+  baralho inteiro pro host na distribuicao -- sem isso a RPC de compra seria
+  simbolica, ja que o host teria conhecimento total do monte desde o inicio
+  da rodada (gap real encontrado so ao revisar o design, nao no codigo
+  escrito hoje cedo). Validado local com Postgres real (compra normal, fora
+  da vez, chamada direta de cliente, reciclagem, morto-como-monte, monte e
+  mortos esgotados) antes de aplicar em producao. Detalhe completo em
+  `online-roadmap.md`.
+  Falta: (1) homologar num aparelho de verdade: (2) mover o pedido explicito
+  de time pegar o morto inteiro como mao (`REQ_PICK_MORTO`/`SERVE_MORTO`)
+  para autoridade do servidor -- continua decidido e servido pelo host
+  localmente por enquanto (gap conhecido, deliberadamente adiado); o host so
+  espelha o consumo de morto feito pela compra server-side pra evitar os
+  dois mecanismos usarem o mesmo morto.
 - [x] Manter cartas privadas fora do estado publico e apagar payload privado apos
   o resultado confirmado. Migration `0011_private_event_redaction.sql`: apos
   `complete_match`, eventos privados preservam so tipo/messageId/marca de
