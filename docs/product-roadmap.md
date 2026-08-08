@@ -95,12 +95,27 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 ## 5. Criacao e entrada em salas
 
 - [x] Mostrar regras e configuracoes antes de o convidado entrar na sala.
-- [ ] Transformar a criacao em fluxo curto: modo, jogadores, regras e confirmacao.
-- [ ] Exibir identidade visual propria para Cacheta, Buraco e Tranca.
-- [ ] Publicar a sala para descoberta somente depois de a configuracao ser
-  confirmada e persistida, tanto no Wi-Fi quanto no online.
-- [ ] Mostrar progresso, sucesso, erro recuperavel e cancelamento sem duplicar sala.
-- [ ] Preservar configuracoes escolhidas durante rotacao, reconexao e retorno de tela.
+- [x] Transformar a criacao em fluxo curto: modo, jogadores, regras e
+  confirmacao. Ja organizado em passos numerados (1-4) no `HostPanel`; auditado,
+  sem gap real encontrado.
+- [x] Exibir identidade visual propria para Cacheta, Buraco e Tranca. A "capa
+  da sala" (`RuleSummaryText`) agora usa cor propria por jogo (Cacheta =
+  dourado, Buraco = verde, Tranca = vermelho) em vez da mesma cor pros tres.
+- [x] Publicar a sala para descoberta somente depois de a configuracao ser
+  confirmada e persistida, tanto no Wi-Fi quanto no online. Auditado
+  `publishOrStart()`: `publishedConfig` (o que efetivamente aparece como sala
+  publicada) so e setado depois que `connectionStatus` confirma
+  `ROOM_READY`/`CONNECTED` -- ja funcionava, sem gap real.
+- [x] Mostrar progresso, sucesso, erro recuperavel e cancelamento sem duplicar
+  sala. `isPublishing`/`publicationError` ja cobrem isso e erro chama
+  `stopHosting()` antes de permitir nova tentativa; auditado, sem gap real.
+- [x] Preservar configuracoes escolhidas durante rotacao, reconexao e retorno
+  de tela. Rotacao nao e um risco de verdade (Activity travada em
+  `landscape`), mas "retorno de tela" era um bug real: a navegacao troca de
+  tela com um `when` manual em `MainActivity`, entao sair do lobby e voltar
+  recriava o composable do zero e um "Voltar" sem querer jogava fora toda
+  regra escolhida. Trocado `remember` por `rememberSaveable` em toda a
+  selecao de regras do `LobbyScreen`.
 
 ## 6. Online e antitrapaca
 
@@ -120,8 +135,11 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
   aparelho de verdade e mover as transicoes seguintes (compra durante a
   rodada, nova rodada completa) -- essas continuam no mesmo nivel de
   confianca no host que ja tinham antes.
-- [ ] Manter cartas privadas fora do estado publico e apagar payload privado apos
-  o resultado confirmado.
+- [x] Manter cartas privadas fora do estado publico e apagar payload privado apos
+  o resultado confirmado. Migration `0011_private_event_redaction.sql`: apos
+  `complete_match`, eventos privados preservam so tipo/messageId/marca de
+  redacao. Smoke test remoto ja confirmou o marcador antes do resultado e a
+  remocao depois dele (checkbox estava desatualizado, o trabalho ja existia).
 - [x] Tratar falhas esperadas com resultados explicitos; nao usar `try/catch`
   generico para esconder erro de regra ou aceitar jogada duvidosa. Auditado
   `OnlineNetworkRepository.kt` e `data/online/*`: toda falha (rede, rejeicao

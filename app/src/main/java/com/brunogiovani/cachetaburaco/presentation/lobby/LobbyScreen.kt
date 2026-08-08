@@ -36,6 +36,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
@@ -76,6 +78,13 @@ import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 
+// AppState em MainActivity troca de tela com um "when" manual, entao sair do
+// lobby e voltar recria o composable do zero -- sem rememberSaveable, um
+// "Voltar" sem querer jogava fora toda regra que o host tinha acabado de
+// escolher com cuidado.
+private inline fun <reified T : Enum<T>> enumSaver(): Saver<T, String> =
+    Saver(save = { it.name }, restore = { enumValueOf<T>(it) })
+
 @Composable
 fun LobbyScreen(
     isHosting: Boolean,
@@ -86,22 +95,25 @@ fun LobbyScreen(
 ) {
     val player = FakeAuthRepository.getCurrentPlayer() ?: return
 
-    // Tudo que o jogador escolhe antes da partida vira MatchConfig.
+    // Tudo que o jogador escolhe antes da partida vira MatchConfig. Uso
+    // rememberSaveable (nao so remember) porque sair do lobby e voltar recria
+    // o composable do zero -- sem isso, um "Voltar" sem querer jogava fora
+    // toda regra que o host tinha acabado de escolher com cuidado.
     // O lobby não valida jogada; quem manda nisso é o motor de regras.
-    var selectedGameType by remember { mutableStateOf(GameType.CACHETA) }
-    var selectedPlayers by remember { mutableIntStateOf(2) }
-    var allowWildcards by remember { mutableStateOf(true) }
-    var allowDrawFromDiscard by remember { mutableStateOf(true) }
-    var allowCharutos by remember { mutableStateOf(true) }
-    var cachetaStartsWithDiscard by remember { mutableStateOf(false) }
-    var requireCleanCanastraToWin by remember { mutableStateOf(true) }
-    var autoMeldTrancaRedThrees by remember { mutableStateOf(true) }
-    var penalizeBlackThreesInHand by remember { mutableStateOf(true) }
-    var uniformCardPoints by remember { mutableStateOf(false) }
-    var autoSortHand by remember { mutableStateOf(true) }
-    var botDifficulty by remember { mutableStateOf(BotDifficulty.NORMAL) }
-    var pointsMode by remember { mutableStateOf(PointsMode.FREE) }
-    var selectedPointLimit by remember { mutableIntStateOf(5) }
+    var selectedGameType by rememberSaveable(stateSaver = enumSaver()) { mutableStateOf(GameType.CACHETA) }
+    var selectedPlayers by rememberSaveable { mutableIntStateOf(2) }
+    var allowWildcards by rememberSaveable { mutableStateOf(true) }
+    var allowDrawFromDiscard by rememberSaveable { mutableStateOf(true) }
+    var allowCharutos by rememberSaveable { mutableStateOf(true) }
+    var cachetaStartsWithDiscard by rememberSaveable { mutableStateOf(false) }
+    var requireCleanCanastraToWin by rememberSaveable { mutableStateOf(true) }
+    var autoMeldTrancaRedThrees by rememberSaveable { mutableStateOf(true) }
+    var penalizeBlackThreesInHand by rememberSaveable { mutableStateOf(true) }
+    var uniformCardPoints by rememberSaveable { mutableStateOf(false) }
+    var autoSortHand by rememberSaveable { mutableStateOf(true) }
+    var botDifficulty by rememberSaveable(stateSaver = enumSaver()) { mutableStateOf(BotDifficulty.NORMAL) }
+    var pointsMode by rememberSaveable(stateSaver = enumSaver()) { mutableStateOf(PointsMode.FREE) }
+    var selectedPointLimit by rememberSaveable { mutableIntStateOf(5) }
 
     LaunchedEffect(selectedGameType) {
         selectedPointLimit = if (selectedGameType == GameType.CACHETA) 5 else 1500
@@ -971,6 +983,13 @@ private fun RuleSummaryText(config: MatchConfig) {
         GameType.BURACO -> "Buraco"
         GameType.TRANCA -> "Tranca"
     }
+    // Cor de identidade propria por jogo na "capa da sala" -- antes os tres
+    // modos usavam a mesma cor dourada e ficavam indistinguiveis de relance.
+    val gameAccent = when (config.gameType) {
+        GameType.CACHETA -> MenuColors.Gold
+        GameType.BURACO -> MenuColors.TableGreenLight
+        GameType.TRANCA -> MenuColors.Red
+    }
 
     val chips = buildList {
         if (config.gameType == GameType.CACHETA) {
@@ -999,7 +1018,7 @@ private fun RuleSummaryText(config: MatchConfig) {
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(gameName, color = MenuColors.Gold, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+            Text(gameName, color = gameAccent, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
             Text(
                 "${config.maxPlayers} jogadores · ${config.cardsPerPlayer} cartas",
                 color = MenuColors.OnDarkFaint,
