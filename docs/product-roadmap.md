@@ -100,9 +100,12 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 - [ ] Revisar sons, vibracoes, splash, cartas, mesa, avatares, icone e assets da
   Play Store como um conjunto visual unico. Nao mexido -- precisa de assets
   de audio/imagem que so o dono do projeto pode fornecer.
-- [ ] Respeitar estado sem som do aparelho (silencioso/vibrar) nos efeitos
-  sonoros. Reducao de movimento e aparelhos mais lentos ja estao cobertos
-  acima; "sem som" e especifico de audio, que ainda nao foi mexido.
+- [x] Respeitar estado sem som do aparelho (silencioso/vibrar) nos efeitos
+  sonoros. `MatchFeedback.play()` agora le `AudioManager.ringerMode`: modo
+  silencioso corta som e vibracao, modo vibrar corta so o som e mantem a
+  vibracao (preferencia explicita de feedback tatil do usuario). Extraido em
+  `shouldPlaySound`/`shouldVibrate` (testaveis sem depender de hardware real)
+  com 3 testes cobrindo normal/vibrar/silencioso em `MatchFeedbackTest.kt`.
 
 ## 5. Criacao e entrada em salas
 
