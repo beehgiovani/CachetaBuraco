@@ -232,7 +232,11 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 ## 8. Qualidade e publicacao
 
 - [x] Rotacionar a secret key exposta durante a configuracao inicial.
-- [ ] Exigir testes unitarios para regras, bot, codecs, sala, ranking e ViewModels.
+- [x] Exigir testes unitarios para regras, bot, codecs, sala, ranking e ViewModels.
+  Cobertura confirmada: `GameRulesEngineTest`, `BotDecisionEngineTest`,
+  `OnlineEventCodecTest`, `OnlineRoomCodeTest`/`OnlineRoomConfigJsonTest`,
+  `OnlineRankingTest`/`OnlineRankingScreenLogicTest`,
+  `MatchViewModelStartGameTest`/`MatchScreenLogicTest`, entre outras.
 - [x] Adicionar testes instrumentados para navegacao, fonte grande e partida basica.
   Navegacao ja tinha `LoginFlowNavigationTest`/`MainMenuNavigationTest`.
   Adicionado `BotMatchNavigationTest` (menu -> lobby -> partida contra a
