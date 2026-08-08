@@ -58,8 +58,18 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
   somente quando o tamanho minimo legivel nao couber. `MeldArea` ja calculava
   colunas/largura pela quantidade de jogos e espaco disponivel; confirmado
   por auditoria, sem mudanca de logica.
-- [ ] Manter lados, turnos, quantidade de cartas e placar visualmente claros.
-- [ ] Respeitar barras do sistema ou usar modo imersivo sem esconder controles.
+- [x] Manter lados, turnos, quantidade de cartas e placar visualmente claros.
+  Auditado `TopBar`: fase do turno com texto+cor dedicados ("Compre uma
+  carta"/"Baixe ou descarte"/"Turno do oponente"), placar ao vivo (times ou
+  jogador x oponente conforme o modo) e contagem de cartas do oponente ja
+  exibidos. Sem gap concreto encontrado; "visualmente claro" e subjetivo, mas
+  os dados existem e sao legiveis.
+- [x] Respeitar barras do sistema ou usar modo imersivo sem esconder controles.
+  `MainActivity` ja usa `WindowInsetsControllerCompat` com
+  `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE` e re-esconde as barras em
+  `onWindowFocusChanged` (padrao recomendado pra elas nao ficarem "presas"
+  visiveis apos um swipe). `MatchScreen`/`LobbyScreen` ja aplicam
+  `windowInsetsPadding` nos controles proximos as bordas. Sem gap encontrado.
 - [x] Criar `@Preview` para telas e componentes visuais representativos, com
   estados de fonte grande, tela compacta, mesa cheia, vazio e erro. Adicionado
   em `MatchScreen.kt`: mesa vazia, mesa cheia (2 tamanhos), erro, retrato
