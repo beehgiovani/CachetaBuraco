@@ -90,7 +90,9 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 - [ ] Revisar sons, vibracoes, splash, cartas, mesa, avatares, icone e assets da
   Play Store como um conjunto visual unico. Nao mexido -- precisa de assets
   de audio/imagem que so o dono do projeto pode fornecer.
-- [ ] Respeitar reducao de movimento, estado sem som e aparelhos mais lentos.
+- [ ] Respeitar estado sem som do aparelho (silencioso/vibrar) nos efeitos
+  sonoros. Reducao de movimento e aparelhos mais lentos ja estao cobertos
+  acima; "sem som" e especifico de audio, que ainda nao foi mexido.
 
 ## 5. Criacao e entrada em salas
 
