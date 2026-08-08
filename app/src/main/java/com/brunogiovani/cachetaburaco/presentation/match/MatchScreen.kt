@@ -87,7 +87,6 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 // ─── Paleta ───────────────────────────────────────────────
-private val ColorGreen = Color(0xFF2E7D32)
 private val ColorGreenLight = Color(0xFF4CAF50)
 private val ColorBlueLight = Color(0xFF42A5F5)
 private val ColorGold = Color(0xFFFFD54F)
@@ -1862,58 +1861,6 @@ private fun DrawPilesPanel(
                     onClick = onDiscardClick,
                     onBlockedClick = onBlockedDiscardClick
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MortosPile(mortosLeft: Int) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = "Mortos",
-            color = Color.White.copy(alpha = 0.68f),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(3.dp))
-        Box(
-            modifier = Modifier
-                .height(58.dp)
-                .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.18f), RoundedCornerShape(12.dp))
-                .border(
-                    1.dp,
-                    if (mortosLeft > 0) ColorGold.copy(alpha = 0.42f) else Color.White.copy(alpha = 0.08f),
-                    RoundedCornerShape(12.dp)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            if (mortosLeft > 0) {
-                repeat(mortosLeft.coerceAtMost(2)) { index ->
-                    CardView(
-                        card = Card(Suit.SPADES, Rank.ACE),
-                        isFaceUp = false,
-                        modifier = Modifier
-                            .size(width = 36.dp, height = 54.dp)
-                            .graphicsLayer {
-                                rotationZ = if (index == 0) -18f else 18f
-                                translationX = if (index == 0) -14f else 14f
-                            }
-                    )
-                }
-            } else {
-                Text("0", color = Color.White.copy(alpha = 0.45f), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(5.dp)
-                    .background(Color.Black.copy(alpha = 0.62f), CircleShape)
-                    .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
-                    .padding(horizontal = 7.dp, vertical = 2.dp)
-            ) {
-                Text("$mortosLeft", color = ColorGold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

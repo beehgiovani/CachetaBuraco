@@ -2513,23 +2513,6 @@ class MatchViewModel(
 
     // --- Helpers ---
 
-    /**
-     * Identifica se existem 3 vermelhos na mão do jogador (apenas no modo Tranca).
-     * Se houver, baixa-os automaticamente na mesa e notifica o oponente.
-     */
-    private fun findAppendTarget(
-        tableMelds: List<List<Card>>,
-        selected: List<Card>,
-        cachetaTurnCard: Card?
-    ): Pair<Int, GameRulesEngine.MeldValidationResult>? {
-        if (selected.isEmpty()) return null
-        tableMelds.forEachIndexed { index, meld ->
-            val result = GameRulesEngine.validateMeld(meld + selected, currentConfig, cachetaTurnCard)
-            if (result.isValid) return index to result
-        }
-        return null
-    }
-
     private fun findAppendTargets(
         tableMelds: List<List<Card>>,
         selected: List<Card>,
@@ -3051,8 +3034,6 @@ class MatchViewModel(
     private fun teamForSeat(seat: Int): Int = seat.floorMod(2)
 
     private fun opposingTeam(team: Int): Int = if (team == 0) 1 else 0
-
-    private fun teamLabel(team: Int): String = if (team == 0) "A" else "B"
 
     private fun applyRoundToTeamScores(
         currentScores: List<Int>,
