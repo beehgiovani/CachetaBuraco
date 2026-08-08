@@ -162,6 +162,13 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
   nunca sucesso silencioso. A regra em si e validada nas RPCs (`0014`-`0019`).
   Melhoria possivel, nao bloqueante: distinguir rejeicao de regra (mostrar
   "jogada invalida") de falha de rede (mostrar "sessao caiu") na UI.
+- [x] Corrigir gap real encontrado nesta auditoria: `ConnectionStatus.ERROR`
+  (falha de registro NSD/socket no Wi-Fi local, falha de sessao/heartbeat/
+  publicacao no online) nao tinha nenhum tratamento em `MatchScreen.kt` --
+  a mesa congelava em silencio, sem dialogo, mensagem ou botao de saida, no
+  meio de uma partida em andamento. Agora reaproveita o mesmo dialogo de
+  desconexao (Wi-Fi ja tinha isso para OPPONENT_DISCONNECTED/HOST_DISCONNECTED)
+  com mensagem propria ("A conexao com a sala falhou").
 - [x] Adicionar telemetria de falhas sem registrar mao, token ou dado privado.
   Migration `0024_client_failure_telemetry.sql` (aplicada em producao,
   validada antes localmente contra Postgres real) cria `client_failure_events`

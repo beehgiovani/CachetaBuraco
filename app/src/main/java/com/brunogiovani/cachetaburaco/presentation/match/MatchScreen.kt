@@ -186,7 +186,8 @@ fun MatchScreen(
     LaunchedEffect(connectionStatus) {
         when (connectionStatus) {
             ConnectionStatus.OPPONENT_DISCONNECTED,
-            ConnectionStatus.HOST_DISCONNECTED -> wasDisconnected = true
+            ConnectionStatus.HOST_DISCONNECTED,
+            ConnectionStatus.ERROR -> wasDisconnected = true
             ConnectionStatus.CONNECTED -> {
                 val shouldResync = wasDisconnected || (viewModel.isRestored && !didRequestResumeSync)
                 if (shouldResync && !isHost) {
@@ -380,11 +381,20 @@ fun MatchScreen(
         }
 
         // -- Diálogo de Desconexão --------------------------------------------------------------------
+        // ConnectionStatus.ERROR (falha de registro Wi-Fi/socket ou de sessão
+        // online) ficava sem nenhum tratamento aqui -- a mesa congelava sem
+        // diálogo, mensagem ou botão de saída, tanto pro host quanto pro
+        // cliente. Agora ele reaproveita o mesmo diálogo de desconexão, só com
+        // uma mensagem própria que não sugere "o outro jogador saiu".
         if (connectionStatus == ConnectionStatus.OPPONENT_DISCONNECTED ||
-            connectionStatus == ConnectionStatus.HOST_DISCONNECTED) {
+            connectionStatus == ConnectionStatus.HOST_DISCONNECTED ||
+            connectionStatus == ConnectionStatus.ERROR) {
             DisconnectDialog(
-                message = if (connectionStatus == ConnectionStatus.HOST_DISCONNECTED)
-                    "O host perdeu a conexão." else "Um oponente saiu da partida.",
+                message = when (connectionStatus) {
+                    ConnectionStatus.HOST_DISCONNECTED -> "O host perdeu a conexão."
+                    ConnectionStatus.ERROR -> "A conexão com a sala falhou."
+                    else -> "Um oponente saiu da partida."
+                },
                 isClient = !isHost,
                 onBack = {
                     // O jogador escolheu desistir em vez de tentar reconectar --
