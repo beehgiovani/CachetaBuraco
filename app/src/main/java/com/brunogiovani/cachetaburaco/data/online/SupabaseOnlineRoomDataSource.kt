@@ -182,6 +182,17 @@ class SupabaseOnlineRoomDataSource(
         ).decodeAs<JsonObject>().toString()
     }
 
+    override suspend fun takeMorto(session: OnlineRoomSession, seat: Int, indirect: Boolean): String {
+        return client.postgrest.rpc(
+            function = "online_take_morto",
+            parameters = buildJsonObject {
+                put("p_room_id", session.room.roomId)
+                put("p_seat", seat)
+                put("p_indirect", indirect)
+            }
+        ).decodeAs<JsonObject>().toString()
+    }
+
     override suspend fun reportFailure(category: OnlineFailureCategory, roomId: String?) {
         client.postgrest.rpc(
             function = "report_client_failure",

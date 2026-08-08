@@ -127,4 +127,12 @@ interface LocalNetworkRepository {
     fun requestServerDraw(seat: Int, onResult: (String?) -> Unit) {
         onResult(null)
     }
+
+    // Mesma ideia, mas pro pedido explicito de time pegar o morto inteiro
+    // (RPC online_take_morto): so o online implementa de verdade. `indirect`
+    // reflete se quem pegou o morto foi indiretamente esvaziado (ex.: parceiro
+    // baixou o resto da mao dele), o que muda de quem e a vez em seguida.
+    fun requestServerMorto(seat: Int, indirect: Boolean = false, onResult: (String?) -> Unit) {
+        onResult(null)
+    }
 }

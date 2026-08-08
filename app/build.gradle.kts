@@ -79,7 +79,7 @@ dependencies {
     // Google na sessao anonima existente do Supabase e preservar perfil/ranking.
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
-    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.2.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")

@@ -356,6 +356,25 @@ class OnlineNetworkRepository(
         }
     }
 
+    override fun requestServerMorto(seat: Int, indirect: Boolean, onResult: (String?) -> Unit) {
+        val session = currentSession
+        if (session == null) {
+            onResult(null)
+            return
+        }
+        scope.launch {
+            val result = try {
+                dataSource.takeMorto(session, seat, indirect)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                reportFailureTelemetry(OnlineFailureCategory.MORTO_REQUEST_FAILED, session.room.roomId)
+                null
+            }
+            onResult(result)
+        }
+    }
+
     private fun installSession(session: OnlineRoomSession) {
         currentSession = session
         currentRoundId = null

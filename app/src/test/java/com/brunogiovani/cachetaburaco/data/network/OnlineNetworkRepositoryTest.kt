@@ -875,6 +875,16 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
         return drawDeckCardResult
     }
 
+    var takeMortoResult: String = "{}"
+    var takeMortoCalls: MutableList<Int> = mutableListOf()
+    var failTakeMorto: Boolean = false
+
+    override suspend fun takeMorto(session: OnlineRoomSession, seat: Int, indirect: Boolean): String {
+        takeMortoCalls += seat
+        if (failTakeMorto) error("take morto failed")
+        return takeMortoResult
+    }
+
     val reportedFailures = mutableListOf<OnlineFailureCategory>()
 
     override suspend fun reportFailure(category: OnlineFailureCategory, roomId: String?) {

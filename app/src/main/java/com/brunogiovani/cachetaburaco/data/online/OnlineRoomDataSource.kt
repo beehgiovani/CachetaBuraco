@@ -21,7 +21,8 @@ enum class OnlineFailureCategory(val wireValue: String) {
     HEARTBEAT_FAILED("ONLINE_HEARTBEAT_FAILED"),
     PUBLISH_FAILED("ONLINE_PUBLISH_FAILED"),
     DEAL_REQUEST_FAILED("ONLINE_DEAL_REQUEST_FAILED"),
-    DRAW_REQUEST_FAILED("ONLINE_DRAW_REQUEST_FAILED")
+    DRAW_REQUEST_FAILED("ONLINE_DRAW_REQUEST_FAILED"),
+    MORTO_REQUEST_FAILED("ONLINE_MORTO_REQUEST_FAILED")
 }
 
 data class OnlineRoomSummary(
@@ -126,6 +127,14 @@ interface OnlineRoomDataSource {
      * banco, nunca o processo do host.
      */
     suspend fun drawDeckCard(session: OnlineRoomSession, seat: Int): String
+
+    /**
+     * Pede pro servidor entregar o morto inteiro como mao pro assento que
+     * zerou a mao (RPC `online_take_morto`), incluindo extrair e repor os 3
+     * vermelho automaticos da Tranca. So o host chama -- o banco decide o
+     * conteudo do morto, nunca o processo do host.
+     */
+    suspend fun takeMorto(session: OnlineRoomSession, seat: Int, indirect: Boolean = false): String
 
     /**
      * Registra uma falha do transporte online sem guardar mao, token ou

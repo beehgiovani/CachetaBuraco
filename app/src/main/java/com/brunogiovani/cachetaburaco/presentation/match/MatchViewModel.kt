@@ -616,6 +616,42 @@ class MatchViewModel(
     }
 
     /**
+     * Aplica o resultado de `online_take_morto` no pedido de morto do proprio
+     * host. O servidor ja decidiu o conteudo (incluindo 3 vermelho extraidos
+     * e repostos do monte) e ja publicou o PUBLIC_STATE atualizado sozinho.
+     */
+    private fun applyServerMortoResultForOwnSeat(rawJson: String?, meldLabel: String) {
+        val json = rawJson?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (json == null || json.optString("status") != "OK") {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Não foi possível pegar o morto agora. Tente novamente."
+            )
+            return
+        }
+        val hand = cardsFromJson(json.optJSONArray("hand") ?: JSONArray())
+        if (hand.size != currentConfig.cardsPerPlayer) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Morto inválido recebido do servidor."
+            )
+            return
+        }
+        if (mortos.isNotEmpty()) mortos.removeAt(0)
+        val redThreeMelds = handsFromJson(json.optJSONArray("redThreeMelds") ?: JSONArray())
+        teamsThatPickedMorto.add(teamForSeat(localSeat))
+        val state = _gameState.value
+        _gameState.value = state.copy(
+            myHand = sortHandIfEnabled(hand),
+            myTableMelds = state.myTableMelds + redThreeMelds,
+            mortosLeft = json.optInt("mortosLeft", state.mortosLeft),
+            deckSize = json.optInt("deckSize", state.deckSize),
+            lastMeldResult = meldLabel,
+            feedbackMessage = "$meldLabel Você pegou o Morto!",
+            mortoNoticeSeat = localSeat,
+            mortoNoticeId = if (state.mortoNoticeSeat == localSeat) state.mortoNoticeId else state.mortoNoticeId + 1
+        )
+    }
+
+    /**
      * Garante que existe monte para comprar, reciclando lixo ou morto se necessário.
      */
     private fun prepareDeckForDraw(state: GameState): Boolean {
@@ -880,6 +916,30 @@ class MatchViewModel(
                     playerId, "MELD", buildMeldPayload(publicMeld, localSeat, replaceMeldIndex)
                 ))
                 requestMorto()
+                return
+            }
+            if (networkRepository.isOnlineTransport) {
+                // Mesmo padrao do cliente acima: aplica um estado otimista,
+                // publica o MELD e completa a entrega do morto de forma
+                // assincrona (applyServerMortoResultForOwnSeat) quando a RPC
+                // online_take_morto responder -- e o banco, nao o host, quem
+                // decide o conteudo real do morto.
+                _gameState.value = state.copy(
+                    myHand = finalHand,
+                    myTableMelds = updatedMelds,
+                    discardPile = discardPileAfterMeld,
+                    selectedCards = emptySet(),
+                    mortosLeft = mortosLeft,
+                    lastMeldResult = meldLabel,
+                    feedbackMessage = "$meldLabel Pegando o Morto...",
+                    pendingMeldTargets = null
+                )
+                networkRepository.sendMessage(NetworkMessage(
+                    playerId, "MELD", buildMeldPayload(publicMeld, localSeat, replaceMeldIndex)
+                ))
+                networkRepository.requestServerMorto(localSeat) { rawJson ->
+                    viewModelScope.launch { applyServerMortoResultForOwnSeat(rawJson, meldLabel) }
+                }
                 return
             }
             if (mortos.isNotEmpty()) {
@@ -2160,6 +2220,20 @@ class MatchViewModel(
         }
         if (!teamsWithMortoServedByHost.add(team)) return false
 
+        if (networkRepository.isOnlineTransport) {
+            // O servidor decide o conteudo do morto (RPC online_take_morto) e
+            // ja publica SERVE_MORTO pro assento certo e o PUBLIC_STATE
+            // atualizado sozinho -- o host so espelha o efeito local quando a
+            // resposta chegar, sem mandar nenhuma mensagem de rede ele mesmo.
+            // `indirect` so importa pro payload que o servidor manda pro
+            // cliente (afeta se a vez passa pro proximo assento ou fica com
+            // quem pegou o morto); a copia local do host nao usa esse flag.
+            networkRepository.requestServerMorto(requestingSeat, indirect) { rawJson ->
+                viewModelScope.launch { applyServerMortoResultForRemoteSeat(requestingSeat, team, rawJson) }
+            }
+            return true
+        }
+
         val stateBeforePickup = _gameState.value
         val deckBeforePickup = masterDeck.toMutableList()
         val previousRemoteHand = remoteHandsBySeat[requestingSeat]
@@ -2252,6 +2326,50 @@ class MatchViewModel(
             }
         }
         return true
+    }
+
+    /**
+     * Aplica o resultado de `online_take_morto` no pedido de um cliente
+     * remoto. O servidor ja publicou o SERVE_MORTO direto pro assento certo
+     * e o PUBLIC_STATE atualizado sozinho -- aqui o host so espelha o mesmo
+     * efeito local que sempre teve (remoteHandsBySeat/mesa das equipes),
+     * sem mandar nenhuma mensagem de rede ele mesmo.
+     */
+    private fun applyServerMortoResultForRemoteSeat(requestingSeat: Int, team: Int, rawJson: String?) {
+        val json = rawJson?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (json == null || json.optString("status") != "OK") {
+            teamsWithMortoServedByHost.remove(team)
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Não foi possível entregar o morto agora. Tente novamente."
+            )
+            return
+        }
+        val hand = cardsFromJson(json.optJSONArray("hand") ?: JSONArray())
+        if (hand.size != currentConfig.cardsPerPlayer) {
+            teamsWithMortoServedByHost.remove(team)
+            _gameState.value = _gameState.value.copy(feedbackMessage = "Morto inválido recebido do servidor.")
+            return
+        }
+        if (mortos.isNotEmpty()) mortos.removeAt(0)
+        val redThreeMelds = handsFromJson(json.optJSONArray("redThreeMelds") ?: JSONArray())
+        val sameTeamAsHost = team == teamForSeat(localSeat)
+        val state = _gameState.value
+        val updatedMyTable = if (sameTeamAsHost) state.myTableMelds + redThreeMelds else state.myTableMelds
+        val updatedOpponentTable = if (sameTeamAsHost) state.opponentTableMelds else state.opponentTableMelds + redThreeMelds
+
+        teamsThatPickedMorto.add(team)
+        remoteHandsBySeat[requestingSeat] = hand
+
+        _gameState.value = state.copy(
+            myTableMelds = updatedMyTable,
+            opponentTableMelds = updatedOpponentTable,
+            deckSize = json.optInt("deckSize", state.deckSize),
+            mortosLeft = json.optInt("mortosLeft", state.mortosLeft),
+            opponentHandCount = remoteHandCountForSeat(requestingSeat),
+            opponentPickedMorto = if (team != teamForSeat(localSeat)) true else state.opponentPickedMorto,
+            mortoNoticeSeat = requestingSeat,
+            mortoNoticeId = state.mortoNoticeId + 1
+        )
     }
 
     /**

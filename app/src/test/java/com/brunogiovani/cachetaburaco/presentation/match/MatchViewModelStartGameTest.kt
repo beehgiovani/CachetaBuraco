@@ -421,6 +421,122 @@ class MatchViewModelStartGameTest {
     }
 
     @Test
+    fun `online host applies server morto result to its own hand and red three melds`() = runTest {
+        // Fase 3b: online_take_morto (0026) decide o conteudo do morto -- o
+        // host nao chama mais mortos.removeAt(0)/prepareMortoForPickup()
+        // sozinho pra si mesmo, so aplica o que a RPC devolveu.
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        runCurrent()
+        viewModel.mortosForTest().add(listOf(Card(suit = Suit.SPADES, rank = Rank.NINE)))
+
+        val mortoHand = List(11) { index -> cardId(Rank.entries[index % 13], Suit.HEARTS) }
+        val redThree = cardId(Rank.THREE, Suit.DIAMONDS)
+        val rawJson = JSONObject().apply {
+            put("status", "OK")
+            put("hand", JSONArray(mortoHand))
+            put("redThreeMelds", JSONArray().apply { put(JSONArray(listOf(redThree))) })
+            put("team", 0)
+            put("mortosLeft", 0)
+            put("deckSize", 15)
+        }.toString()
+
+        viewModel.invokeApplyServerMortoResultForOwnSeat(rawJson, "Jogo baixado!")
+
+        val state = viewModel.gameState.value
+        assertEquals(mortoHand.toSet(), state.myHand.map { it.id }.toSet())
+        assertEquals(1, state.myTableMelds.size)
+        assertEquals(redThree, state.myTableMelds.single().single().id)
+        assertEquals(0, state.mortosLeft)
+        assertEquals(15, state.deckSize)
+        assertTrue(viewModel.teamsThatPickedMortoForTest().contains(0))
+        assertTrue(viewModel.mortosForTest().isEmpty())
+    }
+
+    @Test
+    fun `online host applies server morto result for remote seat mirroring team tables`() = runTest {
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 4)
+        )
+        viewModel.startGame()
+        runCurrent()
+        viewModel.mortosForTest().add(listOf(Card(suit = Suit.SPADES, rank = Rank.NINE)))
+
+        val mortoHand = List(11) { index -> cardId(Rank.entries[index % 13], Suit.CLUBS) }
+        val redThree = cardId(Rank.THREE, Suit.HEARTS)
+        val rawJson = JSONObject().apply {
+            put("status", "OK")
+            put("hand", JSONArray(mortoHand))
+            put("redThreeMelds", JSONArray().apply { put(JSONArray(listOf(redThree))) })
+            put("team", 1)
+            put("mortosLeft", 1)
+            put("deckSize", 20)
+        }.toString()
+
+        // Time 1 (assentos 1 e 3) e o adversario do host (assento 0, time 0).
+        viewModel.invokeApplyServerMortoResultForRemoteSeat(1, 1, rawJson)
+
+        val state = viewModel.gameState.value
+        assertEquals(mortoHand.toSet(), viewModel.remoteHandsForTest()[1]?.map { it.id }?.toSet())
+        assertEquals(1, state.opponentTableMelds.size)
+        assertEquals(redThree, state.opponentTableMelds.single().single().id)
+        assertTrue(state.opponentPickedMorto)
+        assertTrue(viewModel.teamsThatPickedMortoForTest().contains(1))
+    }
+
+    @Test
+    fun `online host serves remote client morto request via server RPC without sending SERVE_MORTO itself`() = runTest {
+        // A propria RPC ja publica SERVE_MORTO direto pro assento certo (ver
+        // migration 0026) -- o host so espelha o efeito local, sem mandar
+        // outra mensagem de rede pra isso.
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        runCurrent()
+        viewModel.mortosForTest().add(listOf(Card(suit = Suit.SPADES, rank = Rank.NINE)))
+        viewModel.remoteHandsForTest()[1] = emptyList()
+
+        val mortoHand = List(11) { index -> cardId(Rank.entries[index % 13], Suit.CLUBS) }
+        repo.serverMortoResult = JSONObject().apply {
+            put("status", "OK")
+            put("hand", JSONArray(mortoHand))
+            put("redThreeMelds", JSONArray())
+            put("team", 1)
+            put("mortosLeft", 0)
+            put("deckSize", 20)
+        }.toString()
+
+        repo.emitIncoming(
+            NetworkMessage(
+                "client-1",
+                "REQ_PICK_MORTO",
+                JSONObject().put("v", 1).put("seat", 1).put("indirect", false).toString(),
+                senderSeat = 1
+            )
+        )
+        runCurrent()
+
+        assertEquals(listOf(1), repo.serverMortoCalls)
+        assertEquals(mortoHand.toSet(), viewModel.remoteHandsForTest()[1]?.map { it.id }?.toSet())
+        assertTrue(repo.privatePlayerMessages.none { it.message.type == "SERVE_MORTO" })
+    }
+
+    @Test
     fun `tranca without automatic red threes deals exactly eleven physical cards`() = runTest {
         val viewModel = MatchViewModel(
             networkRepository = FakeLocalNetworkRepository(),
@@ -3627,6 +3743,14 @@ private class FakeLocalNetworkRepository(
         serverDrawCalls += seat
         onResult(serverDrawResult)
     }
+
+    var serverMortoResult: String? = null
+    val serverMortoCalls = mutableListOf<Int>()
+
+    override fun requestServerMorto(seat: Int, indirect: Boolean, onResult: (String?) -> Unit) {
+        serverMortoCalls += seat
+        onResult(serverMortoResult)
+    }
     override val discoveredRooms: StateFlow<List<DiscoveredRoom>> = MutableStateFlow(emptyList())
     override val connectedClientsCount: StateFlow<Int> = MutableStateFlow(0)
     override val incomingMessages: MutableSharedFlow<NetworkMessage> = MutableSharedFlow(replay = 64)
@@ -3786,4 +3910,20 @@ private fun MatchViewModel.invokeTriggerWinFlow(hand: List<Card>) {
     val method = this::class.java.getDeclaredMethod("triggerWinFlow", List::class.java)
     method.isAccessible = true
     method.invoke(this, hand)
+}
+
+private fun MatchViewModel.invokeApplyServerMortoResultForOwnSeat(rawJson: String?, meldLabel: String) {
+    val method = this::class.java.getDeclaredMethod(
+        "applyServerMortoResultForOwnSeat", String::class.java, String::class.java
+    )
+    method.isAccessible = true
+    method.invoke(this, rawJson, meldLabel)
+}
+
+private fun MatchViewModel.invokeApplyServerMortoResultForRemoteSeat(requestingSeat: Int, team: Int, rawJson: String?) {
+    val method = this::class.java.getDeclaredMethod(
+        "applyServerMortoResultForRemoteSeat", Int::class.java, Int::class.java, String::class.java
+    )
+    method.isAccessible = true
+    method.invoke(this, requestingSeat, team, rawJson)
 }
