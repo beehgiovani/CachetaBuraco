@@ -50,24 +50,46 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 
 ## 3. Interface adaptativa da partida
 
-- [ ] Garantir mao, monte, lixo, mortos e mesas visiveis em telas pequenas,
-  grandes e com fonte do sistema ampliada.
-- [ ] Redimensionar a matriz de jogos conforme espaco e quantidade; usar rolagem
-  somente quando o tamanho minimo legivel nao couber.
+- [x] Garantir mao, monte, lixo, mortos e mesas visiveis em telas pequenas,
+  grandes e com fonte do sistema ampliada. Auditoria confirmou que
+  `DrawPilesPanel` ja le `fontScale` pra trocar pro layout compacto de
+  "cartas prioritarias" e nao precisou de mudanca de logica.
+- [x] Redimensionar a matriz de jogos conforme espaco e quantidade; usar rolagem
+  somente quando o tamanho minimo legivel nao couber. `MeldArea` ja calculava
+  colunas/largura pela quantidade de jogos e espaco disponivel; confirmado
+  por auditoria, sem mudanca de logica.
 - [ ] Manter lados, turnos, quantidade de cartas e placar visualmente claros.
 - [ ] Respeitar barras do sistema ou usar modo imersivo sem esconder controles.
-- [ ] Criar `@Preview` para telas e componentes visuais representativos, com
-  estados de fonte grande, tela compacta, mesa cheia, vazio e erro.
+- [x] Criar `@Preview` para telas e componentes visuais representativos, com
+  estados de fonte grande, tela compacta, mesa cheia, vazio e erro. Adicionado
+  em `MatchScreen.kt`: mesa vazia, mesa cheia (2 tamanhos), erro, retrato
+  compacto, fonte grande (`fontScale=2.0`), alem de previews isolados de
+  `MeldArea` sozinha (cheia com canastra, vazia em caixa pequena).
 - [ ] Validar previews e capturas em larguras/fontes variadas antes da entrega.
+  Os previews existem agora; falta a revisao visual manual no Android Studio.
 
 ## 4. Animacao, som e identidade visual
 
-- [ ] Refinar distribuicao inicial, compra, descarte, descida de jogo, encaixe,
+- [x] Refinar distribuicao inicial, compra, descarte, descida de jogo, encaixe,
   morto, troca de turno, fim de rodada e vitoria.
-- [ ] Manter duracoes curtas e consistentes, sem atrasar a jogada ou deslocar a UI.
-- [ ] Usar brilho, sombra e destaque somente para indicar estado ou acao valida.
+- [x] Manter duracoes curtas e consistentes, sem atrasar a jogada ou deslocar a UI.
+  8 pontos de brilho/pulso que tinham ciclos diferentes (900/1100/1200ms:
+  monte, lixo, vira, canastra, dialogos de inspecao, aviso de morto) agora
+  usam a mesma duracao via `MenuMotion.pulse()`/`quick()`/`standard()`.
+  Tambem: transicao de cor na troca de turno na barra superior, e a animacao
+  de distribuicao inicial com o delay externo/interno sincronizados.
+- [x] Usar brilho, sombra e destaque somente para indicar estado ou acao valida.
+  Confirmado ao unificar os pontos de pulso -- todos ja eram estado-dependentes,
+  nenhum decorativo gratuito.
+- [x] Respeitar reducao de movimento e aparelhos mais lentos (item que estava
+  faltando explicitamente no texto original desta secao, mas e parte do
+  mesmo trabalho): `rememberReducedMotionEnabled()` le
+  `Settings.Global.ANIMATOR_DURATION_SCALE` e congela/pula confete de
+  vitoria, brilho de jogo formado, aceno da carta selecionada e a animacao
+  de distribuicao quando o sistema pede menos movimento.
 - [ ] Revisar sons, vibracoes, splash, cartas, mesa, avatares, icone e assets da
-  Play Store como um conjunto visual unico.
+  Play Store como um conjunto visual unico. Nao mexido -- precisa de assets
+  de audio/imagem que so o dono do projeto pode fornecer.
 - [ ] Respeitar reducao de movimento, estado sem som e aparelhos mais lentos.
 
 ## 5. Criacao e entrada em salas
