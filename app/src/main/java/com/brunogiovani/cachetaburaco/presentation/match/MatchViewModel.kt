@@ -197,8 +197,13 @@ class MatchViewModel(
     init {
         // O bot precisa receber GAME_START para reconstruir a própria mão e fase.
         // Um snapshot visual antigo não contém esse estado privado, então partidas
-        // solo sempre recomeçam pelo fluxo completo de distribuição.
-        isRestored = !isMachineMatch() && tryRestoreFromSnapshot()
+        // solo sempre recomeçam pelo fluxo completo de distribuição. Online também
+        // fica de fora: ele já tem um jeito de reconectar de verdade pelo servidor
+        // (REQ_RECONNECT/RECONNECT_STATE), e depois da autoridade do baralho passar
+        // pro servidor, um snapshot local pode nem bater mais com o que o servidor
+        // considera a mesa atual -- "recuperar" com um retrato antigo faria mais
+        // mal do que bem.
+        isRestored = canUseLocalSnapshot() && tryRestoreFromSnapshot()
         viewModelScope.launch {
             networkRepository.incomingMessages.collect { message ->
                 handleNetworkMessage(message)
@@ -214,18 +219,28 @@ class MatchViewModel(
                 }
             }
         }
-        // Snapshot local para recuperar queda/reabertura.
-        // Durante o diálogo de fim de rodada eu não salvo, para não gravar
-        // uma mesa limpa antes da próxima distribuição.
-        viewModelScope.launch {
-            _gameState.collect { state ->
-                if (!state.showRoundEndDialog &&
-                    (state.turnPhase != TurnPhase.WAITING_OPPONENT ||
-                    state.myTableMelds.isNotEmpty())) {
-                    saveGameSnapshot(state)
+        // Snapshot local para recuperar queda/reabertura -- só pra Wi-Fi local, que
+        // é o único transporte sem um jeito melhor de retomar a mesa (ver comentário
+        // acima). Sem isso, "Continuar Partida Salva" no menu principal sempre
+        // reconectava pelo Wi-Fi local mesmo quando a partida salva era contra a
+        // máquina ou online, deixando a mesa visível mas sem nenhuma conexão de
+        // verdade por trás -- o jogo travava. Durante o diálogo de fim de rodada eu
+        // não salvo, para não gravar uma mesa limpa antes da próxima distribuição.
+        if (canUseLocalSnapshot()) {
+            viewModelScope.launch {
+                _gameState.collect { state ->
+                    if (!state.showRoundEndDialog &&
+                        (state.turnPhase != TurnPhase.WAITING_OPPONENT ||
+                        state.myTableMelds.isNotEmpty())) {
+                        saveGameSnapshot(state)
+                    }
                 }
             }
         }
+    }
+
+    private fun canUseLocalSnapshot(): Boolean {
+        return !isMachineMatch() && !networkRepository.isOnlineTransport
     }
 
     // --- Início do jogo ---

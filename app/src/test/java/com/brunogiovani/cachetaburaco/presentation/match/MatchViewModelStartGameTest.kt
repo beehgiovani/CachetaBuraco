@@ -805,6 +805,47 @@ class MatchViewModelStartGameTest {
         assertEquals("Oponente", humanViewModel.gameState.value.opponentLabel)
     }
 
+    @Test
+    fun `local snapshot save and restore is only allowed for wifi local transport`() = runTest {
+        // Bug real: "Continuar Partida Salva" no menu sempre reconectava pelo
+        // transporte Wi-Fi local, nao importa qual transporte a partida salva
+        // realmente usava -- pra bot/online isso deixava a mesa visivel mas sem
+        // nenhuma conexao de verdade por tras (mesa travada). Bot ja tinha essa
+        // exclusao (via isMachineMatch()); faltava a mesma coisa pro online, que
+        // tem um jeito proprio de reconectar (REQ_RECONNECT) e nao deveria nem
+        // gravar um retrato local que pode ficar desatualizado com o baralho
+        // agora vivendo no servidor.
+        fun canUseLocalSnapshot(viewModel: MatchViewModel): Boolean {
+            val method = MatchViewModel::class.java.getDeclaredMethod("canUseLocalSnapshot")
+            method.isAccessible = true
+            return method.invoke(viewModel) as Boolean
+        }
+
+        val wifiViewModel = MatchViewModel(
+            networkRepository = FakeLocalNetworkRepository(),
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        assertTrue(canUseLocalSnapshot(wifiViewModel))
+
+        val botViewModel = MatchViewModel(
+            networkRepository = FakeLocalNetworkRepository(isBotRepository = true),
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        assertFalse(canUseLocalSnapshot(botViewModel))
+
+        val onlineViewModel = MatchViewModel(
+            networkRepository = FakeLocalNetworkRepository(isOnlineTransport = true),
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        assertFalse(canUseLocalSnapshot(onlineViewModel))
+    }
+
     // ─── Matriz de tentativas adulteradas (host local/bot) ──────────────────
     // O lado Supabase ja cobre esses cenarios nas migrations 0012-0019; estes
     // testes provam que o mesmo host-autoridade tambem os recusa no transporte
