@@ -1,5 +1,9 @@
 package com.brunogiovani.cachetaburaco.presentation.profile
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,8 +26,12 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.brunogiovani.cachetaburaco.data.online.GoogleAccountLinker
 import com.brunogiovani.cachetaburaco.data.online.GoogleLinkResult
+import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
 import com.brunogiovani.cachetaburaco.domain.models.EarnedMedal
 import com.brunogiovani.cachetaburaco.domain.models.MedalCatalog
 import com.brunogiovani.cachetaburaco.domain.models.MedalDefinition
@@ -72,7 +81,13 @@ internal sealed interface OnlineProfileUiState {
         val feedback: String? = null,
         val linkingGoogle: Boolean = false,
         val googleLinkFeedback: String? = null,
-        val medals: List<EarnedMedal> = emptyList()
+        val medals: List<EarnedMedal> = emptyList(),
+        val pendingCropUri: Uri? = null,
+        val uploadingPhoto: Boolean = false,
+        val photoFeedback: String? = null,
+        val showDeleteConfirm: Boolean = false,
+        val deletingAccount: Boolean = false,
+        val deleteFeedback: String? = null
     ) : OnlineProfileUiState
 
     data class Error(val message: String) : OnlineProfileUiState
@@ -83,12 +98,20 @@ fun OnlineProfileScreen(
     playerName: String,
     repository: OnlineProfileRepository,
     googleLinker: GoogleAccountLinker = remember { GoogleAccountLinker() },
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onAccountDeleted: () -> Unit = {}
 ) {
     var state by remember { mutableStateOf<OnlineProfileUiState>(OnlineProfileUiState.Loading) }
     var reloadRequest by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        val ready = state as? OnlineProfileUiState.Ready ?: return@rememberLauncherForActivityResult
+        if (uri != null) state = ready.copy(pendingCropUri = uri)
+    }
 
     LaunchedEffect(playerName, reloadRequest) {
         state = OnlineProfileUiState.Loading
@@ -143,8 +166,106 @@ fun OnlineProfileScreen(
                     googleLinkFeedback = googleLinkFeedbackFor(result)
                 )
             }
+        },
+        onPickPhoto = {
+            photoPickerLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        },
+        onCropCancelled = {
+            val ready = state as? OnlineProfileUiState.Ready ?: return@OnlineProfileContent
+            state = ready.copy(pendingCropUri = null)
+        },
+        onCropConfirmed = { jpegBytes ->
+            val ready = state as? OnlineProfileUiState.Ready ?: return@OnlineProfileContent
+            state = ready.copy(pendingCropUri = null, uploadingPhoto = true, photoFeedback = null)
+            scope.launch {
+                state = runCatching { repository.uploadAvatarPhoto(playerName, jpegBytes) }
+                    .fold(
+                        onSuccess = {
+                            ready.copy(
+                                profile = it,
+                                selectedAvatar = it.avatar,
+                                pendingCropUri = null,
+                                uploadingPhoto = false,
+                                photoFeedback = "Foto atualizada."
+                            )
+                        },
+                        onFailure = {
+                            ready.copy(
+                                pendingCropUri = null,
+                                uploadingPhoto = false,
+                                photoFeedback = "Não foi possível enviar a foto agora."
+                            )
+                        }
+                    )
+            }
+        },
+        onClearPhoto = {
+            val ready = state as? OnlineProfileUiState.Ready ?: return@OnlineProfileContent
+            if (ready.uploadingPhoto) return@OnlineProfileContent
+            state = ready.copy(uploadingPhoto = true, photoFeedback = null)
+            scope.launch {
+                state = runCatching { repository.clearAvatarPhoto(playerName) }
+                    .fold(
+                        onSuccess = {
+                            ready.copy(
+                                profile = it,
+                                selectedAvatar = it.avatar,
+                                uploadingPhoto = false,
+                                photoFeedback = "Foto removida."
+                            )
+                        },
+                        onFailure = {
+                            ready.copy(uploadingPhoto = false, photoFeedback = "Não foi possível remover a foto agora.")
+                        }
+                    )
+            }
+        },
+        onDeleteAccountRequested = {
+            val ready = state as? OnlineProfileUiState.Ready ?: return@OnlineProfileContent
+            state = ready.copy(showDeleteConfirm = true)
+        },
+        onDeleteAccountDismissed = {
+            val ready = state as? OnlineProfileUiState.Ready ?: return@OnlineProfileContent
+            state = ready.copy(showDeleteConfirm = false)
+        },
+        onDeleteAccountConfirmed = {
+            val ready = state as? OnlineProfileUiState.Ready ?: return@OnlineProfileContent
+            state = ready.copy(showDeleteConfirm = false, deletingAccount = true)
+            scope.launch {
+                runCatching { repository.deleteAccount(playerName) }
+                    .onSuccess {
+                        FakeAuthRepository.logout()
+                        onAccountDeleted()
+                    }
+                    .onFailure {
+                        val current = state as? OnlineProfileUiState.Ready ?: return@launch
+                        state = current.copy(
+                            deletingAccount = false,
+                            deleteFeedback = "Não foi possível excluir sua conta agora."
+                        )
+                    }
+            }
         }
     )
+}
+
+/** Resumo da conta mostrado no card "Conta": convidado, ou e-mail + data de criacao. */
+internal fun accountInfoLabel(profile: OnlineProfile): String {
+    if (profile.isAnonymous) return "Você está jogando como convidado."
+    val email = profile.email ?: "conta vinculada"
+    val date = formatAccountDate(profile.accountCreatedAt)
+    return if (date != null) "$email · desde $date" else email
+}
+
+private fun formatAccountDate(iso: String?): String? {
+    if (iso == null) return null
+    return runCatching {
+        val instant = java.time.Instant.parse(iso)
+        val zoned = instant.atZone(java.time.ZoneId.systemDefault())
+        java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy").format(zoned)
+    }.getOrNull()
 }
 
 /** Mensagem exibida apos tentar vincular a conta Google, ou null pra ficar em silencio (cancelamento). */
@@ -166,7 +287,14 @@ internal fun OnlineProfileContent(
     onRetry: () -> Unit,
     onAvatarSelected: (OnlineAvatar) -> Unit,
     onSave: () -> Unit,
-    onLinkGoogle: () -> Unit = {}
+    onLinkGoogle: () -> Unit = {},
+    onPickPhoto: () -> Unit = {},
+    onCropConfirmed: (ByteArray) -> Unit = {},
+    onCropCancelled: () -> Unit = {},
+    onClearPhoto: () -> Unit = {},
+    onDeleteAccountRequested: () -> Unit = {},
+    onDeleteAccountConfirmed: () -> Unit = {},
+    onDeleteAccountDismissed: () -> Unit = {}
 ) {
     MenuBackdrop {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -211,7 +339,8 @@ internal fun OnlineProfileContent(
                                     OnlineAvatarView(
                                         avatar = state.selectedAvatar,
                                         playerName = state.profile.playerName,
-                                        size = if (compact) 72.dp else 96.dp
+                                        size = if (compact) 72.dp else 96.dp,
+                                        photoUrl = state.profile.avatarPhotoUrl
                                     )
                                     Text(
                                         state.profile.playerName,
@@ -227,6 +356,52 @@ internal fun OnlineProfileContent(
                                     )
                                 }
                             }
+                        }
+
+                        MenuEntrance(delayMillis = 20) {
+                            MenuSectionCard(title = "Foto de perfil") {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp)
+                                ) {
+                                    Text(
+                                        "Use uma foto real, se quiser. Fica visível pra outros jogadores no ranking e nas salas.",
+                                        color = MenuColors.OnDarkMuted,
+                                        textAlign = TextAlign.Center,
+                                        fontSize = if (compact) 11.sp else 13.sp
+                                    )
+                                    MenuFilledButton(
+                                        text = if (state.profile.avatarPhotoUrl != null) "Trocar foto" else "Escolher foto",
+                                        onClick = onPickPhoto,
+                                        enabled = !state.uploadingPhoto,
+                                        loading = state.uploadingPhoto,
+                                        containerColor = MenuColors.TableGreenLight
+                                    )
+                                    if (state.profile.avatarPhotoUrl != null) {
+                                        MenuFilledButton(
+                                            text = "Remover foto",
+                                            onClick = onClearPhoto,
+                                            enabled = !state.uploadingPhoto,
+                                            containerColor = MenuColors.OnDarkMuted.copy(alpha = 0.24f)
+                                        )
+                                    }
+                                    state.photoFeedback?.let {
+                                        Text(
+                                            it,
+                                            color = if (it.startsWith("Não")) MenuColors.Gold else MenuColors.TableGreenLight,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        state.pendingCropUri?.let { uri ->
+                            AvatarPhotoCropDialog(
+                                imageUri = uri,
+                                onConfirm = onCropConfirmed,
+                                onDismiss = onCropCancelled
+                            )
                         }
 
                         MenuEntrance(delayMillis = 40) {
@@ -306,29 +481,74 @@ internal fun OnlineProfileContent(
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Text(
-                                        "Vincule sua conta Google para não perder o perfil e o ranking se trocar de aparelho.",
-                                        color = MenuColors.OnDarkMuted,
+                                        accountInfoLabel(state.profile),
+                                        color = MenuColors.OnDark,
                                         textAlign = TextAlign.Center,
-                                        fontSize = if (compact) 11.sp else 13.sp
+                                        fontSize = if (compact) 12.sp else 14.sp
                                     )
-                                    MenuFilledButton(
-                                        text = "Vincular conta Google",
-                                        onClick = onLinkGoogle,
-                                        enabled = !state.linkingGoogle,
-                                        loading = state.linkingGoogle
-                                    )
-                                    state.googleLinkFeedback?.let {
+                                    if (state.profile.isAnonymous) {
                                         Text(
-                                            it,
-                                            color = if (it.startsWith("Conta Google vinculada")) MenuColors.TableGreenLight else MenuColors.Gold,
+                                            "Vincule sua conta Google para não perder o perfil e o ranking se trocar de aparelho.",
+                                            color = MenuColors.OnDarkMuted,
                                             textAlign = TextAlign.Center,
-                                            fontSize = 12.sp
+                                            fontSize = if (compact) 11.sp else 13.sp
                                         )
+                                        MenuFilledButton(
+                                            text = "Vincular conta Google",
+                                            onClick = onLinkGoogle,
+                                            enabled = !state.linkingGoogle,
+                                            loading = state.linkingGoogle
+                                        )
+                                        state.googleLinkFeedback?.let {
+                                            Text(
+                                                it,
+                                                color = if (it.startsWith("Conta Google vinculada")) MenuColors.TableGreenLight else MenuColors.Gold,
+                                                textAlign = TextAlign.Center,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(4.dp))
+                                    MenuFilledButton(
+                                        text = "Excluir conta",
+                                        onClick = onDeleteAccountRequested,
+                                        enabled = !state.deletingAccount,
+                                        loading = state.deletingAccount,
+                                        containerColor = MenuColors.RedDeep
+                                    )
+                                    state.deleteFeedback?.let {
+                                        Text(it, color = MenuColors.Gold, textAlign = TextAlign.Center, fontSize = 12.sp)
                                     }
                                 }
                             }
                         }
                     }
+                }
+
+                if (state is OnlineProfileUiState.Ready && state.showDeleteConfirm) {
+                    AlertDialog(
+                        onDismissRequest = onDeleteAccountDismissed,
+                        containerColor = MenuColors.Ink,
+                        shape = MenuShapes.Card,
+                        title = { Text("Excluir conta?", color = Color.White, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Text(
+                                "Isso apaga seu perfil, estatísticas, ranking e medalhas permanentemente. Essa ação não pode ser desfeita.",
+                                color = Color.White.copy(alpha = 0.72f)
+                            )
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = onDeleteAccountConfirmed,
+                                colors = ButtonDefaults.buttonColors(containerColor = MenuColors.RedDeep)
+                            ) { Text("Excluir") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = onDeleteAccountDismissed) {
+                                Text("Cancelar", color = Color.White.copy(alpha = 0.65f))
+                            }
+                        }
+                    )
                 }
             }
         }

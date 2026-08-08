@@ -10,13 +10,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import com.brunogiovani.cachetaburaco.domain.models.OnlineAvatar
 
 @Composable
@@ -24,8 +27,22 @@ fun OnlineAvatarView(
     avatar: OnlineAvatar,
     playerName: String,
     size: Dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    photoUrl: String? = null
 ) {
+    if (photoUrl != null) {
+        AsyncImage(
+            model = photoUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier
+                .size(size)
+                .clip(CircleShape)
+                .border(1.dp, Color.White.copy(alpha = 0.32f), CircleShape)
+        )
+        return
+    }
+
     val colors = avatarColors(avatar)
     val textSize = when {
         size <= 34.dp -> 14.sp
@@ -53,13 +70,15 @@ fun OnlineAvatarView(
     avatarId: String?,
     playerName: String,
     size: Dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    photoUrl: String? = null
 ) {
     OnlineAvatarView(
         avatar = OnlineAvatar.fromStorageId(avatarId),
         playerName = playerName,
         size = size,
-        modifier = modifier
+        modifier = modifier,
+        photoUrl = photoUrl
     )
 }
 

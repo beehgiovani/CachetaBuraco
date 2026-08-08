@@ -235,13 +235,18 @@ class MainActivity : ComponentActivity() {
                         AppState.ONLINE_PROFILE -> OnlineProfileScreen(
                             playerName = FakeAuthRepository.getCurrentPlayer()?.name ?: "Jogador",
                             repository = onlineProfileRepository,
-                            onBack = { currentScreen = AppState.MAIN_MENU }
+                            onBack = { currentScreen = AppState.MAIN_MENU },
+                            onAccountDeleted = {
+                                onlineRepository.clearAuthenticatedSession()
+                                currentScreen = AppState.LOGIN
+                            }
                         )
 
                         AppState.ONLINE_RANKING -> OnlineRankingScreen(
                             playerName = FakeAuthRepository.getCurrentPlayer()?.name ?: "Jogador",
                             repository = onlineRankingRepository,
-                            onBack = { currentScreen = AppState.MAIN_MENU }
+                            onBack = { currentScreen = AppState.MAIN_MENU },
+                            profileRepository = onlineProfileRepository
                         )
 
                         AppState.MATCH -> MatchScreen(

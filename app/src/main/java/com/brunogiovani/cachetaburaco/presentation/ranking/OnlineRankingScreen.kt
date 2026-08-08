@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -35,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import com.brunogiovani.cachetaburaco.domain.models.OnlineRankingEntry
 import com.brunogiovani.cachetaburaco.domain.models.OnlineRankingPeriod
 import com.brunogiovani.cachetaburaco.domain.models.OnlineRankingSnapshot
+import com.brunogiovani.cachetaburaco.domain.repositories.OnlineProfileRepository
 import com.brunogiovani.cachetaburaco.domain.repositories.OnlineRankingRepository
 import com.brunogiovani.cachetaburaco.presentation.components.AdPlacement
 import com.brunogiovani.cachetaburaco.presentation.components.MenuBackdrop
@@ -59,6 +62,7 @@ import com.brunogiovani.cachetaburaco.presentation.components.MenuStatusMessage
 import com.brunogiovani.cachetaburaco.presentation.components.MenuTopBar
 import com.brunogiovani.cachetaburaco.presentation.components.OnlineAvatarView
 import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
+import kotlinx.coroutines.launch
 
 internal sealed interface OnlineRankingUiState {
     data object Loading : OnlineRankingUiState
@@ -70,11 +74,13 @@ internal sealed interface OnlineRankingUiState {
 fun OnlineRankingScreen(
     playerName: String,
     repository: OnlineRankingRepository,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    profileRepository: OnlineProfileRepository? = null
 ) {
     var reloadRequest by remember { mutableIntStateOf(0) }
     var selectedPeriod by remember { mutableStateOf(OnlineRankingPeriod.OVERALL) }
     var state by remember { mutableStateOf<OnlineRankingUiState>(OnlineRankingUiState.Loading) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(playerName, selectedPeriod, reloadRequest) {
         state = OnlineRankingUiState.Loading
@@ -94,7 +100,12 @@ fun OnlineRankingScreen(
         selectedPeriod = selectedPeriod,
         onPeriodSelected = { selectedPeriod = it },
         onBack = onBack,
-        onRetry = { reloadRequest++ }
+        onRetry = { reloadRequest++ },
+        onReportPhoto = { targetProfileId ->
+            profileRepository?.let {
+                scope.launch { runCatching { it.reportAvatarPhoto(targetProfileId) } }
+            }
+        }
     )
 }
 
@@ -104,7 +115,8 @@ internal fun OnlineRankingContent(
     selectedPeriod: OnlineRankingPeriod,
     onPeriodSelected: (OnlineRankingPeriod) -> Unit,
     onBack: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onReportPhoto: (String) -> Unit = {}
 ) {
     MenuBackdrop {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -142,6 +154,7 @@ internal fun OnlineRankingContent(
                         RankingReady(
                             snapshot = state.snapshot,
                             compact = compact,
+                            onReportPhoto = onReportPhoto,
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -198,6 +211,7 @@ internal fun rankingEmptyMessage(period: OnlineRankingPeriod): String = when (pe
 private fun RankingReady(
     snapshot: OnlineRankingSnapshot,
     compact: Boolean,
+    onReportPhoto: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val localPlayer = snapshot.localPlayer
@@ -238,7 +252,8 @@ private fun RankingReady(
                 RankingEntryRow(
                     entry = entry,
                     isCurrentPlayer = entry.playerId == snapshot.localPlayerId,
-                    compact = compact
+                    compact = compact,
+                    onReportPhoto = onReportPhoto
                 )
             }
         }
@@ -282,7 +297,8 @@ private fun CurrentPlayerSummary(entry: OnlineRankingEntry?, modifier: Modifier 
             OnlineAvatarView(
                 avatarId = entry?.avatarUrl,
                 playerName = entry?.playerName ?: "Jogador",
-                size = 56.dp
+                size = 56.dp,
+                photoUrl = entry?.avatarPhotoUrl
             )
             if (entry == null) {
                 Text(
@@ -342,7 +358,8 @@ private fun CompactCurrentPlayerSummary(entry: OnlineRankingEntry) {
 private fun RankingEntryRow(
     entry: OnlineRankingEntry,
     isCurrentPlayer: Boolean,
-    compact: Boolean
+    compact: Boolean,
+    onReportPhoto: (String) -> Unit
 ) {
     val medalColor = when (entry.position) {
         1 -> MenuColors.Gold
@@ -384,8 +401,21 @@ private fun RankingEntryRow(
             OnlineAvatarView(
                 avatarId = entry.avatarUrl,
                 playerName = entry.playerName,
-                size = if (compact) 32.dp else 38.dp
+                size = if (compact) 32.dp else 38.dp,
+                photoUrl = entry.avatarPhotoUrl
             )
+            if (!isCurrentPlayer && entry.avatarPhotoUrl != null) {
+                var reported by remember(entry.playerId) { mutableStateOf(false) }
+                Text(
+                    if (reported) "✓" else "🚩",
+                    fontSize = 13.sp,
+                    color = if (reported) MenuColors.TableGreenLight else MenuColors.OnDarkFaint,
+                    modifier = Modifier.clickable(enabled = !reported) {
+                        reported = true
+                        onReportPhoto(entry.playerId)
+                    }
+                )
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     entry.playerName,

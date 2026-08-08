@@ -19,7 +19,8 @@ data class OnlineRankingEntry(
     val bestStreak: Int,
     val currentStreak: Int,
     val xp: Int,
-    val lastMatchAt: String?
+    val lastMatchAt: String?,
+    val avatarPhotoUrl: String? = null
 ) {
     val winRatePercent: Int
         get() = if (totalMatches <= 0) 0 else ((totalWins * 100.0) / totalMatches).toInt()

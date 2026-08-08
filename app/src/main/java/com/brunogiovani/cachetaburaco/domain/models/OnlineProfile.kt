@@ -18,5 +18,9 @@ enum class OnlineAvatar(val storageId: String) {
 data class OnlineProfile(
     val playerId: String,
     val playerName: String,
-    val avatar: OnlineAvatar
+    val avatar: OnlineAvatar,
+    val avatarPhotoUrl: String? = null,
+    val isAnonymous: Boolean = true,
+    val email: String? = null,
+    val accountCreatedAt: String? = null
 )

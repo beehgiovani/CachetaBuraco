@@ -6,10 +6,13 @@ import com.brunogiovani.cachetaburaco.domain.models.OnlineRankingSnapshot
 import com.brunogiovani.cachetaburaco.domain.repositories.OnlineRankingRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.storage.storage
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+
+private const val AVATAR_PHOTO_BUCKET = "avatar-photos"
 
 /** Le o placar global sem participar do transporte de uma sala. */
 class SupabaseOnlineRankingRepository(
@@ -27,13 +30,16 @@ class SupabaseOnlineRankingRepository(
         val entries = client.postgrest.rpc(
             function = request.function,
             parameters = request.parameters
-        ).decodeList<OnlineRankingRow>().map(OnlineRankingRow::toDomain)
+        ).decodeList<OnlineRankingRow>().map { it.toDomain(::avatarPhotoUrl) }
         return OnlineRankingSnapshot(
             localPlayerId = localPlayerId,
             entries = entries,
             period = period
         )
     }
+
+    private fun avatarPhotoUrl(path: String): String =
+        client.storage.from(AVATAR_PHOTO_BUCKET).publicUrl(path)
 }
 
 internal data class RankingRpcRequest(
@@ -66,6 +72,7 @@ private data class OnlineRankingRow(
     @SerialName("profile_id") val profileId: String,
     val nickname: String,
     @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("avatar_photo_path") val avatarPhotoPath: String? = null,
     @SerialName("total_wins") val totalWins: Int,
     @SerialName("total_matches") val totalMatches: Int,
     @SerialName("cacheta_wins") val cachetaWins: Int,
@@ -77,7 +84,7 @@ private data class OnlineRankingRow(
     @SerialName("last_match_at") val lastMatchAt: String? = null
 )
 
-private fun OnlineRankingRow.toDomain(): OnlineRankingEntry {
+private fun OnlineRankingRow.toDomain(buildPhotoUrl: (String) -> String): OnlineRankingEntry {
     return OnlineRankingEntry(
         position = rankPosition.coerceIn(1, Int.MAX_VALUE.toLong()).toInt(),
         playerId = profileId,
@@ -91,6 +98,7 @@ private fun OnlineRankingRow.toDomain(): OnlineRankingEntry {
         bestStreak = bestStreak,
         currentStreak = currentStreak,
         xp = xp,
-        lastMatchAt = lastMatchAt
+        lastMatchAt = lastMatchAt,
+        avatarPhotoUrl = avatarPhotoPath?.let(buildPhotoUrl)
     )
 }
