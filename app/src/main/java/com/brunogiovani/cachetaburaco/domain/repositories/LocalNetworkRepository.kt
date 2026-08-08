@@ -1,6 +1,7 @@
 package com.brunogiovani.cachetaburaco.domain.repositories
 
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
@@ -64,6 +65,15 @@ interface LocalNetworkRepository {
     // Buffer pequeno para segurar rajadas no mesmo turno, como DISCARD + REQ_PICK_MORTO.
     val incomingMessages: SharedFlow<NetworkMessage>
     val connectionStatus: StateFlow<ConnectionStatus>
+
+    // So o online popula isso de verdade: o servidor recusou uma acao PROPRIA
+    // por regra (RPC/trigger de validacao estrutural), nao por queda de rede --
+    // sinal deliberadamente separado de connectionStatus pra "sua jogada foi
+    // recusada" nunca virar "a conexao caiu" (achado real: antes das duas
+    // coisas ca(i)am no mesmo catch generico e a UI mostrava o dialogo de
+    // reconexao pra uma jogada simplesmente invalida). Wi-Fi local e maquina
+    // nunca emitem aqui -- ficam com este padrao vazio.
+    val actionRejections: SharedFlow<String> get() = MutableSharedFlow()
 
     fun startHosting(playerName: String, port: Int = 9090, config: MatchConfig? = null)
     fun stopHosting()

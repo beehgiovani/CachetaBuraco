@@ -6,6 +6,7 @@ import com.brunogiovani.cachetaburaco.data.online.OnlineFailureCategory
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomDataSource
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomSession
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomSummary
+import com.brunogiovani.cachetaburaco.data.online.OnlineRuleRejectedException
 import com.brunogiovani.cachetaburaco.data.online.SupabaseOnlineRoomDataSource
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus
@@ -65,6 +66,9 @@ class OnlineNetworkRepository(
 
     private val _connectionStatus = MutableStateFlow(ConnectionStatus.IDLE)
     override val connectionStatus: StateFlow<ConnectionStatus> = _connectionStatus
+
+    private val _actionRejections = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    override val actionRejections: SharedFlow<String> = _actionRejections
 
     private val roomMutex = Mutex()
     private val eventPublishMutex = Mutex()
@@ -498,6 +502,13 @@ class OnlineNetworkRepository(
                 completedMatch?.let { recordCompletedMatch(session, it) }
             } catch (error: CancellationException) {
                 throw error
+            } catch (error: OnlineRuleRejectedException) {
+                // O servidor recusou por regra (RPC/trigger), nao por queda de
+                // rede -- tentar de novo daria o mesmo erro, e ConnectionStatus
+                // nao deveria mudar. Achado real: antes isso caia no catch
+                // generico abaixo e virava "conexao falhou" pra uma jogada
+                // simplesmente invalida.
+                _actionRejections.tryEmit(error.message ?: "Jogada recusada pelo servidor.")
             } catch (_: Throwable) {
                 reportSessionFailure(session, stopObservers = false, category = OnlineFailureCategory.PUBLISH_FAILED)
             }
@@ -570,20 +581,34 @@ class OnlineNetworkRepository(
         }
         val preparedMessage = prepareOutgoingMessage(message)
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            var ruleRejectedMessage: String? = null
             val delivered = eventPublishMutex.withLock {
                 var confirmed = false
                 for (attempt in 0 until CONFIRMED_SEND_ATTEMPTS) {
-                    confirmed = runCatching {
-                        dataSource.publishEvent(session, preparedMessage, recipientSeat)
-                    }.getOrDefault(false)
-                    if (confirmed) break
+                    try {
+                        confirmed = dataSource.publishEvent(session, preparedMessage, recipientSeat)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: OnlineRuleRejectedException) {
+                        // Regra recusada e permanente: tentar de novo daria o
+                        // mesmo erro, entao paro na primeira tentativa em vez
+                        // de gastar CONFIRMED_SEND_ATTEMPTS tentativas inuteis.
+                        ruleRejectedMessage = error.message ?: "Jogada recusada pelo servidor."
+                        confirmed = false
+                    } catch (_: Throwable) {
+                        confirmed = false
+                    }
+                    if (confirmed || ruleRejectedMessage != null) break
                     if (attempt + 1 < CONFIRMED_SEND_ATTEMPTS) {
                         delay(CONFIRMED_SEND_RETRY_MS * (attempt + 1L))
                     }
                 }
                 confirmed
             }
-            if (!delivered) reportSessionFailure(session, stopObservers = false, category = OnlineFailureCategory.PUBLISH_FAILED)
+            ruleRejectedMessage?.let { _actionRejections.tryEmit(it) }
+            if (!delivered && ruleRejectedMessage == null) {
+                reportSessionFailure(session, stopObservers = false, category = OnlineFailureCategory.PUBLISH_FAILED)
+            }
             onResult(delivered)
         }
     }

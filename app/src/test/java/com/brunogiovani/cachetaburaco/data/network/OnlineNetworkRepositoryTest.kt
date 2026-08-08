@@ -6,6 +6,7 @@ import com.brunogiovani.cachetaburaco.data.online.OnlineFailureCategory
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomSession
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomStatus
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomSummary
+import com.brunogiovani.cachetaburaco.data.online.OnlineRuleRejectedException
 import com.brunogiovani.cachetaburaco.data.online.OnlineStoredEvent
 import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -500,6 +502,56 @@ class OnlineNetworkRepositoryTest {
     }
 
     @Test
+    fun `rule rejection on publish does not change connection status and reports action rejection instead`() = runTest {
+        // Achado real: antes disso, uma jogada recusada pelo banco (RPC/trigger
+        // de validacao estrutural, ex.: CARD_NOT_IN_HAND) caia no mesmo catch
+        // generico de falha de rede e virava ConnectionStatus.ERROR -- a UI
+        // mostrava "conexao falhou" pra uma jogada simplesmente invalida.
+        val dataSource = FakeOnlineRoomDataSource()
+        val repository = repository(dataSource)
+        repository.startHosting("Host", config = MatchConfig())
+        runCurrent()
+        dataSource.ruleRejectionOnPublish = "CARD_NOT_IN_HAND"
+        val rejections = mutableListOf<String>()
+        val collector = launch { repository.actionRejections.collect { rejections += it } }
+        runCurrent()
+
+        repository.sendMessage(NetworkMessage("host", "DISCARD", "", "rejected-discard"))
+        runCurrent()
+
+        assertEquals(listOf("CARD_NOT_IN_HAND"), rejections)
+        assertEquals(ConnectionStatus.ROOM_READY, repository.connectionStatus.value)
+        assertTrue(dataSource.reportedFailures.isEmpty())
+        collector.cancel()
+    }
+
+    @Test
+    fun `rule rejection on confirmed publish stops after first attempt without retrying`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource()
+        val repository = repository(dataSource)
+        repository.startHosting("Host", config = MatchConfig())
+        runCurrent()
+        dataSource.ruleRejectionOnPublish = "DISCARD_TOP_MISMATCH"
+        val rejections = mutableListOf<String>()
+        val collector = launch { repository.actionRejections.collect { rejections += it } }
+        runCurrent()
+
+        var confirmedResult: Boolean? = null
+        repository.sendMessageConfirmed(NetworkMessage("host", "DISCARD", "", "rejected-confirmed")) {
+            confirmedResult = it
+        }
+        runCurrent()
+
+        assertEquals(false, confirmedResult)
+        assertEquals(listOf("DISCARD_TOP_MISMATCH"), rejections)
+        assertEquals(ConnectionStatus.ROOM_READY, repository.connectionStatus.value)
+        assertTrue(dataSource.reportedFailures.isEmpty())
+        // So uma tentativa: regra recusada e permanente, tentar de novo daria o mesmo erro.
+        assertEquals(1, dataSource.publishAttempts.count { it.message.messageId == "rejected-confirmed" })
+        collector.cancel()
+    }
+
+    @Test
     fun `realtime stream failure changes active session status to error`() = runTest {
         val dataSource = FakeOnlineRoomDataSource().apply { failEventStream = true }
         val repository = repository(dataSource)
@@ -732,6 +784,7 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
     var failPublish: Boolean = false
     var failEventStream: Boolean = false
     var publishFailuresRemaining: Int = 0
+    var ruleRejectionOnPublish: String? = null
     var loseFirstPublishResponse: Boolean = false
     var presenceTouches: Int = 0
     var resultFailuresRemaining: Int = 0
@@ -809,6 +862,7 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
         delay(publishDelayMsByMessageId[message.messageId] ?: 0L)
         val event = PublishedEvent(session, message, recipientSeat)
         publishAttempts += event
+        ruleRejectionOnPublish?.let { throw OnlineRuleRejectedException(it) }
         if (failPublish) error("publish failed")
         if (publishFailuresRemaining > 0) {
             publishFailuresRemaining--

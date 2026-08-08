@@ -16,6 +16,15 @@ enum class OnlineRoomStatus {
 // dentro de um campo de telemetria "livre". Ver migration
 // 0024_client_failure_telemetry.sql: o banco também rejeita qualquer valor
 // fora desta lista.
+/**
+ * O servidor recusou uma acao PROPRIA por regra (RPC/trigger de validacao
+ * estrutural, sempre `errcode = 'P0001'` nas migrations 0013+), nao por
+ * queda de rede. `SupabaseOnlineRoomDataSource` traduz `PostgrestRestException`
+ * pra isto exatamente pra `OnlineNetworkRepository` nao precisar depender do
+ * supabase-kt so pra distinguir os dois casos.
+ */
+class OnlineRuleRejectedException(message: String) : Exception(message)
+
 enum class OnlineFailureCategory(val wireValue: String) {
     SESSION_ERROR("ONLINE_SESSION_ERROR"),
     HEARTBEAT_FAILED("ONLINE_HEARTBEAT_FAILED"),

@@ -209,6 +209,17 @@ class MatchViewModel(
                 handleNetworkMessage(message)
             }
         }
+        // So o online emite aqui de verdade (ver LocalNetworkRepository):
+        // servidor recusou uma acao PROPRIA por regra, nao por queda de rede.
+        // Sinal deliberadamente separado de connectionStatus, senao uma
+        // jogada invalida acabava mostrando "conexao falhou" (achado real).
+        viewModelScope.launch {
+            networkRepository.actionRejections.collect {
+                _gameState.value = _gameState.value.copy(
+                    feedbackMessage = "Jogada não aceita pelo servidor. Sincronize a partida."
+                )
+            }
+        }
         if (!isHost && networkRepository.requiresClientReadyHandshake) {
             viewModelScope.launch {
                 while (localSeat < 0) {

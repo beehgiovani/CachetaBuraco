@@ -3,6 +3,7 @@ package com.brunogiovani.cachetaburaco.data.online
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
 import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order
@@ -125,16 +126,27 @@ class SupabaseOnlineRoomDataSource(
         recipientSeat: Int?
     ): Boolean {
         val payload = Json.parseToJsonElement(OnlineEventCodec.encode(message)).jsonObject
-        return client.postgrest.rpc(
-            function = "append_match_event",
-            parameters = buildJsonObject {
-                put("p_room_id", session.room.roomId)
-                put("p_message_id", message.messageId)
-                put("p_event_type", message.type)
-                put("p_payload", payload)
-                recipientSeat?.let { put("p_recipient_seat", it) }
+        return try {
+            client.postgrest.rpc(
+                function = "append_match_event",
+                parameters = buildJsonObject {
+                    put("p_room_id", session.room.roomId)
+                    put("p_message_id", message.messageId)
+                    put("p_event_type", message.type)
+                    put("p_payload", payload)
+                    recipientSeat?.let { put("p_recipient_seat", it) }
+                }
+            ).decodeAs<Boolean>()
+        } catch (error: PostgrestRestException) {
+            // P0001 e sempre um `raise exception` nosso (regra recusada pela
+            // validacao estrutural nas RPCs/triggers) -- traduzo pra um tipo
+            // sem depender do supabase-kt, pra distinguir isso de queda de
+            // rede de verdade la em cima, em OnlineNetworkRepository.
+            if (error.code == "P0001") {
+                throw OnlineRuleRejectedException(error.message ?: "Jogada recusada pelo servidor.")
             }
-        ).decodeAs<Boolean>()
+            throw error
+        }
     }
 
     override suspend fun recordCompletedMatch(

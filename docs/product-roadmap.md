@@ -175,8 +175,20 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
   `OnlineNetworkRepository.kt` e `data/online/*`: toda falha (rede, rejeicao
   do servidor, payload invalido) vira "nao entregue"/`ConnectionStatus.ERROR`,
   nunca sucesso silencioso. A regra em si e validada nas RPCs (`0014`-`0019`).
-  Melhoria possivel, nao bloqueante: distinguir rejeicao de regra (mostrar
-  "jogada invalida") de falha de rede (mostrar "sessao caiu") na UI.
+  Melhoria antes marcada como "possivel, nao bloqueante" -- feita: `publish()`
+  e `publishConfirmed()` capturavam qualquer excecao no mesmo catch generico,
+  entao uma jogada recusada pela validacao estrutural do servidor (RPC/trigger,
+  ex.: `CARD_NOT_IN_HAND`) virava `ConnectionStatus.ERROR` identico a uma
+  queda de rede de verdade -- isso ficou mais visivel depois do item abaixo
+  (antes o erro era so ignorado; agora abria o dialogo de reconexao pra uma
+  jogada simplesmente invalida). `publishConfirmed()` tambem tentava de novo
+  ate `CONFIRMED_SEND_ATTEMPTS` vezes uma jogada que ia falhar identico todas
+  as vezes. `SupabaseOnlineRoomDataSource` agora traduz
+  `PostgrestRestException` com codigo `P0001` (sempre um `raise exception`
+  nosso) pra um tipo proprio (`OnlineRuleRejectedException`, sem depender do
+  supabase-kt em `OnlineNetworkRepository`); um canal novo (`actionRejections`)
+  leva isso ate o `MatchViewModel` sem tocar em `connectionStatus`, e o retry
+  para na primeira tentativa quando a causa e regra, nao rede.
 - [x] Corrigir gap real encontrado nesta auditoria: `ConnectionStatus.ERROR`
   (falha de registro NSD/socket no Wi-Fi local, falha de sessao/heartbeat/
   publicacao no online) nao tinha nenhum tratamento em `MatchScreen.kt` --
