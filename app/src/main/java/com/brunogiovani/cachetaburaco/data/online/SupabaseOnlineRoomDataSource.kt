@@ -172,6 +172,16 @@ class SupabaseOnlineRoomDataSource(
         ).decodeAs<JsonObject>().toString()
     }
 
+    override suspend fun drawDeckCard(session: OnlineRoomSession, seat: Int): String {
+        return client.postgrest.rpc(
+            function = "online_draw_deck_card",
+            parameters = buildJsonObject {
+                put("p_room_id", session.room.roomId)
+                put("p_seat", seat)
+            }
+        ).decodeAs<JsonObject>().toString()
+    }
+
     override suspend fun reportFailure(category: OnlineFailureCategory, roomId: String?) {
         client.postgrest.rpc(
             function = "report_client_failure",

@@ -321,6 +321,106 @@ class MatchViewModelStartGameTest {
     }
 
     @Test
+    fun `online host requests server draw for its own turn instead of drawing from local deck`() = runTest {
+        // Fase 3a: online_draw_deck_card (0025) decide a compra durante a
+        // rodada -- o host nao chama mais drawTopCard()/prepareDeckForDraw()
+        // pra si mesmo, so aplica o que a RPC devolveu.
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        runCurrent()
+
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(
+            turnPhase = TurnPhase.DRAW,
+            activeSeat = 0
+        )
+        val handSizeBeforeDraw = viewModel.gameState.value.myHand.size
+        val drawnCardId = cardId(Rank.KING, Suit.SPADES)
+        repo.serverDrawResult = JSONObject().apply {
+            put("status", "OK")
+            put("card", drawnCardId)
+            put("deckSize", 9)
+            put("mortosLeft", 1)
+            put("discardPile", JSONArray())
+        }.toString()
+
+        viewModel.drawFromDeck()
+        runCurrent()
+
+        assertEquals(listOf(0), repo.serverDrawCalls)
+        assertEquals(handSizeBeforeDraw + 1, viewModel.gameState.value.myHand.size)
+        assertTrue(viewModel.gameState.value.myHand.any { it.id == drawnCardId })
+        assertEquals(9, viewModel.gameState.value.deckSize)
+        assertEquals(1, viewModel.gameState.value.mortosLeft)
+        assertEquals(TurnPhase.ACTION, viewModel.gameState.value.turnPhase)
+    }
+
+    @Test
+    fun `online host draw exhausted status begins count only round instead of failing silently`() = runTest {
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        runCurrent()
+
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(
+            turnPhase = TurnPhase.DRAW,
+            activeSeat = 0
+        )
+        repo.serverDrawResult = JSONObject().apply { put("status", "EXHAUSTED") }.toString()
+
+        viewModel.drawFromDeck()
+        runCurrent()
+
+        assertTrue(viewModel.gameState.value.feedbackMessage.contains("contagem", ignoreCase = true))
+    }
+
+    @Test
+    fun `online host serves remote client draw via server RPC without sending SERVE_CARD itself`() = runTest {
+        // A propria RPC ja publica SERVE_CARD direto pro assento certo (ver
+        // migration 0025) -- o host so espelha o efeito local, sem mandar
+        // outra mensagem de rede pra isso.
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        runCurrent()
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(activeSeat = 1)
+
+        val drawnCardId = cardId(Rank.TEN, Suit.CLUBS)
+        repo.serverDrawResult = JSONObject().apply {
+            put("status", "OK")
+            put("card", drawnCardId)
+            put("deckSize", 8)
+            put("mortosLeft", 2)
+            put("discardPile", JSONArray())
+        }.toString()
+
+        repo.emitIncoming(
+            NetworkMessage("client-1", "REQ_DRAW_DECK", JSONObject().put("seat", 1).toString(), senderSeat = 1)
+        )
+        runCurrent()
+
+        assertEquals(listOf(1), repo.serverDrawCalls)
+        assertEquals(listOf(drawnCardId), viewModel.remoteHandsForTest()[1]?.map { it.id })
+        assertEquals(8, viewModel.gameState.value.deckSize)
+        assertTrue(repo.privatePlayerMessages.none { it.message.type == "SERVE_CARD" })
+    }
+
+    @Test
     fun `tranca without automatic red threes deals exactly eleven physical cards`() = runTest {
         val viewModel = MatchViewModel(
             networkRepository = FakeLocalNetworkRepository(),
@@ -3518,6 +3618,14 @@ private class FakeLocalNetworkRepository(
     override fun requestServerDeal(onResult: (String?) -> Unit) {
         serverDealCalls++
         onResult(serverDealResult)
+    }
+
+    var serverDrawResult: String? = null
+    val serverDrawCalls = mutableListOf<Int>()
+
+    override fun requestServerDraw(seat: Int, onResult: (String?) -> Unit) {
+        serverDrawCalls += seat
+        onResult(serverDrawResult)
     }
     override val discoveredRooms: StateFlow<List<DiscoveredRoom>> = MutableStateFlow(emptyList())
     override val connectedClientsCount: StateFlow<Int> = MutableStateFlow(0)

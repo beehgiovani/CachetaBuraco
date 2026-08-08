@@ -119,4 +119,12 @@ interface LocalNetworkRepository {
     fun requestServerDeal(onResult: (String?) -> Unit) {
         onResult(null)
     }
+
+    // Mesma ideia do requestServerDeal, mas pra cada compra do monte durante a
+    // rodada (RPC online_draw_deck_card): so o online implementa de verdade.
+    // Wi-Fi local e maquina continuam com o padrao (null) e o ViewModel
+    // segue com o monte local de sempre.
+    fun requestServerDraw(seat: Int, onResult: (String?) -> Unit) {
+        onResult(null)
+    }
 }

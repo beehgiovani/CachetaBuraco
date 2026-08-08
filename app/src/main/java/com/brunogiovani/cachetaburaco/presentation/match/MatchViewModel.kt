@@ -387,7 +387,16 @@ class MatchViewModel(
         }
 
         currentRoundId = json.optString("roundId").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
-        masterDeck = cardsFromJson(json.optJSONArray("deck") ?: JSONArray()).toMutableList()
+        // O servidor nao devolve mais o baralho de verdade aqui (ver comentario
+        // na migration 0025): devolver a ordem inteira do monte pro host
+        // destruiria a propria protecao de online_draw_deck_card, que decide
+        // cada compra da rodada -- o host nem precisaria burlar a RPC, so ler
+        // a ordem completa direto da distribuicao. masterDeck vira so um
+        // marcador de TAMANHO pro online (nunca mais lido por conteudo, ja que
+        // toda compra online passa pela RPC); mortos ainda vem com o conteudo
+        // real porque REQ_PICK_MORTO continua sendo servido localmente por
+        // enquanto (gap conhecido, fica pra uma proxima fase).
+        masterDeck = MutableList(json.optInt("deckSize", 0)) { PLACEHOLDER_DECK_CARD }
 
         val mortosJson = json.optJSONArray("mortos") ?: JSONArray()
         repeat(mortosJson.length()) { index ->
@@ -512,11 +521,19 @@ class MatchViewModel(
         if (state.turnPhase != TurnPhase.DRAW) return
 
         if (isHost) {
+            pendingDiscardDrawCardId = null
+            pendingDiscardDrawRest = emptyList()
+
+            if (networkRepository.isOnlineTransport) {
+                networkRepository.requestServerDraw(localSeat) { rawJson ->
+                    viewModelScope.launch { applyServerDrawResult(rawJson) }
+                }
+                return
+            }
+
             if (masterDeck.isEmpty() && !prepareDeckForDraw(state)) {
                 return
             }
-            pendingDiscardDrawCardId = null
-            pendingDiscardDrawRest = emptyList()
             state = _gameState.value
             val card = drawTopCard() ?: return
             val newHand = sortHandIfEnabled(state.myHand + card)
@@ -542,6 +559,59 @@ class MatchViewModel(
                 feedbackMessage = "Aguardando carta do host..."
             )
             networkRepository.sendMessage(NetworkMessage(playerId, "REQ_DRAW_DECK", buildSeatPayload(localSeat)))
+        }
+    }
+
+    /**
+     * Aplica o resultado de `online_draw_deck_card` na compra do proprio host.
+     * O servidor ja decidiu a carta (e ja reciclou lixo/morto se precisou) e
+     * ja publicou o PUBLIC_STATE atualizado sozinho -- aqui so replico o
+     * mesmo efeito local que drawTopCard() sempre teve.
+     */
+    private fun applyServerDrawResult(rawJson: String?) {
+        val json = rawJson?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (json == null) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Não foi possível comprar do monte. Tente novamente."
+            )
+            return
+        }
+        when (json.optString("status")) {
+            "EXHAUSTED" -> beginCountOnlyRound()
+            "OK" -> {
+                // O host so tem UMA copia de tamanho de mortos (nao o conteudo
+                // real, ver applyServerDeal); quando o servidor consome um
+                // morto pra virar monte novo, espelho o mesmo consumo aqui
+                // senao SERVE_MORTO (ainda local, fase seguinte) podia tentar
+                // servir de novo um morto que o servidor ja gastou.
+                if (json.optBoolean("mortoConsumedForRefill", false) && mortos.isNotEmpty()) {
+                    mortos.removeAt(0)
+                }
+                val card = allCardsMap[json.optString("card")] ?: run {
+                    _gameState.value = _gameState.value.copy(
+                        feedbackMessage = "Carta inválida recebida do servidor."
+                    )
+                    return
+                }
+                val state = _gameState.value
+                val newHand = sortHandIfEnabled(state.myHand + card)
+                val (processedHand, newMelds) = autoProcessThreeReds(newHand, state.myTableMelds)
+                val droppedThree = processedHand.size < newHand.size
+                _gameState.value = state.copy(
+                    myHand = processedHand,
+                    myTableMelds = newMelds,
+                    deckSize = json.optInt("deckSize", state.deckSize),
+                    mortosLeft = json.optInt("mortosLeft", state.mortosLeft),
+                    discardPile = json.optJSONArray("discardPile")?.let { cardsFromJson(it) } ?: state.discardPile,
+                    turnPhase = if (droppedThree) TurnPhase.DRAW else TurnPhase.ACTION,
+                    lastDrawnCardId = card.id,
+                    feedbackMessage = if (droppedThree) "3 Vermelho! Você deve comprar novamente." else "Você comprou do Monte. Baixe ou Descarte."
+                )
+                networkRepository.sendMessage(NetworkMessage(playerId, "DRAW_DECK", card.id))
+            }
+            else -> _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Não foi possível comprar do monte. Tente novamente."
+            )
         }
     }
 
@@ -1959,6 +2029,14 @@ class MatchViewModel(
         if (requestingSeat != _gameState.value.activeSeat) return
         rememberRemoteSeat(requestingSeat, message.senderId)
         if (!deckServedSeatsThisTurn.add(requestingSeat)) return
+
+        if (networkRepository.isOnlineTransport) {
+            networkRepository.requestServerDraw(requestingSeat) { rawJson ->
+                viewModelScope.launch { applyServerDrawResultForRemoteSeat(requestingSeat, rawJson) }
+            }
+            return
+        }
+
         if (masterDeck.isEmpty() && !prepareDeckForDraw(_gameState.value)) {
             deckServedSeatsThisTurn.remove(requestingSeat)
             return
@@ -2002,6 +2080,58 @@ class MatchViewModel(
                     )
                 }
                 publishPublicTableState()
+            }
+        }
+    }
+
+    /**
+     * Aplica o resultado de `online_draw_deck_card` na compra de um cliente
+     * remoto. O servidor ja publicou o SERVE_CARD direto pro assento certo e
+     * o PUBLIC_STATE atualizado sozinho -- aqui o host so espelha o mesmo
+     * efeito local que sempre teve (remoteHandsBySeat/mesa da equipe/tamanho
+     * do monte), sem precisar mandar nenhuma mensagem de rede ele mesmo.
+     */
+    private fun applyServerDrawResultForRemoteSeat(requestingSeat: Int, rawJson: String?) {
+        val json = rawJson?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (json == null) {
+            deckServedSeatsThisTurn.remove(requestingSeat)
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Não foi possível servir a carta. Tente novamente."
+            )
+            return
+        }
+        when (json.optString("status")) {
+            "EXHAUSTED" -> {
+                deckServedSeatsThisTurn.remove(requestingSeat)
+                beginCountOnlyRound()
+            }
+            "OK" -> {
+                if (json.optBoolean("mortoConsumedForRefill", false) && mortos.isNotEmpty()) {
+                    mortos.removeAt(0)
+                }
+                val card = allCardsMap[json.optString("card")]
+                if (card == null) {
+                    deckServedSeatsThisTurn.remove(requestingSeat)
+                    return
+                }
+                if (isTrancaRedThree(card)) {
+                    setRemoteTableForSeat(requestingSeat, remoteTableForSeat(requestingSeat) + listOf(listOf(card)))
+                    deckServedSeatsThisTurn.remove(requestingSeat)
+                } else {
+                    addRemoteCards(requestingSeat, listOf(card))
+                }
+                _gameState.value = _gameState.value.copy(
+                    deckSize = json.optInt("deckSize", _gameState.value.deckSize),
+                    mortosLeft = json.optInt("mortosLeft", _gameState.value.mortosLeft),
+                    discardPile = json.optJSONArray("discardPile")?.let { cardsFromJson(it) } ?: _gameState.value.discardPile,
+                    opponentHandCount = remoteHandCountForSeat(requestingSeat)
+                )
+            }
+            else -> {
+                deckServedSeatsThisTurn.remove(requestingSeat)
+                _gameState.value = _gameState.value.copy(
+                    feedbackMessage = "Não foi possível servir a carta. Tente novamente."
+                )
             }
         }
     }
@@ -3267,6 +3397,10 @@ class MatchViewModel(
     }
 
     companion object {
+        // So pra contar tamanho do monte online (ver applyServerDeal); nunca
+        // representa uma carta real e nunca deve ser lido por conteudo.
+        private val PLACEHOLDER_DECK_CARD = Card(Suit.SPADES, Rank.ACE)
+
         fun hasSavedGame(context: Context): Boolean {
             return context.filesDir.listFiles { _, name -> name.startsWith("game_snapshot_") && name.endsWith(".json") }?.isNotEmpty() == true
         }

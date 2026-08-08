@@ -81,7 +81,7 @@ dependencies {
 
     // Testes instrumentados (rodam em emulador/dispositivo real).
     // O BOM precisa ser declarado de novo aqui porque "androidTestImplementation"
-    // e "implementation" sao configuracoes separadas - a plataforma de uma nao
+    // e "implementation" são configuracoes separadas - a plataforma de uma não
     // se propaga pra outra, entao sem isso o ui-test-junit4 baixaria uma versao
     // solta, fora de sincronia com o compose-bom usado no app.
     androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.01"))

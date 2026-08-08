@@ -337,6 +337,25 @@ class OnlineNetworkRepository(
         }
     }
 
+    override fun requestServerDraw(seat: Int, onResult: (String?) -> Unit) {
+        val session = currentSession
+        if (session == null) {
+            onResult(null)
+            return
+        }
+        scope.launch {
+            val result = try {
+                dataSource.drawDeckCard(session, seat)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                reportFailureTelemetry(OnlineFailureCategory.DRAW_REQUEST_FAILED, session.room.roomId)
+                null
+            }
+            onResult(result)
+        }
+    }
+
     private fun installSession(session: OnlineRoomSession) {
         currentSession = session
         currentRoundId = null

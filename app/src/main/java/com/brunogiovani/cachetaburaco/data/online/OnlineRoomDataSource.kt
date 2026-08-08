@@ -20,7 +20,8 @@ enum class OnlineFailureCategory(val wireValue: String) {
     SESSION_ERROR("ONLINE_SESSION_ERROR"),
     HEARTBEAT_FAILED("ONLINE_HEARTBEAT_FAILED"),
     PUBLISH_FAILED("ONLINE_PUBLISH_FAILED"),
-    DEAL_REQUEST_FAILED("ONLINE_DEAL_REQUEST_FAILED")
+    DEAL_REQUEST_FAILED("ONLINE_DEAL_REQUEST_FAILED"),
+    DRAW_REQUEST_FAILED("ONLINE_DRAW_REQUEST_FAILED")
 }
 
 data class OnlineRoomSummary(
@@ -115,6 +116,16 @@ interface OnlineRoomDataSource {
      * outro NetworkMessage.payload.
      */
     suspend fun startRound(session: OnlineRoomSession): String
+
+    /**
+     * Pede pro servidor decidir a proxima carta do monte (RPC
+     * `online_draw_deck_card`), incluindo reciclar o lixo (Cacheta) ou virar
+     * um morto em monte novo (Buraco/Tranca) quando o monte esgota. So o host
+     * chama -- o assento que esta comprando (proprio ou de um cliente
+     * remoto) vai no parametro `seat`, mas quem decide qual carta sai e o
+     * banco, nunca o processo do host.
+     */
+    suspend fun drawDeckCard(session: OnlineRoomSession, seat: Int): String
 
     /**
      * Registra uma falha do transporte online sem guardar mao, token ou
