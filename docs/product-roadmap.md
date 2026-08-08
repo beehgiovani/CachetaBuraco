@@ -212,11 +212,17 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
   depende de rede/Supabase) e `LargeFontScaleNavigationTest` (nova
   `FontScaleRule` muda `font_scale` do sistema pra 2.0x via shell antes da
   Activity abrir e devolve ao normal depois, mesmo se o teste falhar).
-  Confirmados passando isolados em aparelho fisico e emulador. Achado no
-  processo: rodar as 4 classes de teste juntas expoe uma flakiness de
-  ordem entre elas (`LoginFlowNavigationTest` falha só quando roda depois
-  de outra, mas passa sozinho em ambos os aparelhos) -- nao e regressao
-  desta mudanca, mas fica registrado como investigacao futura.
+  Achado e corrigido no processo: rodar as 4 classes de teste juntas
+  expunha uma flakiness real de ordem (`LoginFlowNavigationTest` falhava
+  so quando rodava depois de outra classe, mas passava sozinho). Causa
+  raiz: `FakeAuthRepository` e um singleton de processo, e classes de
+  teste instrumentado compartilham o mesmo processo do app -- seu
+  `loadSavedProfile()` so definia `currentPlayer` quando havia perfil
+  salvo, nunca zerava quando nao havia, entao um perfil deixado por uma
+  classe anterior sobrevivia mesmo depois do `SharedPreferences` ser
+  limpo pela proxima. Corrigido para sempre refletir o estado persistido
+  (inofensivo num app real, que so chama `init()` uma vez por processo).
+  As 4 classes confirmadas passando juntas em aparelho fisico e emulador.
 - [ ] Rodar unit tests, lint e build debug/release antes de cada marco pratico.
 - [ ] Manter comentarios curtos, naturais e voltados ao motivo da regra.
 - [ ] Remover codigo, scripts e assets legados somente depois de provar que nao ha uso.

@@ -44,6 +44,15 @@ object FakeAuthRepository {
             val player = Player(id = savedId, name = savedName)
             currentPlayer = player
             upsertRankingEntry(player)
+        } else {
+            // Sem isso, currentPlayer (estavel de processo) continuava com o
+            // valor de uma chamada anterior a init() mesmo sem perfil salvo --
+            // inofensivo num app de verdade (so chama init() uma vez por
+            // processo), mas quebrava o isolamento de testes instrumentados
+            // que compartilham processo entre classes (AppStatePreparationRule
+            // limpa o SharedPreferences, mas sem este else o app abria direto
+            // no menu principal usando o perfil que sobrou de um teste anterior).
+            currentPlayer = null
         }
     }
 
