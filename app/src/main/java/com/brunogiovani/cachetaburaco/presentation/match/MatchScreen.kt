@@ -1,6 +1,7 @@
 package com.brunogiovani.cachetaburaco.presentation.match
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -76,7 +77,9 @@ import com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom
 import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
 import com.brunogiovani.cachetaburaco.presentation.components.CardView
 import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
+import com.brunogiovani.cachetaburaco.presentation.components.MenuMotion
 import com.brunogiovani.cachetaburaco.presentation.components.MenuShapes
+import com.brunogiovani.cachetaburaco.presentation.components.rememberReducedMotionEnabled
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -102,6 +105,29 @@ private fun String.isErrorFeedback(): Boolean {
         contains("Selecione", ignoreCase = true) ||
         contains("precisa", ignoreCase = true) ||
         startsWith("❌")
+}
+
+/**
+ * Alpha de "respiracao" dos indicadores de estado (monte, lixo, jogos na mesa,
+ * dialogos de selecao). Antes cada componente tinha seu proprio ciclo de pulso
+ * (900/1100/1200ms) com curva propria - agora todos usam a mesma duracao do
+ * design system (`MenuMotion.pulse`). Com "reduzir movimento" ligado o indicador
+ * fica parado no valor mais aceso: continua sinalizando estado, so sem o loop
+ * infinito, que a essa preferencia poderia virar uma cintilacao constante.
+ */
+@Composable
+private fun rememberPulseAlpha(min: Float, max: Float = 1f, label: String = "pulse"): Float {
+    if (rememberReducedMotionEnabled()) return max
+    val pulse by rememberInfiniteTransition(label = label).animateFloat(
+        initialValue = min,
+        targetValue = max,
+        animationSpec = infiniteRepeatable(
+            animation = MenuMotion.pulse(),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "${label}_alpha"
+    )
+    return pulse
 }
 
 internal fun RoundEndDetails.isLocalMatchWinner(): Boolean {
@@ -139,6 +165,9 @@ fun MatchScreen(
     val state by viewModel.gameState.collectAsState()
     val connectionStatus by networkRepository.connectionStatus.collectAsState()
     val feedback = rememberMatchFeedback()
+    // Acessibilidade: usuario com "reduzir movimento" ligado ve a distribuicao
+    // instantanea em vez de esperar a animacao cosmetica que ninguem vai ver.
+    val reducedMotion = rememberReducedMotionEnabled()
     val roundEndDetails = state.roundEndDetails
     var recordedMatchWinKey by remember { mutableStateOf<String?>(null) }
     var showDealingAnimation by remember { mutableStateOf(false) }
@@ -182,10 +211,10 @@ fun MatchScreen(
         }
     }
 
-    LaunchedEffect(state.dealEventId) {
+    LaunchedEffect(state.dealEventId, reducedMotion) {
         if (state.dealEventId > 0 && state.myHand.isNotEmpty()) {
             showDealingAnimation = true
-            kotlinx.coroutines.delay(1250)
+            kotlinx.coroutines.delay(if (reducedMotion) 0L else 1200)
             showDealingAnimation = false
         }
     }
@@ -315,18 +344,20 @@ fun MatchScreen(
         )
 
         // ── Overlay de Meld feedback ───────────────────────
+        // Entrada/saida usam a mesma duracao curta do design system (antes eram
+        // 140/180ms "a olho", cada tela com seu proprio numero).
         AnimatedVisibility(
             visible = state.lastMeldResult.isNotBlank(),
-            enter = fadeIn(animationSpec = tween(140)) + scaleIn(
+            enter = fadeIn(animationSpec = MenuMotion.quick()) + scaleIn(
                 initialScale = 0.82f,
                 animationSpec = spring(
                     dampingRatio = Spring.DampingRatioMediumBouncy,
                     stiffness = Spring.StiffnessMedium
                 )
             ),
-            exit = fadeOut(animationSpec = tween(180)) + scaleOut(
+            exit = fadeOut(animationSpec = MenuMotion.quick()) + scaleOut(
                 targetScale = 0.92f,
-                animationSpec = tween(180)
+                animationSpec = MenuMotion.quick()
             ),
             modifier = Modifier.align(Alignment.Center)
         ) {
@@ -413,16 +444,24 @@ fun MatchScreen(
 // ── Diálogo de Fim de Rodada ──────────────────────────────────────────────────────────────────────
 @Composable
 private fun FeltAmbientMotion(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "felt_ambient_motion")
-    val drift by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 6800, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "felt_ambient_drift"
-    )
+    // Puramente decorativo (nao indica estado nenhum), entao com "reduzir
+    // movimento" ligado ele so fica parado no meio em vez de varrer a mesa.
+    val reducedMotion = rememberReducedMotionEnabled()
+    val drift = if (reducedMotion) {
+        0.5f
+    } else {
+        val transition = rememberInfiniteTransition(label = "felt_ambient_motion")
+        val value by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 6800, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "felt_ambient_drift"
+        )
+        value
+    }
 
     Canvas(modifier = modifier) {
         val x = size.width * drift
@@ -447,9 +486,13 @@ private fun DealingAnimation(
     cardCount: Int,
     modifier: Modifier = Modifier
 ) {
+    // Some inteira com "reduzir movimento": o LaunchedEffect que a aciona (em
+    // MatchScreen) tambem zera o delay, entao ninguem fica esperando um efeito
+    // que nunca vai aparecer.
+    if (rememberReducedMotionEnabled()) return
     val progress by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 1150, easing = LinearEasing),
+        animationSpec = tween(durationMillis = 1200, easing = LinearEasing),
         label = "deal_progress"
     )
     if (progress <= 0.01f) return
@@ -540,14 +583,17 @@ private fun MeldSparkleBurst(
     visible: Boolean,
     modifier: Modifier = Modifier
 ) {
+    // O texto de "lastMeldResult" ja avisa o resultado por escrito; a explosao de
+    // particulas e so reforco visual, entao fica de fora quando reduzir movimento.
+    val reducedMotion = rememberReducedMotionEnabled()
     val progress = remember { Animatable(0f) }
-    LaunchedEffect(visible) {
-        if (visible) {
+    LaunchedEffect(visible, reducedMotion) {
+        if (visible && !reducedMotion) {
             progress.snapTo(0f)
             progress.animateTo(1f, tween(durationMillis = 760, easing = LinearEasing))
         }
     }
-    if (!visible || progress.value <= 0.01f) return
+    if (!visible || reducedMotion || progress.value <= 0.01f) return
 
     val colors = remember {
         listOf(ColorGold, ColorGreenLight, ColorBlueLight, Color.White)
@@ -576,28 +622,20 @@ private fun MortoNoticeOverlay(
 ) {
     AnimatedVisibility(
         visible = text != null,
-        enter = fadeIn(animationSpec = tween(140)) + scaleIn(
+        enter = fadeIn(animationSpec = MenuMotion.quick()) + scaleIn(
             initialScale = 0.86f,
             animationSpec = spring(
                 dampingRatio = Spring.DampingRatioMediumBouncy,
                 stiffness = Spring.StiffnessMedium
             )
         ),
-        exit = fadeOut(animationSpec = tween(240)) + scaleOut(
+        exit = fadeOut(animationSpec = MenuMotion.standard()) + scaleOut(
             targetScale = 0.92f,
-            animationSpec = tween(220)
+            animationSpec = MenuMotion.standard()
         ),
         modifier = modifier.zIndex(4f)
     ) {
-        val pulse by rememberInfiniteTransition(label = "morto_notice_pulse").animateFloat(
-            initialValue = 0.62f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 760, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "morto_notice_alpha"
-        )
+        val pulse = rememberPulseAlpha(min = 0.62f, label = "morto_notice_pulse")
         Row(
             modifier = Modifier
                 .background(
@@ -638,6 +676,9 @@ private fun MortoNoticeOverlay(
 @Composable
 private fun VictoryConfetti(visible: Boolean) {
     if (!visible) return
+    // Confete e comemoracao pura, sem informacao nenhuma alem do dialogo de fim
+    // de rodada que ja aparece junto - primeiro a sair quando reduzir movimento.
+    if (rememberReducedMotionEnabled()) return
 
     val colors = remember {
         listOf(
@@ -1085,12 +1126,19 @@ private fun TopBar(state: GameState, config: MatchConfig, onLeave: () -> Unit) {
             Text("Sair", color = Color.White, fontWeight = FontWeight.Bold)
         }
 
-        // Fase / Status central
-        val (phaseColor, phaseText) = when (state.turnPhase) {
+        // Fase / Status central. A cor troca com uma transicao curta (em vez de
+        // recompor direto) pra virada de turno ficar visualmente clara sem
+        // chamar atencao demais nem atrasar a jogada.
+        val (targetPhaseColor, phaseText) = when (state.turnPhase) {
             TurnPhase.DRAW -> ColorGreenLight to "Compre uma carta"
             TurnPhase.ACTION -> ColorGold to "Baixe ou descarte"
             TurnPhase.WAITING_OPPONENT -> Color.LightGray to "Turno do oponente"
         }
+        val phaseColor by animateColorAsState(
+            targetValue = targetPhaseColor,
+            animationSpec = MenuMotion.quick(),
+            label = "turn_phase_color"
+        )
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
@@ -1202,41 +1250,106 @@ private fun OpponentTopCounter(
 }
 
 // -- Preview Estático (LocalInspectionMode) ------------------------------------------------------
+// Cenários usados só nos @Preview no fim do arquivo, pra exercitar mesa vazia,
+// mesa cheia (grade/leque sob pressão) e feedback de erro sem ViewModel real.
+private enum class MatchPreviewScenario { STANDARD, EMPTY, FULL_TABLE, ERROR }
+
 @Composable
-private fun MatchScreenStaticPreview(config: MatchConfig) {
-    val sampleHand = remember {
-        listOf(
-            Card(Suit.HEARTS, Rank.ACE), Card(Suit.SPADES, Rank.KING),
-            Card(Suit.DIAMONDS, Rank.QUEEN), Card(Suit.CLUBS, Rank.JACK),
-            Card(Suit.HEARTS, Rank.TEN), Card(Suit.SPADES, Rank.NINE),
-            Card(Suit.DIAMONDS, Rank.EIGHT), Card(Suit.CLUBS, Rank.SEVEN),
-            Card(Suit.HEARTS, Rank.SIX), Card(Suit.SPADES, Rank.FIVE),
-            Card(Suit.DIAMONDS, Rank.FOUR)
-        )
+private fun MatchScreenStaticPreview(
+    config: MatchConfig,
+    scenario: MatchPreviewScenario = MatchPreviewScenario.STANDARD
+) {
+    val sampleHand = remember(scenario) {
+        when (scenario) {
+            MatchPreviewScenario.FULL_TABLE -> listOf(
+                Card(Suit.HEARTS, Rank.ACE), Card(Suit.SPADES, Rank.KING), Card(Suit.DIAMONDS, Rank.QUEEN),
+                Card(Suit.CLUBS, Rank.JACK), Card(Suit.HEARTS, Rank.TEN), Card(Suit.SPADES, Rank.NINE),
+                Card(Suit.DIAMONDS, Rank.EIGHT), Card(Suit.CLUBS, Rank.SEVEN), Card(Suit.HEARTS, Rank.SIX),
+                Card(Suit.SPADES, Rank.FIVE), Card(Suit.DIAMONDS, Rank.FOUR), Card(Suit.CLUBS, Rank.THREE),
+                Card(Suit.HEARTS, Rank.TWO)
+            )
+            MatchPreviewScenario.EMPTY -> listOf(
+                Card(Suit.HEARTS, Rank.ACE), Card(Suit.SPADES, Rank.KING), Card(Suit.DIAMONDS, Rank.QUEEN)
+            )
+            MatchPreviewScenario.STANDARD, MatchPreviewScenario.ERROR -> listOf(
+                Card(Suit.HEARTS, Rank.ACE), Card(Suit.SPADES, Rank.KING),
+                Card(Suit.DIAMONDS, Rank.QUEEN), Card(Suit.CLUBS, Rank.JACK),
+                Card(Suit.HEARTS, Rank.TEN), Card(Suit.SPADES, Rank.NINE),
+                Card(Suit.DIAMONDS, Rank.EIGHT), Card(Suit.CLUBS, Rank.SEVEN),
+                Card(Suit.HEARTS, Rank.SIX), Card(Suit.SPADES, Rank.FIVE),
+                Card(Suit.DIAMONDS, Rank.FOUR)
+            )
+        }
     }
-    val sampleMyMelds = remember {
-        listOf(
-            listOf(Card(Suit.HEARTS, Rank.THREE), Card(Suit.HEARTS, Rank.FOUR), Card(Suit.HEARTS, Rank.FIVE), Card(Suit.HEARTS, Rank.SIX), Card(Suit.HEARTS, Rank.SEVEN)),
-            listOf(Card(Suit.SPADES, Rank.JACK), Card(Suit.CLUBS, Rank.JACK), Card(Suit.HEARTS, Rank.JACK))
-        )
+    val sampleMyMelds = remember(scenario) {
+        when (scenario) {
+            MatchPreviewScenario.EMPTY -> emptyList()
+            MatchPreviewScenario.FULL_TABLE -> listOf(
+                listOf(Card(Suit.HEARTS, Rank.THREE), Card(Suit.HEARTS, Rank.FOUR), Card(Suit.HEARTS, Rank.FIVE), Card(Suit.HEARTS, Rank.SIX), Card(Suit.HEARTS, Rank.SEVEN), Card(Suit.HEARTS, Rank.EIGHT), Card(Suit.HEARTS, Rank.NINE)),
+                listOf(Card(Suit.SPADES, Rank.JACK), Card(Suit.CLUBS, Rank.JACK), Card(Suit.HEARTS, Rank.JACK)),
+                listOf(Card(Suit.DIAMONDS, Rank.SEVEN), Card(Suit.DIAMONDS, Rank.EIGHT), Card(Suit.DIAMONDS, Rank.NINE), Card(Suit.DIAMONDS, Rank.TEN)),
+                listOf(Card(Suit.CLUBS, Rank.FOUR), Card(Suit.CLUBS, Rank.FIVE), Card(Suit.CLUBS, Rank.SIX)),
+                listOf(Card(Suit.SPADES, Rank.TWO), Card(Suit.SPADES, Rank.THREE), Card(Suit.SPADES, Rank.FOUR)),
+                listOf(Card(Suit.HEARTS, Rank.QUEEN), Card(Suit.CLUBS, Rank.QUEEN), Card(Suit.DIAMONDS, Rank.QUEEN))
+            )
+            MatchPreviewScenario.STANDARD, MatchPreviewScenario.ERROR -> listOf(
+                listOf(Card(Suit.HEARTS, Rank.THREE), Card(Suit.HEARTS, Rank.FOUR), Card(Suit.HEARTS, Rank.FIVE), Card(Suit.HEARTS, Rank.SIX), Card(Suit.HEARTS, Rank.SEVEN)),
+                listOf(Card(Suit.SPADES, Rank.JACK), Card(Suit.CLUBS, Rank.JACK), Card(Suit.HEARTS, Rank.JACK))
+            )
+        }
     }
-    val sampleOppMelds = remember {
-        listOf(
-            listOf(Card(Suit.DIAMONDS, Rank.TWO), Card(Suit.DIAMONDS, Rank.THREE), Card(Suit.DIAMONDS, Rank.FOUR))
-        )
+    val sampleOppMelds = remember(scenario) {
+        when (scenario) {
+            MatchPreviewScenario.EMPTY -> emptyList()
+            MatchPreviewScenario.FULL_TABLE -> listOf(
+                listOf(Card(Suit.DIAMONDS, Rank.TWO), Card(Suit.DIAMONDS, Rank.THREE), Card(Suit.DIAMONDS, Rank.FOUR)),
+                listOf(Card(Suit.CLUBS, Rank.EIGHT), Card(Suit.CLUBS, Rank.NINE), Card(Suit.CLUBS, Rank.TEN)),
+                listOf(Card(Suit.SPADES, Rank.SIX), Card(Suit.SPADES, Rank.SEVEN), Card(Suit.SPADES, Rank.EIGHT), Card(Suit.SPADES, Rank.NINE)),
+                listOf(Card(Suit.HEARTS, Rank.KING), Card(Suit.CLUBS, Rank.KING), Card(Suit.DIAMONDS, Rank.KING))
+            )
+            MatchPreviewScenario.STANDARD, MatchPreviewScenario.ERROR -> listOf(
+                listOf(Card(Suit.DIAMONDS, Rank.TWO), Card(Suit.DIAMONDS, Rank.THREE), Card(Suit.DIAMONDS, Rank.FOUR))
+            )
+        }
     }
+    val sampleDiscardPile: List<Card> = if (scenario == MatchPreviewScenario.EMPTY) {
+        emptyList()
+    } else {
+        listOf(Card(Suit.CLUBS, Rank.KING))
+    }
+    val previewFeedback = when (scenario) {
+        MatchPreviewScenario.EMPTY -> "\uD83C\uDFB4 Preview \u2014 ${config.gameType.name} | Aguardando a primeira jogada"
+        MatchPreviewScenario.FULL_TABLE -> "\uD83D\uDD25 Preview \u2014 mesa cheia, confira a rolagem da grade"
+        MatchPreviewScenario.ERROR -> "\u274C Jogada inv\u00E1lida \u2014 selecione cartas do mesmo valor"
+        MatchPreviewScenario.STANDARD -> "\uD83C\uDFB4 Preview \u2014 ${config.gameType.name} | Sua vez!"
+    }
+    val statusText = when (scenario) {
+        MatchPreviewScenario.ERROR -> "Jogada inv\u00E1lida"
+        MatchPreviewScenario.EMPTY -> "Aguarde a 1\u00AA jogada"
+        MatchPreviewScenario.FULL_TABLE, MatchPreviewScenario.STANDARD -> "Baixe ou descarte"
+    }
+    val statusColor = if (scenario == MatchPreviewScenario.ERROR) ColorLockRed else ColorGold
     val fakeState = GameState(
         myHand = sampleHand,
         myTableMelds = sampleMyMelds,
         opponentTableMelds = sampleOppMelds,
-        discardPile = listOf(Card(Suit.CLUBS, Rank.KING)),
-        deckSize = 42,
-        mortosLeft = if (config.gameType != GameType.CACHETA) 2 else 0,
+        discardPile = sampleDiscardPile,
+        deckSize = when (scenario) {
+            MatchPreviewScenario.EMPTY -> 78
+            MatchPreviewScenario.FULL_TABLE -> 4
+            else -> 42
+        },
+        mortosLeft = if (config.gameType != GameType.CACHETA) {
+            if (scenario == MatchPreviewScenario.FULL_TABLE) 0 else 2
+        } else 0,
         playerSeat = 0,
         activeSeat = 0,
         teamScores = listOf(450, 200),
         turnPhase = TurnPhase.ACTION,
-        feedbackMessage = "\uD83C\uDFB4 Preview \u2014 ${config.gameType.name} | Sua vez!",
+        feedbackMessage = previewFeedback,
+        isDiscardLocked = scenario == MatchPreviewScenario.ERROR,
+        canDrawFromDiscard = scenario != MatchPreviewScenario.ERROR,
+        drawDiscardBlockedReason = if (scenario == MatchPreviewScenario.ERROR) "Lixo bloqueado neste turno" else "",
         config = config
     )
     Box(modifier = Modifier.fillMaxSize()) {
@@ -1255,13 +1368,13 @@ private fun MatchScreenStaticPreview(config: MatchConfig) {
                 Text("Sair", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(config.gameType.name, color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
-                    Text("Baixe ou descarte", color = ColorGold, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(statusText, color = statusColor, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
                 Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 300.dp)) {
 
                     Text("A 450 x B 200", color = ColorGold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     if (config.gameType != GameType.CACHETA)
-                        Text("Mortos: 2", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
+                        Text("Mortos: ${fakeState.mortosLeft}", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
                 }
             }
 
@@ -1284,7 +1397,8 @@ private fun MatchScreenStaticPreview(config: MatchConfig) {
                         accentColor = ColorRedLight,
                         emptyText = "Nenhum jogo baixado pelo oponente",
                         modifier = Modifier.weight(0.92f),
-                        prominent = false
+                        prominent = false,
+                        gameType = config.gameType
                     )
                     MeldArea(
                         title = "Minha Mesa",
@@ -1292,7 +1406,8 @@ private fun MatchScreenStaticPreview(config: MatchConfig) {
                         accentColor = ColorGreenLight,
                         emptyText = "Baixe jogos aqui",
                         modifier = Modifier.weight(1.18f),
-                        prominent = true
+                        prominent = true,
+                        gameType = config.gameType
                     )
                 }
                 DrawPilesPanel(
@@ -1927,6 +2042,59 @@ private fun MeldArea(
     }
 }
 
+// -- Previews de componente: grade de jogos na mesa (cheia, vazia, tela pequena) -------------------
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    backgroundColor = 0xFF123018,
+    widthDp = 380,
+    heightDp = 240,
+    name = "MeldArea - cheia (com canastra)"
+)
+@Composable
+private fun MeldAreaFullPreview() {
+    val melds = remember {
+        listOf(
+            listOf(Card(Suit.HEARTS, Rank.THREE), Card(Suit.HEARTS, Rank.FOUR), Card(Suit.HEARTS, Rank.FIVE), Card(Suit.HEARTS, Rank.SIX), Card(Suit.HEARTS, Rank.SEVEN), Card(Suit.HEARTS, Rank.EIGHT), Card(Suit.HEARTS, Rank.NINE)),
+            listOf(Card(Suit.SPADES, Rank.JACK), Card(Suit.CLUBS, Rank.JACK), Card(Suit.HEARTS, Rank.JACK)),
+            listOf(Card(Suit.DIAMONDS, Rank.SEVEN), Card(Suit.DIAMONDS, Rank.EIGHT), Card(Suit.DIAMONDS, Rank.NINE), Card(Suit.DIAMONDS, Rank.TEN)),
+            listOf(Card(Suit.CLUBS, Rank.FOUR), Card(Suit.CLUBS, Rank.FIVE), Card(Suit.CLUBS, Rank.SIX))
+        )
+    }
+    MaterialTheme {
+        MeldArea(
+            title = "Minha Mesa",
+            melds = melds,
+            accentColor = ColorGreenLight,
+            emptyText = "Baixe jogos aqui",
+            modifier = Modifier.fillMaxWidth().height(220.dp),
+            prominent = true,
+            gameType = GameType.BURACO
+        )
+    }
+}
+
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    backgroundColor = 0xFF123018,
+    widthDp = 200,
+    heightDp = 160,
+    name = "MeldArea - vazia (tela pequena)"
+)
+@Composable
+private fun MeldAreaEmptyCompactPreview() {
+    MaterialTheme {
+        MeldArea(
+            title = "Mesa do Oponente",
+            melds = emptyList(),
+            accentColor = ColorRedLight,
+            emptyText = "Nenhum jogo baixado pelo oponente",
+            modifier = Modifier.fillMaxWidth().height(140.dp),
+            prominent = false,
+            gameType = GameType.TRANCA
+        )
+    }
+}
+
 private fun tableGridColumnCount(
     maxWidth: Dp,
     meldCount: Int,
@@ -1980,15 +2148,7 @@ private fun tableGridCardWidth(
 
 @Composable
 private fun TurnCardPile(turnCard: Card?, cardWidth: Dp = 58.dp) {
-    val pulse by rememberInfiniteTransition(label = "turn_card_pulse").animateFloat(
-        initialValue = 0.52f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1100, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "turn_card_pulse_alpha"
-    )
+    val pulse = rememberPulseAlpha(min = 0.52f, label = "turn_card_pulse")
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (turnCard != null) {
             Box(
@@ -2042,15 +2202,7 @@ private fun CompactPileCard(
     onClick: () -> Unit,
     onBlockedClick: () -> Unit = {}
 ) {
-    val pulse by rememberInfiniteTransition(label = "compact_pile_pulse_$label").animateFloat(
-        initialValue = 0.62f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "compact_pile_alpha_$label"
-    )
+    val pulse = rememberPulseAlpha(min = 0.62f, label = "compact_pile_pulse_$label")
     val glowColor = when {
         active -> accentColor
         blocked -> ColorLockRed
@@ -2158,15 +2310,7 @@ private fun DeckPile(
     priorityCard: Boolean = false,
     onClick: () -> Unit
 ) {
-    val pulse by rememberInfiniteTransition(label = "deck_pulse").animateFloat(
-        initialValue = 0.65f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "deck_pulse_alpha"
-    )
+    val pulse = rememberPulseAlpha(min = 0.65f, label = "deck_pulse")
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -2278,15 +2422,7 @@ private fun DiscardPile(
         isBlocked -> ColorLockRed
         else -> Color.Transparent
     }
-    val pulse by rememberInfiniteTransition(label = "discard_pulse").animateFloat(
-        initialValue = 0.65f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "discard_pulse_alpha"
-    )
+    val pulse = rememberPulseAlpha(min = 0.65f, label = "discard_pulse")
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -2405,15 +2541,7 @@ private fun MeldGroupView(
     val isCleanCanastra = isCanastra && meld.none { GameRulesEngine.isWildcard(it, gameType) }
     val canastraColor = if (isCleanCanastra) ColorGold else Color(0xFFB0B0B0)
     val borderColor = if (isCanastra) canastraColor else ColorGreenLight
-    val pulse by rememberInfiniteTransition(label = "meld_group_pulse").animateFloat(
-        initialValue = 0.55f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "meld_group_alpha"
-    )
+    val pulse = rememberPulseAlpha(min = 0.55f, label = "meld_group_pulse")
 
     Box(
         modifier = Modifier
@@ -2511,15 +2639,7 @@ private fun MeldInspectorDialog(
         ),
         label = "meld_inspector_open"
     )
-    val glow by rememberInfiniteTransition(label = "meld_inspector_glow").animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "meld_inspector_glow_alpha"
-    )
+    val glow = rememberPulseAlpha(min = 0.45f, label = "meld_inspector_glow")
     val centerIndex = (cards.lastIndex.coerceAtLeast(0)) / 2f
 
     Dialog(onDismissRequest = onDismiss) {
@@ -2611,15 +2731,7 @@ private fun MeldTargetSelectionDialog(
     canMeldNew: Boolean,
     onDismiss: () -> Unit
 ) {
-    val glow by rememberInfiniteTransition(label = "target_select_glow").animateFloat(
-        initialValue = 0.5f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "target_select_glow_alpha"
-    )
+    val glow = rememberPulseAlpha(min = 0.5f, label = "target_select_glow")
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -2775,15 +2887,23 @@ private fun HandSection(
     val cardW = if (compactHand) 52.dp else 64.dp
     val cardH = cardW * 1.5f
     val selectRise = 14.dp
-    val handShine by rememberInfiniteTransition(label = "hand_shine").animateFloat(
-        initialValue = -0.6f,
-        targetValue = 1.6f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "hand_shine_x"
-    )
+    // Brilho puramente decorativo sobre a carta selecionada; a borda dourada ja
+    // sinaliza a selecao, entao o sweep some com "reduzir movimento" ligado.
+    val reducedMotion = rememberReducedMotionEnabled()
+    val handShine = if (reducedMotion) {
+        0f
+    } else {
+        val shine by rememberInfiniteTransition(label = "hand_shine").animateFloat(
+            initialValue = -0.6f,
+            targetValue = 1.6f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "hand_shine_x"
+        )
+        shine
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth()
@@ -2990,7 +3110,7 @@ private fun HandSection(
                             isFaceUp = true,
                             modifier = Modifier.size(width = cardW, height = cardH)
                         )
-                        if (isSelected) {
+                        if (isSelected && !reducedMotion) {
                             Canvas(modifier = Modifier.matchParentSize().clip(RoundedCornerShape(12.dp))) {
                                 val x = size.width * handShine
                                 drawLine(
@@ -3152,5 +3272,76 @@ fun MatchScreenTrancaPreview() {
             config = MatchConfig(gameType = GameType.TRANCA),
             onLeaveMatch = {}
         )
+    }
+}
+
+// -- Previews de estado da mesa (vazio, cheio, erro) ----------------------------------------------
+// Chamam o preview estatico direto (sem passar por MatchScreen/ViewModel) pra
+// exercitar os estados que o roadmap pede: mesa vazia, mesa cheia (grade e leque
+// sob pressao) e feedback de jogada invalida/lixo bloqueado.
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    device = "spec:width=1280dp,height=800dp,dpi=240",
+    name = "MatchScreen - mesa vazia"
+)
+@Composable
+private fun MatchScreenEmptyTablePreview() {
+    MaterialTheme {
+        MatchScreenStaticPreview(config = MatchConfig(gameType = GameType.BURACO), scenario = MatchPreviewScenario.EMPTY)
+    }
+}
+
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    device = "spec:width=1280dp,height=800dp,dpi=240",
+    name = "MatchScreen - mesa cheia"
+)
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    device = "spec:width=760dp,height=420dp,dpi=280",
+    name = "MatchScreen - mesa cheia (compacta)"
+)
+@Composable
+private fun MatchScreenFullTablePreview() {
+    MaterialTheme {
+        MatchScreenStaticPreview(config = MatchConfig(gameType = GameType.TRANCA), scenario = MatchPreviewScenario.FULL_TABLE)
+    }
+}
+
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    device = "spec:width=1280dp,height=800dp,dpi=240",
+    name = "MatchScreen - jogada invalida (erro)"
+)
+@Composable
+private fun MatchScreenErrorStatePreview() {
+    MaterialTheme {
+        MatchScreenStaticPreview(config = MatchConfig(gameType = GameType.BURACO), scenario = MatchPreviewScenario.ERROR)
+    }
+}
+
+// -- Previews de tela pequena e fonte ampliada (acessibilidade) -----------------------------------
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    device = "spec:width=360dp,height=780dp,dpi=420",
+    name = "MatchScreen - celular retrato (tela pequena)"
+)
+@Composable
+private fun MatchScreenCompactPortraitPreview() {
+    MaterialTheme {
+        MatchScreenStaticPreview(config = MatchConfig(gameType = GameType.CACHETA), scenario = MatchPreviewScenario.STANDARD)
+    }
+}
+
+@androidx.compose.ui.tooling.preview.Preview(
+    showBackground = true,
+    device = "spec:width=411dp,height=891dp,dpi=420",
+    fontScale = 2.0f,
+    name = "MatchScreen - fonte grande (acessibilidade)"
+)
+@Composable
+private fun MatchScreenLargeFontPreview() {
+    MaterialTheme {
+        MatchScreenStaticPreview(config = MatchConfig(gameType = GameType.BURACO), scenario = MatchPreviewScenario.STANDARD)
     }
 }

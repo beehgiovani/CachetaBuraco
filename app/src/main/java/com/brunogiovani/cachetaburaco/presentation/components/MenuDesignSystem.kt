@@ -1,9 +1,14 @@
 package com.brunogiovani.cachetaburaco.presentation.components
 
+import android.provider.Settings
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
 /**
@@ -48,8 +53,14 @@ object MenuMotion {
     const val DURATION_MEDIUM = 240
     const val DURATION_LONG = 300
 
+    // Respiracao de indicadores de estado (monte/lixo/jogo ativo). Antes cada
+    // componente da partida inventava seu proprio ciclo (900/1100/1200ms) - agora
+    // todo "pulso" de destaque usa o mesmo ritmo, aqui e nos dialogos de mesa.
+    const val DURATION_PULSE = 1100
+
     fun <T> standard() = tween<T>(DURATION_MEDIUM)
     fun <T> quick() = tween<T>(DURATION_SHORT)
+    fun <T> pulse() = tween<T>(DURATION_PULSE, easing = LinearEasing)
 }
 
 object MenuMetrics {
@@ -58,4 +69,26 @@ object MenuMetrics {
     val ScreenPaddingRegular = 20.dp
     val SectionSpacing = 14.dp
     val MaxContentWidth = 1040.dp
+}
+
+/**
+ * Preferencia de "reduzir movimento" do sistema (Config. > Acessibilidade > Remover
+ * animacoes, ou a escala de duracao de animador nas opcoes de desenvolvedor). Nao existe
+ * hoje nenhum ponto do app que respeite isso - o Compose ja escala tweens/springs
+ * individuais via MotionDurationScale, mas um `infiniteRepeatable` com duracao zerada
+ * pisca sem parar em vez de parar, entao os loops decorativos (brilho ambiente, pulso de
+ * destaque, leque brilhante da mao, confete) chamam isto para congelar num valor fixo.
+ *
+ * Le `Settings.Global.ANIMATOR_DURATION_SCALE` direto (em vez de
+ * `ValueAnimator.getDurationScale()`, que só existe a partir da API 33) porque o
+ * app tem `minSdk = 26`.
+ */
+@Composable
+fun rememberReducedMotionEnabled(): Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        runCatching {
+            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) <= 0f
+        }.getOrDefault(false)
+    }
 }
