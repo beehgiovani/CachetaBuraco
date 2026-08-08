@@ -2,6 +2,7 @@ package com.brunogiovani.cachetaburaco.data.network
 
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomDataSource
 import com.brunogiovani.cachetaburaco.data.online.OnlineCompletedMatch
+import com.brunogiovani.cachetaburaco.data.online.OnlineFailureCategory
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomSession
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomStatus
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomSummary
@@ -494,6 +495,8 @@ class OnlineNetworkRepositoryTest {
         runCurrent()
 
         assertEquals(ConnectionStatus.ERROR, repository.connectionStatus.value)
+        // Telemetria sem mao/token/dado privado: so a categoria fechada da falha.
+        assertEquals(listOf(OnlineFailureCategory.PUBLISH_FAILED), dataSource.reportedFailures)
     }
 
     @Test
@@ -505,6 +508,22 @@ class OnlineNetworkRepositoryTest {
         runCurrent()
 
         assertEquals(ConnectionStatus.ERROR, repository.connectionStatus.value)
+        assertEquals(listOf(OnlineFailureCategory.SESSION_ERROR), dataSource.reportedFailures)
+    }
+
+    @Test
+    fun `server deal request failure reports telemetry and returns null without crashing`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource().apply { failStartRound = true }
+        val repository = repository(dataSource)
+        repository.startHosting("Host", config = MatchConfig())
+        runCurrent()
+
+        var result: String? = "not called"
+        repository.requestServerDeal { result = it }
+        runCurrent()
+
+        assertEquals(null, result)
+        assertEquals(listOf(OnlineFailureCategory.DEAL_REQUEST_FAILED), dataSource.reportedFailures)
     }
 
     @Test
@@ -844,6 +863,12 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
         startRoundCalls++
         if (failStartRound) error("start round failed")
         return startRoundResult
+    }
+
+    val reportedFailures = mutableListOf<OnlineFailureCategory>()
+
+    override suspend fun reportFailure(category: OnlineFailureCategory, roomId: String?) {
+        reportedFailures += category
     }
 
     fun emitEvent(event: OnlineStoredEvent) {

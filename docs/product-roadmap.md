@@ -129,13 +129,16 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
   nunca sucesso silencioso. A regra em si e validada nas RPCs (`0014`-`0019`).
   Melhoria possivel, nao bloqueante: distinguir rejeicao de regra (mostrar
   "jogada invalida") de falha de rede (mostrar "sessao caiu") na UI.
-- [ ] Adicionar telemetria de falhas sem registrar mao, token ou dado privado.
-  Escrita e validada localmente: migration `0024_client_failure_telemetry.sql`
-  cria `client_failure_events` + RPC `report_client_failure`, com categoria
-  fechada (lista fixa, nao texto livre) pra nunca correr risco de vazar
-  mensagem de excecao crua. Ainda NAO aplicada em producao -- CLI do Supabase
-  caiu pro projeto errado de novo, aguardando novo login. App ainda nao chama
-  essa RPC (falta ligar em `OnlineNetworkRepository.reportSessionFailure`).
+- [x] Adicionar telemetria de falhas sem registrar mao, token ou dado privado.
+  Migration `0024_client_failure_telemetry.sql` (aplicada em producao,
+  validada antes localmente contra Postgres real) cria `client_failure_events`
+  + RPC `report_client_failure`, com categoria fechada (lista fixa, nao texto
+  livre) pra nunca correr risco de vazar mensagem de excecao crua -- o banco
+  tambem rejeita qualquer categoria fora da lista. `OnlineNetworkRepository`
+  reporta em 4 pontos reais: erro de sessao (stream de eventos/presenca),
+  heartbeat falhando, publicacao de evento falhando e pedido de distribuicao
+  ao servidor falhando. Testado com dublê de teste confirmando a categoria
+  certa em cada caso.
 
 ## 7. Conta Google e perfil
 

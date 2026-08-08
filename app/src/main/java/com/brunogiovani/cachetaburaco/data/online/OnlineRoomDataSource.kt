@@ -11,6 +11,18 @@ enum class OnlineRoomStatus {
     CANCELLED
 }
 
+// Lista fechada de propósito (nem uma passa mensagem de exceção crua) -- é
+// exatamente pra não correr o risco de vazar mão, token ou payload privado
+// dentro de um campo de telemetria "livre". Ver migration
+// 0024_client_failure_telemetry.sql: o banco também rejeita qualquer valor
+// fora desta lista.
+enum class OnlineFailureCategory(val wireValue: String) {
+    SESSION_ERROR("ONLINE_SESSION_ERROR"),
+    HEARTBEAT_FAILED("ONLINE_HEARTBEAT_FAILED"),
+    PUBLISH_FAILED("ONLINE_PUBLISH_FAILED"),
+    DEAL_REQUEST_FAILED("ONLINE_DEAL_REQUEST_FAILED")
+}
+
 data class OnlineRoomSummary(
     val roomId: String,
     val roomCode: String,
@@ -103,4 +115,11 @@ interface OnlineRoomDataSource {
      * outro NetworkMessage.payload.
      */
     suspend fun startRound(session: OnlineRoomSession): String
+
+    /**
+     * Registra uma falha do transporte online sem guardar mao, token ou
+     * qualquer dado privado (migration 0024). Deixei com corpo padrao vazio
+     * pra nao quebrar dublês de teste que ainda nao implementam isso.
+     */
+    suspend fun reportFailure(category: OnlineFailureCategory, roomId: String? = null) = Unit
 }

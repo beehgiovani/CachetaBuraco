@@ -2,6 +2,7 @@ package com.brunogiovani.cachetaburaco.data.network
 
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomCode
 import com.brunogiovani.cachetaburaco.data.online.OnlineCompletedMatch
+import com.brunogiovani.cachetaburaco.data.online.OnlineFailureCategory
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomDataSource
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomSession
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomSummary
@@ -329,6 +330,7 @@ class OnlineNetworkRepository(
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
+                reportFailureTelemetry(OnlineFailureCategory.DEAL_REQUEST_FAILED, session.room.roomId)
                 null
             }
             onResult(result)
@@ -411,7 +413,7 @@ class OnlineNetworkRepository(
                 } else {
                     consecutiveFailures++
                     if (consecutiveFailures >= MAX_HEARTBEAT_FAILURES) {
-                        reportSessionFailure(session, stopObservers = false)
+                        reportSessionFailure(session, stopObservers = false, category = OnlineFailureCategory.HEARTBEAT_FAILED)
                     }
                 }
                 delay(PRESENCE_HEARTBEAT_MS)
@@ -452,14 +454,14 @@ class OnlineNetworkRepository(
                     dataSource.publishEvent(session, preparedMessage, recipientSeat)
                 }
                 if (!delivered) {
-                    reportSessionFailure(session, stopObservers = false)
+                    reportSessionFailure(session, stopObservers = false, category = OnlineFailureCategory.PUBLISH_FAILED)
                     return@launch
                 }
                 completedMatch?.let { recordCompletedMatch(session, it) }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
-                reportSessionFailure(session, stopObservers = false)
+                reportSessionFailure(session, stopObservers = false, category = OnlineFailureCategory.PUBLISH_FAILED)
             }
         }
         return true
@@ -543,7 +545,7 @@ class OnlineNetworkRepository(
                 }
                 confirmed
             }
-            if (!delivered) reportSessionFailure(session, stopObservers = false)
+            if (!delivered) reportSessionFailure(session, stopObservers = false, category = OnlineFailureCategory.PUBLISH_FAILED)
             onResult(delivered)
         }
     }
@@ -579,10 +581,29 @@ class OnlineNetworkRepository(
         heartbeatJob = null
     }
 
-    private fun reportSessionFailure(session: OnlineRoomSession, stopObservers: Boolean) {
+    private fun reportSessionFailure(
+        session: OnlineRoomSession,
+        stopObservers: Boolean,
+        category: OnlineFailureCategory = OnlineFailureCategory.SESSION_ERROR
+    ) {
         if (currentSession?.room?.roomId != session.room.roomId) return
         _connectionStatus.value = ConnectionStatus.ERROR
         if (stopObservers) cancelSessionObservers()
+        reportFailureTelemetry(category, session.room.roomId)
+    }
+
+    // Fogo-e-esqueço de proposito: telemetria nunca pode virar um novo motivo
+    // de falha em cascata, entao qualquer erro aqui e so ignorado.
+    private fun reportFailureTelemetry(category: OnlineFailureCategory, roomId: String?) {
+        scope.launch {
+            try {
+                dataSource.reportFailure(category, roomId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // Nao ha nada de util a fazer se a propria telemetria falhar.
+            }
+        }
     }
 
     private fun resetVisibleConnectionState() {

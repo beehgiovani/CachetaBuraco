@@ -172,6 +172,16 @@ class SupabaseOnlineRoomDataSource(
         ).decodeAs<JsonObject>().toString()
     }
 
+    override suspend fun reportFailure(category: OnlineFailureCategory, roomId: String?) {
+        client.postgrest.rpc(
+            function = "report_client_failure",
+            parameters = buildJsonObject {
+                put("p_category", category.wireValue)
+                roomId?.let { put("p_room_id", it) }
+            }
+        )
+    }
+
     override fun observeEvents(
         session: OnlineRoomSession,
         afterSequence: Long
