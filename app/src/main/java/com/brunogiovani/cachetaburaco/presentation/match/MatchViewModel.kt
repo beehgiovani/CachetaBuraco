@@ -2984,25 +2984,43 @@ class MatchViewModel(
     /**
      * Salva um retrato local da partida para recuperar queda ou fechamento do app.
      */
+    private fun buildSnapshotJson(state: GameState): String {
+        val remoteHandsJson = JSONObject().apply {
+            remoteHandsBySeat.forEach { (seat, hand) -> put(seat.toString(), cardsToJson(hand)) }
+        }
+        val mortosJson = JSONArray().apply {
+            mortos.forEach { put(cardsToJson(it)) }
+        }
+        return JSONObject()
+            .put("myHand", cardsToJson(state.myHand))
+            .put("myTableMelds", handsToJson(state.myTableMelds))
+            .put("opponentTableMelds", handsToJson(state.opponentTableMelds))
+            .put("discardPile", cardsToJson(state.discardPile))
+            .put("deckSize", state.deckSize)
+            .put("mortosLeft", state.mortosLeft)
+            .put("playerSeat", state.playerSeat)
+            .put("activeSeat", state.activeSeat)
+            .put("myScore", state.myScore)
+            .put("opponentScore", state.opponentScore)
+            .put("teamScores", JSONArray(state.teamScores))
+            .put("config", currentConfig.serialize())
+            .put("isHost", isHost)
+            .put("masterDeck", cardsToJson(masterDeck))
+            .put("mortos", mortosJson)
+            .put("remoteHands", remoteHandsJson)
+            .put("teamsThatPickedMorto", JSONArray(teamsThatPickedMorto.toList()))
+            .put("currentRoundId", currentRoundId ?: "")
+            .put("remotePlayerSeats", JSONObject().apply {
+                remotePlayerSeats.forEach { (id, seat) -> put(id, seat) }
+            })
+            .toString()
+    }
+
     private fun saveGameSnapshot(state: GameState) {
         val file = snapshotFile() ?: return
         viewModelScope.launch {
             try {
-                val json = JSONObject()
-                    .put("myHand", cardsToJson(state.myHand))
-                    .put("myTableMelds", handsToJson(state.myTableMelds))
-                    .put("opponentTableMelds", handsToJson(state.opponentTableMelds))
-                    .put("discardPile", cardsToJson(state.discardPile))
-                    .put("deckSize", state.deckSize)
-                    .put("mortosLeft", state.mortosLeft)
-                    .put("playerSeat", state.playerSeat)
-                    .put("activeSeat", state.activeSeat)
-                    .put("myScore", state.myScore)
-                    .put("opponentScore", state.opponentScore)
-                    .put("teamScores", JSONArray(state.teamScores))
-                    .put("config", currentConfig.serialize())
-                    .toString()
-                file.writeText(json)
+                file.writeText(buildSnapshotJson(state))
             } catch (_: Exception) {}
         }
     }
@@ -3021,7 +3039,15 @@ class MatchViewModel(
         val file = snapshotFile() ?: return false
         if (!file.exists()) return false
         return try {
-            val json = JSONObject(file.readText())
+            applySnapshotJson(file.readText())
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun applySnapshotJson(jsonText: String): Boolean {
+        return try {
+            val json = JSONObject(jsonText)
             val handJson = json.optJSONArray("myHand") ?: JSONArray()
             val myTableMeldsJson = json.optJSONArray("myTableMelds") ?: JSONArray()
             val opponentTableMeldsJson = json.optJSONArray("opponentTableMelds") ?: JSONArray()
@@ -3034,6 +3060,11 @@ class MatchViewModel(
             val opponentScore = json.optInt("opponentScore", 0)
             val teamScoresJson = json.optJSONArray("teamScores")
             val configStr = json.optString("config", "")
+            val masterDeckJson = json.optJSONArray("masterDeck") ?: JSONArray()
+            val savedMortosJson = json.optJSONArray("mortos") ?: JSONArray()
+            val remoteHandsJson = json.optJSONObject("remoteHands")
+            val teamsThatPickedMortoJson = json.optJSONArray("teamsThatPickedMorto")
+            val savedRoundId = json.optString("currentRoundId", "")
 
             if (configStr.isNotBlank()) {
                 currentConfig = MatchConfig.deserialize(configStr)
@@ -3042,6 +3073,40 @@ class MatchViewModel(
             val teamScores = if (teamScoresJson != null) {
                 buildList { repeat(teamScoresJson.length()) { i -> add(teamScoresJson.optInt(i)) } }
             } else emptyList()
+
+            // Estado autoritativo real (só o host usa isso pra valer, mas é
+            // inofensivo restaurar vazio no cliente): sem isso, o host "recuperado"
+            // continuaria a mesa sem monte, sem mortos e sem saber a mão dos outros
+            // assentos, quebrando qualquer compra ou validação depois do restore.
+            masterDeck = cardsFromJson(masterDeckJson).toMutableList()
+            mortos = buildList {
+                repeat(savedMortosJson.length()) { index ->
+                    val morto = cardsFromJson(savedMortosJson.optJSONArray(index) ?: JSONArray())
+                    if (morto.isNotEmpty()) add(morto)
+                }
+            }.toMutableList()
+            remoteHandsBySeat.clear()
+            if (remoteHandsJson != null) {
+                for (seat in 1 until currentConfig.maxPlayers) {
+                    val seatHandJson = remoteHandsJson.optJSONArray(seat.toString())
+                    if (seatHandJson != null) {
+                        remoteHandsBySeat[seat] = cardsFromJson(seatHandJson)
+                    }
+                }
+            }
+            teamsThatPickedMorto.clear()
+            if (teamsThatPickedMortoJson != null) {
+                repeat(teamsThatPickedMortoJson.length()) { i -> teamsThatPickedMorto.add(teamsThatPickedMortoJson.optInt(i)) }
+            }
+            currentRoundId = savedRoundId.takeIf { it.isNotBlank() }
+            remotePlayerSeats.clear()
+            json.optJSONObject("remotePlayerSeats")?.let { seatsJson ->
+                val keysIter = seatsJson.keys()
+                while (keysIter.hasNext()) {
+                    val id = keysIter.next()
+                    remotePlayerSeats[id] = seatsJson.optInt(id)
+                }
+            }
 
             val hand = sortHandIfEnabled(cardsFromJson(handJson))
             val myMelds = handsFromJson(myTableMeldsJson)
@@ -3213,10 +3278,33 @@ class MatchViewModel(
                 val configStr = json.optString("config", "")
                 val config = if (configStr.isNotBlank()) MatchConfig.deserialize(configStr) else MatchConfig()
                 val playerSeat = json.optInt("playerSeat", -1)
-                val isHost = playerSeat == 0
+                val isHost = if (json.has("isHost")) json.optBoolean("isHost") else playerSeat == 0
                 Pair(isHost, config)
             } catch (e: Exception) {
                 null
+            }
+        }
+
+        /**
+         * Mapa playerId -> assento salvo pelo host, usado para re-semear
+         * `rememberedPlayerSeats` do transporte antes de reabrir a sala: sem isso,
+         * o primeiro cliente a reconectar depois de um reinício pegaria sempre o
+         * assento 1, embaralhando quem senta onde numa partida de 4.
+         */
+        fun getSavedPlayerSeats(context: Context): Map<String, Int> {
+            val file = context.filesDir.listFiles { _, name -> name.startsWith("game_snapshot_") && name.endsWith(".json") }?.firstOrNull() ?: return emptyMap()
+            return try {
+                val json = JSONObject(file.readText())
+                val seatsJson = json.optJSONObject("remotePlayerSeats") ?: return emptyMap()
+                buildMap {
+                    val keysIter = seatsJson.keys()
+                    while (keysIter.hasNext()) {
+                        val id = keysIter.next()
+                        put(id, seatsJson.optInt(id))
+                    }
+                }
+            } catch (e: Exception) {
+                emptyMap()
             }
         }
 

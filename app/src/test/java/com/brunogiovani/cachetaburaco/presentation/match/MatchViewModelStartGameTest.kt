@@ -846,6 +846,50 @@ class MatchViewModelStartGameTest {
         assertFalse(canUseLocalSnapshot(onlineViewModel))
     }
 
+    @Test
+    fun `snapshot json round trip restores full authoritative state not just display fields`() = runTest {
+        // Bug real: o retrato salvo so guardava campos de exibicao (mao propria,
+        // contadores). Depois de "Continuar Partida Salva" o host recuperado
+        // ficava sem monte, sem mortos e sem saber a mao dos outros assentos --
+        // qualquer compra ou validacao subsequente quebrava. Este teste garante
+        // que masterDeck, mortos, remoteHandsBySeat, remotePlayerSeats e
+        // currentRoundId sobrevivem a uma volta completa serializar/restaurar.
+        val host = MatchViewModel(
+            networkRepository = FakeLocalNetworkRepository(),
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        host.startGame()
+        runCurrent()
+
+        assertTrue(host.masterDeckForTest().isNotEmpty())
+        assertTrue(host.mortosForTest().isNotEmpty())
+        assertTrue(host.remoteHandsForTest()[1]?.isNotEmpty() == true)
+
+        host.remotePlayerSeatsForTest()["client-1"] = 1
+
+        val json = host.invokeBuildSnapshotJson(host.gameState.value)
+
+        val restored = MatchViewModel(
+            networkRepository = FakeLocalNetworkRepository(),
+            playerId = "client-1",
+            isHost = false,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        assertTrue(restored.invokeApplySnapshotJson(json))
+
+        assertEquals(host.masterDeckForTest().map { it.id }, restored.masterDeckForTest().map { it.id })
+        assertEquals(
+            host.mortosForTest().map { morto -> morto.map { it.id } },
+            restored.mortosForTest().map { morto -> morto.map { it.id } }
+        )
+        assertEquals(host.remoteHandsForTest()[1]?.map { it.id }, restored.remoteHandsForTest()[1]?.map { it.id })
+        assertEquals(mapOf("client-1" to 1), restored.remotePlayerSeatsForTest())
+        assertEquals(host.currentRoundIdForTest(), restored.currentRoundIdForTest())
+        assertNotNull(restored.currentRoundIdForTest())
+    }
+
     // ─── Matriz de tentativas adulteradas (host local/bot) ──────────────────
     // O lado Supabase ja cobre esses cenarios nas migrations 0012-0019; estes
     // testes provam que o mesmo host-autoridade tambem os recusa no transporte
@@ -3591,6 +3635,31 @@ private fun MatchViewModel.teamsThatPickedMortoForTest(): MutableSet<Int> {
     val field = this::class.java.getDeclaredField("teamsThatPickedMorto")
     field.isAccessible = true
     return field.get(this) as MutableSet<Int>
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun MatchViewModel.remotePlayerSeatsForTest(): MutableMap<String, Int> {
+    val field = this::class.java.getDeclaredField("remotePlayerSeats")
+    field.isAccessible = true
+    return field.get(this) as MutableMap<String, Int>
+}
+
+private fun MatchViewModel.currentRoundIdForTest(): String? {
+    val field = this::class.java.getDeclaredField("currentRoundId")
+    field.isAccessible = true
+    return field.get(this) as String?
+}
+
+private fun MatchViewModel.invokeBuildSnapshotJson(state: GameState): String {
+    val method = this::class.java.getDeclaredMethod("buildSnapshotJson", GameState::class.java)
+    method.isAccessible = true
+    return method.invoke(this, state) as String
+}
+
+private fun MatchViewModel.invokeApplySnapshotJson(json: String): Boolean {
+    val method = this::class.java.getDeclaredMethod("applySnapshotJson", String::class.java)
+    method.isAccessible = true
+    return method.invoke(this, json) as Boolean
 }
 
 private fun MatchViewModel.pendingCountOnlyRoundForTest(): Boolean {

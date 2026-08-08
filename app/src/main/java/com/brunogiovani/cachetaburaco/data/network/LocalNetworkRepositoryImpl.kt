@@ -209,6 +209,10 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
         nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, registrationListener)
     }
 
+    override fun presetRememberedSeats(seats: Map<String, Int>) {
+        rememberedPlayerSeats.putAll(seats)
+    }
+
     override fun stopHosting() {
         try { nsdManager.unregisterService(registrationListener) } catch (_: Exception) {}
         hostJob?.cancel()

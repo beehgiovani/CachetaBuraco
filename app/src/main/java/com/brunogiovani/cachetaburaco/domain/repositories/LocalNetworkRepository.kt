@@ -68,6 +68,13 @@ interface LocalNetworkRepository {
     fun startHosting(playerName: String, port: Int = 9090, config: MatchConfig? = null)
     fun stopHosting()
 
+    // Só o transporte Wi-Fi local implementa isto de verdade: reaplica, antes de
+    // aceitar a primeira conexão, o assento que cada playerId tinha antes de um
+    // reinício do app -- sem isso, "Continuar Partida Salva" reabriria a sala mas
+    // o primeiro cliente a reconectar sempre cairia no assento 1, embaralhando
+    // quem senta onde numa partida de 4.
+    fun presetRememberedSeats(seats: Map<String, Int>) = Unit
+
     fun startDiscovery()
     fun stopDiscovery()
 

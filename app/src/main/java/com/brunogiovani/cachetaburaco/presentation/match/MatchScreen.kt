@@ -176,15 +176,22 @@ fun MatchScreen(
 
     LaunchedEffect(Unit) { if (isHost && !viewModel.isRestored) viewModel.startGame() }
 
-    // Quando a conexão volta, o cliente pede a mesa atual para o host.
+    // Quando a conexão volta, o cliente pede a mesa atual para o host. Um cliente
+    // restaurado de snapshot (app fechado e reaberto) nunca passa por
+    // OPPONENT_DISCONNECTED/HOST_DISCONNECTED antes do primeiro CONNECTED -- por
+    // isso ele também dispara esse pedido na primeira conexão, pra corrigir
+    // qualquer coisa que tenha mudado na mesa enquanto o app estava fechado.
     var wasDisconnected by remember { mutableStateOf(false) }
+    var didRequestResumeSync by remember { mutableStateOf(false) }
     LaunchedEffect(connectionStatus) {
         when (connectionStatus) {
             ConnectionStatus.OPPONENT_DISCONNECTED,
             ConnectionStatus.HOST_DISCONNECTED -> wasDisconnected = true
             ConnectionStatus.CONNECTED -> {
-                if (wasDisconnected && !isHost) {
+                val shouldResync = wasDisconnected || (viewModel.isRestored && !didRequestResumeSync)
+                if (shouldResync && !isHost) {
                     wasDisconnected = false
+                    didRequestResumeSync = true
                     viewModel.requestReconnect()
                 }
             }

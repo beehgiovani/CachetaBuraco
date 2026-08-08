@@ -37,6 +37,7 @@ enum class AppState {
     MAIN_MENU,
     LOBBY_HOST,
     LOBBY_CLIENT,
+    LOBBY_CLIENT_RESUME,
     LOBBY_ONLINE_HOST,
     LOBBY_ONLINE_CLIENT,
     LOBBY_BOT,
@@ -120,10 +121,32 @@ class MainActivity : ComponentActivity() {
                             onResumeGame = {
                                 val savedInfo = MatchViewModel.getSavedGameInfo(applicationContext)
                                 if (savedInfo != null) {
-                                    isHosting = savedInfo.first
-                                    activeConfig = savedInfo.second
+                                    val (savedIsHost, savedConfig) = savedInfo
+                                    activeConfig = savedConfig
                                     activeRepository = networkRepository
-                                    currentScreen = AppState.MATCH
+                                    if (savedIsHost) {
+                                        // O host e quem tem estado de verdade pra retomar sozinho:
+                                        // reabre a sala com a mesma config e ja segue pra mesa. O
+                                        // parceiro/cliente reconecta puxando o REQ_RECONNECT (ver
+                                        // MatchScreen) assim que reencontrar a sala pelo Wi-Fi.
+                                        isHosting = true
+                                        networkRepository.startHosting(
+                                            FakeAuthRepository.getCurrentPlayer()?.name ?: "Jogador",
+                                            config = savedConfig
+                                        )
+                                        networkRepository.presetRememberedSeats(
+                                            MatchViewModel.getSavedPlayerSeats(applicationContext)
+                                        )
+                                        currentScreen = AppState.MATCH
+                                    } else {
+                                        // Cliente nao tem o endereco do host guardado -- sem isso
+                                        // nao da pra reconectar sozinho, entao ele precisa procurar
+                                        // a sala de novo. A diferenca pro "Procurar sala" comum e que
+                                        // aqui o snapshot local NAO e apagado, entao a mesa restaurada
+                                        // (mao, jogos, placar) continua valendo ao entrar.
+                                        isHosting = false
+                                        currentScreen = AppState.LOBBY_CLIENT_RESUME
+                                    }
                                 }
                             }
                         )
@@ -148,6 +171,21 @@ class MainActivity : ComponentActivity() {
                             onGameStarted = { config ->
                                 MatchViewModel.clearSavedGame(applicationContext)
                                 activeConfig = config
+                                isHosting = false
+                                activeRepository = networkRepository
+                                currentScreen = AppState.MATCH
+                            }
+                        )
+
+                        AppState.LOBBY_CLIENT_RESUME -> LobbyScreen(
+                            isHosting = false,
+                            networkRepository = networkRepository,
+                            onBack = { currentScreen = AppState.MAIN_MENU },
+                            onGameStarted = {
+                                // Ao contrario do join normal, aqui NAO chamo
+                                // MatchViewModel.clearSavedGame: a mesa que essa tela
+                                // reconecta e a mesma do snapshot local, entao o proprio
+                                // MatchViewModel restaura mao/jogos/placar sozinho ao abrir.
                                 isHosting = false
                                 activeRepository = networkRepository
                                 currentScreen = AppState.MATCH
