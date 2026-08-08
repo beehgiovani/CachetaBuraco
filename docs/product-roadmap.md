@@ -196,10 +196,24 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 ## 7. Conta Google e perfil
 
 - [x] Usar sessao anonima do Supabase durante o Beta.
-- [ ] Configurar Google como provedor no Supabase Auth e vincular a identidade
-  anonima existente para preservar perfil, XP e ranking.
-- [ ] Configurar callback/deep link Android e testar cancelamento e troca de conta.
-- [ ] Firebase Auth nao e obrigatorio: o Supabase Auth faz OAuth Google direto.
+- [x] Configurar Google como provedor no Supabase Auth e vincular a identidade
+  anonima existente para preservar perfil, XP e ranking. Provedor Google
+  habilitado no Supabase Auth (OAuth Client Web no Google Cloud Console) e
+  "manual linking" habilitado. `GoogleAccountLinker` usa Credential Manager
+  nativo (sem navegador) pra pegar o ID token e chama
+  `auth.linkIdentityWithIdToken()`, que atualiza a MESMA identidade anonima
+  em vez de criar usuario novo -- API confirmada lendo o sources jar do
+  supabase-kt 3.7.0 direto. Botao "Vincular conta Google" na
+  `OnlineProfileScreen`. Falta confirmacao de teste real em aparelho fisico.
+- [ ] Testar cancelamento e troca de conta em aparelho fisico. Como o fluxo
+  escolhido foi nativo (Credential Manager), nao existe callback/deep link
+  pra configurar -- esse item do enunciado original nao se aplica. O que
+  falta e so a confirmacao manual: cancelar o seletor de conta (deve ficar
+  em silencio, sem mensagem de erro) e vincular com uma conta diferente da
+  que ja esta logada no Google no aparelho.
+- [x] Firebase Auth nao e obrigatorio: o Supabase Auth faz OAuth Google direto.
+  Confirmado -- implementado 100% via supabase-kt + Credential Manager, sem
+  nenhuma dependencia do Firebase.
 
 ## 8. Qualidade e publicacao
 
