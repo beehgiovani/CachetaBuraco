@@ -108,6 +108,12 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
   Melhoria possivel, nao bloqueante: distinguir rejeicao de regra (mostrar
   "jogada invalida") de falha de rede (mostrar "sessao caiu") na UI.
 - [ ] Adicionar telemetria de falhas sem registrar mao, token ou dado privado.
+  Escrita e validada localmente: migration `0024_client_failure_telemetry.sql`
+  cria `client_failure_events` + RPC `report_client_failure`, com categoria
+  fechada (lista fixa, nao texto livre) pra nunca correr risco de vazar
+  mensagem de excecao crua. Ainda NAO aplicada em producao -- CLI do Supabase
+  caiu pro projeto errado de novo, aguardando novo login. App ainda nao chama
+  essa RPC (falta ligar em `OnlineNetworkRepository.reportSessionFailure`).
 
 ## 7. Conta Google e perfil
 
