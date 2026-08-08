@@ -143,26 +143,28 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 - [x] Validar no servidor posse das cartas, lixo, morto e vitoria dos assentos clientes.
 - [x] Identificar rodadas no app e aguardar confirmacao antes de uma nova distribuicao.
 - [x] Aplicar e homologar no remoto a protecao de eventos atrasados da migration `0017`.
-- [ ] Mover baralho, mao do host e transicoes completas para autoridade server-side antes do competitivo.
+- [x] Mover baralho, mao do host e transicoes completas para autoridade server-side antes do competitivo.
   Distribuicao inicial (embaralhar, mao de cada assento, vira, mortos, lixo de
   abertura) e server-side desde as migrations `0020`-`0023`. Migration `0025`
-  (fase 3a) fecha o proximo pedaco: compra do monte principal durante a
+  (fase 3a) fechou o proximo pedaco: compra do monte principal durante a
   rodada, reciclagem do lixo (Cacheta) e morto virando novo monte
-  (Buraco/Tranca) agora sao decididos pela RPC `online_draw_deck_card`, nao
-  mais pelo host em memoria. `start_online_round` tambem parou de devolver o
-  baralho inteiro pro host na distribuicao -- sem isso a RPC de compra seria
-  simbolica, ja que o host teria conhecimento total do monte desde o inicio
-  da rodada (gap real encontrado so ao revisar o design, nao no codigo
-  escrito hoje cedo). Validado local com Postgres real (compra normal, fora
-  da vez, chamada direta de cliente, reciclagem, morto-como-monte, monte e
-  mortos esgotados) antes de aplicar em producao. Detalhe completo em
-  `online-roadmap.md`.
-  Falta: (1) homologar num aparelho de verdade: (2) mover o pedido explicito
-  de time pegar o morto inteiro como mao (`REQ_PICK_MORTO`/`SERVE_MORTO`)
-  para autoridade do servidor -- continua decidido e servido pelo host
-  localmente por enquanto (gap conhecido, deliberadamente adiado); o host so
-  espelha o consumo de morto feito pela compra server-side pra evitar os
-  dois mecanismos usarem o mesmo morto.
+  (Buraco/Tranca), decididos pela RPC `online_draw_deck_card`. `start_online_round`
+  tambem parou de devolver o baralho inteiro pro host na distribuicao -- sem
+  isso a RPC de compra seria simbolica, ja que o host teria conhecimento
+  total do monte desde o inicio da rodada (gap real encontrado so ao revisar
+  o design). Migration `0026` (fase 3b) fechou o ultimo gap conhecido: o
+  pedido explicito de time pegar o morto inteiro como mao
+  (`REQ_PICK_MORTO`/`SERVE_MORTO`) agora e decidido pela RPC
+  `online_take_morto`, reaproveitando a mesma tabela `private.match_deck_state`
+  da 0025 -- os dois mecanismos disputam a mesma coluna `mortos`, travada com
+  "for update" contra qualquer corrida entre eles. Dois bugs reais de ordem
+  entre a RPC e o trigger existente (`0016`) encontrados testando local antes
+  de aplicar em producao (a RPC atualizava mao/`picked_morto` antes de
+  publicar o evento, e o proprio trigger, que checa os mesmos campos pra
+  recusar pedido duplicado, via o valor ja novo e recusava a primeira
+  tentativa). Detalhe completo em `online-roadmap.md`.
+  Falta so homologar em aparelho de verdade -- a autoridade do servidor em si
+  esta completa pra toda a rodada (distribuicao, compra, morto).
 - [x] Manter cartas privadas fora do estado publico e apagar payload privado apos
   o resultado confirmado. Migration `0011_private_event_redaction.sql`: apos
   `complete_match`, eventos privados preservam so tipo/messageId/marca de
