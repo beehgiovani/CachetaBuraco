@@ -128,6 +128,30 @@ publicacao esta em `product-roadmap.md`.
   dados pro ranking online inflaria as estatisticas sem representar vitorias
   de verdade. So partida online (validada pelo servidor) conta pro ranking
   global.
+- [x] Foto de perfil real, informacoes de conta e exclusao de conta (pedido
+  do usuario, 2026-08-08). Migrations `0028` (bucket `avatar-photos` no
+  Storage com RLS por pasta do proprio usuario, `profiles.avatar_photo_path`,
+  RPCs `set_profile_avatar_photo`/`clear_profile_avatar_photo`, tabela
+  `avatar_photo_reports` + RPC `report_avatar_photo` pra denuncia manual --
+  revisada por SQL Editor/CLI, sem UI de admin), `0029`
+  (`delete_own_account()`, cascata testada localmente com sala hospedada,
+  resultado de partida de outro jogador e telemetria) e `0030` (expoe
+  `avatar_photo_path` no ranking global/por periodo). Recorte de foto feito
+  em Compose puro (pan+pinch + `GraphicsLayer.toImageBitmap()`), sem lib de
+  terceiro -- o projeto so usa `google()`/`mavenCentral()`, uma lib de crop
+  tipica exigiria JitPack.
+  Validado no emulador contra producao: Photo Picker nativo abre certo,
+  dialogo de recorte abre/fecha sem crashar, info de conta ("convidado" vs
+  e-mail) e o dialogo de exclusao renderizam certo, nenhuma excecao no
+  logcat. O upload completo da foto (Storage + RPC) nao fechou de ponta a
+  ponta no emulador -- o MediaProvider do sistema ficou instavel
+  ("Process system isn't responding" recorrente mesmo apos reboot completo
+  do emulador) e o `ContentResolver.openInputStream` da imagem escolhida
+  trava indefinidamente sem lancar excecao nenhuma no app. A logica de
+  upload/RPC em si ja foi validada via SQL local (migration `0028`); falta
+  confirmar o caminho completo (escolher -> recortar -> subir -> aparecer no
+  proprio perfil e no ranking) em aparelho fisico, junto dos outros itens de
+  homologacao ja pendentes neste documento.
 
 ## Fase 3 - Salas online
 

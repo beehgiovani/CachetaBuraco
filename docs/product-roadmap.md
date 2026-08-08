@@ -228,11 +228,16 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 - [x] Firebase Auth nao e obrigatorio: o Supabase Auth faz OAuth Google direto.
   Confirmado -- implementado 100% via supabase-kt + Credential Manager, sem
   nenhuma dependencia do Firebase.
-- [ ] Perfil online mais completo (pedido do usuario, proxima frente de trabalho):
-  foto de perfil real (upload), alem dos 6 avatares internos atuais; mais
-  informacoes de conta pra quem nao esta no modo convidado/anonimo; botao de
-  exclusao de conta (LGPD); outras opcoes pertinentes a definir durante a
-  implementacao.
+- [x] Perfil online mais completo (pedido do usuario). Foto de perfil real via
+  Photo Picker nativo + recorte em Compose (migrations `0028`/`0030`, sem lib
+  de crop de terceiro -- ver `online-roadmap.md` pros detalhes tecnicos e o
+  gap de teste que ficou pendente); informacoes de conta (convidado vs
+  e-mail/data de vinculo) lidas direto do supabase-kt, sem RPC nova; botao de
+  exclusao de conta (LGPD, migration `0029`) com confirmacao e cascata
+  completa testada localmente. "Outras opcoes pertinentes" ficou restrito a
+  isso -- editar apelido online separado do nome local foi identificado mas
+  deliberadamente deixado de fora (mudanca de comportamento maior, nao
+  pedida).
 
 ## 8. Qualidade e publicacao
 
