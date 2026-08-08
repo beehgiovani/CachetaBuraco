@@ -228,6 +228,11 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 - [x] Firebase Auth nao e obrigatorio: o Supabase Auth faz OAuth Google direto.
   Confirmado -- implementado 100% via supabase-kt + Credential Manager, sem
   nenhuma dependencia do Firebase.
+- [ ] Perfil online mais completo (pedido do usuario, proxima frente de trabalho):
+  foto de perfil real (upload), alem dos 6 avatares internos atuais; mais
+  informacoes de conta pra quem nao esta no modo convidado/anonimo; botao de
+  exclusao de conta (LGPD); outras opcoes pertinentes a definir durante a
+  implementacao.
 
 ## 8. Qualidade e publicacao
 

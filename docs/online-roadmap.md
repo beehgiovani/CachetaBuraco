@@ -120,7 +120,14 @@ publicacao esta em `product-roadmap.md`.
 - [x] Criar ranking global por vitorias.
 - [x] Criar ranking semanal e mensal.
 - [x] Mostrar ranking online em tela propria, fora da partida.
-- [ ] Sincronizar ranking local somente quando usuario optar/estiver logado.
+- [x] Sincronizar ranking local somente quando usuario optar/estiver logado.
+  Decisao consciente (usuario, 2026-08-08): NAO linkar. Ranking local
+  (`SharedPreferences`, Wi-Fi/maquina) e ranking online (`player_stats`)
+  continuam sistemas totalmente separados de proposito -- partida local
+  contra a maquina ou pratica repetida nao e resultado real, e subir esses
+  dados pro ranking online inflaria as estatisticas sem representar vitorias
+  de verdade. So partida online (validada pelo servidor) conta pro ranking
+  global.
 
 ## Fase 3 - Salas online
 
@@ -131,6 +138,12 @@ publicacao esta em `product-roadmap.md`.
 - [x] Persistir estado publico da mesa como evento do host.
 - [x] Persistir eventos de jogada com ordem e deduplicacao.
 - [x] Reconectar integrante no mesmo assento sem vazar mao privada.
+- [ ] Sala privada com senha (pedido do usuario, 2026-08-08): dedicar uma
+  partida entre duas pessoas especificas, sem aparecer na busca publica ou
+  exigir senha pra entrar mesmo achando o codigo.
+- [ ] Chat geral (fora de sala) e chat por sala (pedido do usuario,
+  2026-08-08). Chat de sala e apagado depois que a partida encerra, pra nao
+  acumular historico no banco.
 
 ## Fase 4 - Antitrapaca e consistencia
 
@@ -173,7 +186,10 @@ publicacao esta em `product-roadmap.md`.
   conquistadas, apagadas quando ainda faltam.
 - [ ] Evitar fichas, aposta, moeda ou mecanica que pareca jogo de azar com valor real.
 
-## Fase 6 - Campeonatos
+## Fase 6 - Campeonatos (adiada, 2026-08-08)
+
+Substituida por enquanto por sala privada com senha + chat (Fase 3 acima),
+que o usuario preferiu priorizar. Fica registrada aqui pra retomar depois.
 
 - [ ] Criar campeonato simples por pontos.
 - [ ] Inscricao por sala/codigo.
