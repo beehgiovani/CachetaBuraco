@@ -153,10 +153,24 @@ publicacao esta em `product-roadmap.md`.
 ## Fase 5 - Gamificacao sem fichas
 
 - [x] XP por partidas finalizadas.
-- [ ] Medalhas por vitorias, sequencias e campeonatos.
-- [ ] Temporadas semanais/mensais.
+- [x] Medalhas por vitorias, sequencias e campeonatos.
+  Vitorias/sequencia/modo feitas na migration `0027_gamification_medals.sql`:
+  tabela `player_medals` (so leitura publica, so o trigger escreve) e um
+  trigger em `player_stats` que compara old/new contra 18 limiares fixos
+  (vitorias totais 10/50/150, sequencia 3/5/10, vitorias por modo 10/25/50
+  cada, partidas jogadas 25/100/300), com backfill pra quem ja tinha passado
+  do limiar antes da migration existir. Testado local com Postgres real
+  (limiares multiplos, idempotencia, backfill, RLS) antes de aplicar em
+  producao. A parte de campeonato deste item fica pendente pra Fase 6, que
+  ainda nao tem nenhuma tabela no banco -- nao ha o que premiar ainda.
+- [ ] Temporadas semanais/mensais. Ja existe ranking por periodo (semanal/
+  mensal, migration `0009`), mas uma "temporada" de verdade com reset e
+  premiacao e feature separada, maior, ainda nao coberta.
 - [x] Estatisticas por modo: Cacheta, Buraco e Tranca.
-- [ ] Badges visuais no perfil.
+- [x] Badges visuais no perfil. `OnlineProfileScreen` ganhou secao
+  "Medalhas": grid com as 18 medalhas do catalogo, coloridas por tier
+  (bronze/prata/ouro, mesmo esquema do 1o/2o/3o lugar do ranking) quando
+  conquistadas, apagadas quando ainda faltam.
 - [ ] Evitar fichas, aposta, moeda ou mecanica que pareca jogo de azar com valor real.
 
 ## Fase 6 - Campeonatos
