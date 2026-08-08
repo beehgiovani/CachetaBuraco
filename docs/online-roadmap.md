@@ -19,7 +19,7 @@ publicacao esta em `product-roadmap.md`.
 - [x] Rejeitar estruturalmente MELD invalido e DRAW_DISCARD bloqueado pela config da sala (migration `0014`).
 - [x] Validar posse da carta, mao vazia, lixo, morto e vitoria dos assentos clientes no servidor (migration `0016`).
 - [x] Aplicar a migration `0017` para rejeitar eventos atrasados de outra rodada no projeto remoto correto.
-- [ ] Tornar o servidor autoridade integral do baralho e tambem da mao do host antes de um modo competitivo.
+- [x] Tornar o servidor autoridade integral do baralho e tambem da mao do host antes de um modo competitivo.
   Fase 1 escrita e validada localmente: `0020_server_authoritative_deal.sql`
   (RPC `start_online_round`) embaralha e distribui a rodada inteira (Cacheta/
   Buraco/Tranca, curinga/vira/mortos/3 vermelho na Tranca) dentro do Postgres,
@@ -74,6 +74,23 @@ publicacao esta em `product-roadmap.md`.
   mesmo fluxo dentro da SQL), e homologar numa partida online real com dois
   aparelhos antes de confiar 100% nisso em produção de fato.
 
+  **Atualizacao (fase 3a/3b, migrations `0025`/`0026`, aplicadas em producao):**
+  a fase 1 acima so cobria a distribuicao inicial -- a compra durante a rodada
+  e o baralho continuavam voltando inteiros pro host. A `0025` fechou a compra
+  do monte principal (RPC `online_draw_deck_card`: monte, reciclagem do lixo na
+  Cacheta, morto virando novo monte no Buraco/Tranca) e parou de devolver o
+  baralho inteiro pro host na distribuicao -- sem isso a RPC de compra seria
+  simbolica. A `0026` fechou o ultimo pedaco: pedido explicito de time pegar o
+  morto inteiro como mao (`REQ_PICK_MORTO`/`SERVE_MORTO`, RPC
+  `online_take_morto`), reaproveitando a mesma tabela `private.match_deck_state`
+  da `0025` com "for update" pra travar contra corrida entre as duas RPCs.
+  Dois bugs de ordem entre RPC e o trigger `0016` encontrados testando local
+  antes de aplicar (a RPC atualizava mao/`picked_morto` antes de publicar o
+  evento, e o trigger recusava a primeira tentativa achando que era repetida).
+  Com isso a autoridade do servidor cobre a rodada inteira (distribuicao,
+  compra, morto); so falta a homologacao em aparelho fisico (item logo acima
+  e a secao 1 do `product-roadmap.md`).
+
 ## Fase 1 - Base online sem mudar o jogo local
 
 - [x] Criar projeto Supabase e confirmar regiao.
@@ -120,7 +137,10 @@ publicacao esta em `product-roadmap.md`.
 - [x] Host continua sendo autoridade na primeira versao online.
 - [x] Validar estruturalmente MELD e DRAW_DISCARD no banco pela migration `0014`.
 - [x] Servidor valida posse da carta, mao vazia, lixo, morto e vitoria dos assentos clientes com estado privado por assento.
-- [ ] Servidor passa a controlar baralho, mao do host e todas as transicoes sem depender da autoridade do aparelho host.
+- [x] Servidor passa a controlar baralho, mao do host e todas as transicoes sem depender da autoridade do aparelho host.
+  Fechado pelas migrations `0020`-`0026` (distribuicao, compra do monte,
+  morto). Detalhe completo no item equivalente do checklist de seguranca
+  acima.
 - [x] Servidor confirma repeticao identica e rejeita colisao diferente pelo `message_id`.
 - [x] Host rejeita evento fora do turno antes de alterar a mesa canonica.
 - [x] Banco rejeita compra, baixa e descarte enviados por um assento fora do turno publico.
