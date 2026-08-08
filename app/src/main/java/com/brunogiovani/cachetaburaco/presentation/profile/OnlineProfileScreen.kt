@@ -31,11 +31,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.brunogiovani.cachetaburaco.data.online.GoogleAccountLinker
+import com.brunogiovani.cachetaburaco.data.online.GoogleLinkResult
 import com.brunogiovani.cachetaburaco.domain.models.OnlineAvatar
 import com.brunogiovani.cachetaburaco.domain.models.OnlineProfile
 import com.brunogiovani.cachetaburaco.domain.repositories.OnlineProfileRepository
@@ -58,7 +61,9 @@ internal sealed interface OnlineProfileUiState {
         val profile: OnlineProfile,
         val selectedAvatar: OnlineAvatar = profile.avatar,
         val saving: Boolean = false,
-        val feedback: String? = null
+        val feedback: String? = null,
+        val linkingGoogle: Boolean = false,
+        val googleLinkFeedback: String? = null
     ) : OnlineProfileUiState
 
     data class Error(val message: String) : OnlineProfileUiState
@@ -68,11 +73,13 @@ internal sealed interface OnlineProfileUiState {
 fun OnlineProfileScreen(
     playerName: String,
     repository: OnlineProfileRepository,
+    googleLinker: GoogleAccountLinker = remember { GoogleAccountLinker() },
     onBack: () -> Unit
 ) {
     var state by remember { mutableStateOf<OnlineProfileUiState>(OnlineProfileUiState.Loading) }
     var reloadRequest by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     LaunchedEffect(playerName, reloadRequest) {
         state = OnlineProfileUiState.Loading
@@ -110,8 +117,32 @@ fun OnlineProfileScreen(
                         }
                     )
             }
+        },
+        onLinkGoogle = {
+            val ready = state as? OnlineProfileUiState.Ready ?: return@OnlineProfileContent
+            if (ready.linkingGoogle) return@OnlineProfileContent
+            state = ready.copy(linkingGoogle = true, googleLinkFeedback = null)
+            scope.launch {
+                val result = googleLinker.link(context)
+                val current = state as? OnlineProfileUiState.Ready ?: return@launch
+                state = current.copy(
+                    linkingGoogle = false,
+                    googleLinkFeedback = googleLinkFeedbackFor(result)
+                )
+            }
         }
     )
+}
+
+/** Mensagem exibida apos tentar vincular a conta Google, ou null pra ficar em silencio (cancelamento). */
+internal fun googleLinkFeedbackFor(result: GoogleLinkResult): String? = when (result) {
+    is GoogleLinkResult.Success ->
+        "Conta Google vinculada! Seu perfil fica protegido mesmo se trocar de aparelho."
+    is GoogleLinkResult.Cancelled -> null
+    is GoogleLinkResult.NoGoogleAccountOnDevice ->
+        "Nenhuma conta Google encontrada neste aparelho."
+    is GoogleLinkResult.Failed ->
+        "Não foi possível vincular a conta Google agora. Tente novamente."
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -121,7 +152,8 @@ internal fun OnlineProfileContent(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onAvatarSelected: (OnlineAvatar) -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    onLinkGoogle: () -> Unit = {}
 ) {
     MenuBackdrop {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -217,6 +249,36 @@ internal fun OnlineProfileContent(
                                         Text(
                                             it,
                                             color = if (it.startsWith("Avatar")) MenuColors.TableGreenLight else MenuColors.Gold,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        MenuEntrance(delayMillis = 120) {
+                            MenuSectionCard(title = "Conta") {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        "Vincule sua conta Google para não perder o perfil e o ranking se trocar de aparelho.",
+                                        color = MenuColors.OnDarkMuted,
+                                        textAlign = TextAlign.Center,
+                                        fontSize = if (compact) 11.sp else 13.sp
+                                    )
+                                    MenuFilledButton(
+                                        text = "Vincular conta Google",
+                                        onClick = onLinkGoogle,
+                                        enabled = !state.linkingGoogle,
+                                        loading = state.linkingGoogle
+                                    )
+                                    state.googleLinkFeedback?.let {
+                                        Text(
+                                            it,
+                                            color = if (it.startsWith("Conta Google vinculada")) MenuColors.TableGreenLight else MenuColors.Gold,
+                                            textAlign = TextAlign.Center,
                                             fontSize = 12.sp
                                         )
                                     }
