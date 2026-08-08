@@ -78,4 +78,14 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     testImplementation("org.json:json:20260719")
+
+    // Testes instrumentados (rodam em emulador/dispositivo real).
+    // O BOM precisa ser declarado de novo aqui porque "androidTestImplementation"
+    // e "implementation" sao configuracoes separadas - a plataforma de uma nao
+    // se propaga pra outra, entao sem isso o ui-test-junit4 baixaria uma versao
+    // solta, fora de sincronia com o compose-bom usado no app.
+    androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.01"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
 }
