@@ -380,6 +380,10 @@ fun MatchScreen(
                     "O host perdeu a conexão." else "Um oponente saiu da partida.",
                 isClient = !isHost,
                 onBack = {
+                    // O jogador escolheu desistir em vez de tentar reconectar --
+                    // mesma limpeza das outras saidas, senao esse jogo abandonado
+                    // continuaria oferecendo "Continuar Partida Salva" depois.
+                    viewModel.clearGameSnapshot()
                     networkRepository.stopHosting()
                     networkRepository.disconnect()
                     onLeaveMatch()
@@ -412,6 +416,12 @@ fun MatchScreen(
                     if (details.isMatchOver) {
                         (context as? Activity)?.let { PostMatchInterstitialAd.showIfReady(it) }
                     }
+                    // A mesma limpeza que o botao "Sair" da barra superior ja fazia --
+                    // sem isso, uma partida que terminou de verdade (ou foi abandonada
+                    // aqui) continuava oferecendo "Continuar Partida Salva" no menu com
+                    // um retrato incompleto (o ultimo salvo antes do dialogo de fim de
+                    // rodada aparecer, nao o resultado final).
+                    viewModel.clearGameSnapshot()
                     networkRepository.stopHosting()
                     networkRepository.disconnect()
                     onLeaveMatch()
