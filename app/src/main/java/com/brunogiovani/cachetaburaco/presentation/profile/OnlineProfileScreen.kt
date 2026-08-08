@@ -3,6 +3,7 @@ package com.brunogiovani.cachetaburaco.presentation.profile
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -15,8 +16,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -39,6 +43,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.brunogiovani.cachetaburaco.data.online.GoogleAccountLinker
 import com.brunogiovani.cachetaburaco.data.online.GoogleLinkResult
+import com.brunogiovani.cachetaburaco.domain.models.EarnedMedal
+import com.brunogiovani.cachetaburaco.domain.models.MedalCatalog
+import com.brunogiovani.cachetaburaco.domain.models.MedalDefinition
+import com.brunogiovani.cachetaburaco.domain.models.MedalTier
 import com.brunogiovani.cachetaburaco.domain.models.OnlineAvatar
 import com.brunogiovani.cachetaburaco.domain.models.OnlineProfile
 import com.brunogiovani.cachetaburaco.domain.repositories.OnlineProfileRepository
@@ -63,7 +71,8 @@ internal sealed interface OnlineProfileUiState {
         val saving: Boolean = false,
         val feedback: String? = null,
         val linkingGoogle: Boolean = false,
-        val googleLinkFeedback: String? = null
+        val googleLinkFeedback: String? = null,
+        val medals: List<EarnedMedal> = emptyList()
     ) : OnlineProfileUiState
 
     data class Error(val message: String) : OnlineProfileUiState
@@ -85,7 +94,10 @@ fun OnlineProfileScreen(
         state = OnlineProfileUiState.Loading
         state = runCatching { repository.loadProfile(playerName) }
             .fold(
-                onSuccess = { OnlineProfileUiState.Ready(it) },
+                onSuccess = { profile ->
+                    val medals = runCatching { repository.loadMedals(playerName) }.getOrDefault(emptyList())
+                    OnlineProfileUiState.Ready(profile = profile, medals = medals)
+                },
                 onFailure = { OnlineProfileUiState.Error("Não foi possível carregar seu perfil online.") }
             )
     }
@@ -109,7 +121,8 @@ fun OnlineProfileScreen(
                             OnlineProfileUiState.Ready(
                                 profile = it,
                                 selectedAvatar = it.avatar,
-                                feedback = "Avatar sincronizado."
+                                feedback = "Avatar sincronizado.",
+                                medals = ready.medals
                             )
                         },
                         onFailure = {
@@ -212,6 +225,36 @@ internal fun OnlineProfileContent(
                                         textAlign = TextAlign.Center,
                                         fontSize = if (compact) 11.sp else 13.sp
                                     )
+                                }
+                            }
+                        }
+
+                        MenuEntrance(delayMillis = 40) {
+                            MenuSectionCard(title = "Medalhas") {
+                                val earnedCodes = remember(state.medals) { state.medals.map { it.code }.toSet() }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp)
+                                ) {
+                                    Text(
+                                        "${earnedCodes.size} de ${MedalCatalog.all.size} conquistadas",
+                                        color = MenuColors.OnDarkMuted,
+                                        fontSize = if (compact) 11.sp else 13.sp
+                                    )
+                                    FlowRow(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        maxItemsInEachRow = if (compact) 3 else 6,
+                                        horizontalArrangement = Arrangement.SpaceEvenly,
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        MedalCatalog.all.forEach { medal ->
+                                            MedalBadge(
+                                                medal = medal,
+                                                earned = medal.code in earnedCodes,
+                                                compact = compact
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -332,6 +375,61 @@ private fun AvatarOption(
     }
 }
 
+private val MedalSilver = Color(0xFFC0C0C0)
+private val MedalBronze = Color(0xFFCD7F32)
+
+private fun MedalTier.color(): Color = when (this) {
+    MedalTier.GOLD -> MenuColors.Gold
+    MedalTier.SILVER -> MedalSilver
+    MedalTier.BRONZE -> MedalBronze
+}
+
+@Composable
+private fun MedalBadge(medal: MedalDefinition, earned: Boolean, compact: Boolean) {
+    val tierColor = medal.tier.color()
+    Column(
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .widthIn(max = if (compact) 76.dp else 92.dp)
+            .background(
+                if (earned) tierColor.copy(alpha = 0.16f) else Color.Transparent,
+                MenuShapes.Card
+            )
+            .border(
+                width = if (earned) 2.dp else 1.dp,
+                color = if (earned) tierColor else Color.White.copy(alpha = 0.12f),
+                shape = MenuShapes.Card
+            )
+            .padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(if (compact) 32.dp else 40.dp)
+                .background(
+                    if (earned) tierColor else Color.White.copy(alpha = 0.08f),
+                    CircleShape
+                )
+        )
+        Text(
+            medal.title,
+            color = if (earned) tierColor else MenuColors.OnDarkMuted,
+            fontSize = if (compact) 8.sp else 10.sp,
+            fontWeight = if (earned) FontWeight.Bold else FontWeight.Normal,
+            textAlign = TextAlign.Center,
+            maxLines = 2
+        )
+        Text(
+            medal.description,
+            color = MenuColors.OnDarkMuted.copy(alpha = if (earned) 1f else 0.6f),
+            fontSize = if (compact) 7.sp else 9.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 2
+        )
+    }
+}
+
 // ─── Previews ─────────────────────────────────────────────────────────────
 
 @Preview(showBackground = true, device = "spec:width=1280dp,height=800dp,dpi=240", name = "Perfil - tablet/paisagem")
@@ -347,7 +445,12 @@ private fun OnlineProfilePreview() {
         OnlineProfileContent(
             state = OnlineProfileUiState.Ready(
                 profile = OnlineProfile("preview", "Jogador", OnlineAvatar.SAPPHIRE),
-                selectedAvatar = OnlineAvatar.RUBY
+                selectedAvatar = OnlineAvatar.RUBY,
+                medals = listOf(
+                    EarnedMedal("WINS_10", "2026-01-01"),
+                    EarnedMedal("STREAK_3", "2026-02-01"),
+                    EarnedMedal("CACHETA_WINS_10", "2026-03-01")
+                )
             ),
             onBack = {},
             onRetry = {},

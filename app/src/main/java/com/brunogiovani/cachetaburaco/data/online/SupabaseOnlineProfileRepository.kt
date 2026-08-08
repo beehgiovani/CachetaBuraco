@@ -1,5 +1,6 @@
 package com.brunogiovani.cachetaburaco.data.online
 
+import com.brunogiovani.cachetaburaco.domain.models.EarnedMedal
 import com.brunogiovani.cachetaburaco.domain.models.OnlineAvatar
 import com.brunogiovani.cachetaburaco.domain.models.OnlineProfile
 import com.brunogiovani.cachetaburaco.domain.repositories.OnlineProfileRepository
@@ -32,6 +33,13 @@ class SupabaseOnlineProfileRepository(
             parameters = buildJsonObject { put("p_avatar_id", avatar.storageId) }
         ).decodeSingle<PublicOnlineProfileRow>().toDomain()
     }
+
+    override suspend fun loadMedals(playerName: String): List<EarnedMedal> {
+        val playerId = identity.ensure(playerName)
+        return client.from("player_medals").select {
+            filter { filter("profile_id", FilterOperator.EQ, playerId) }
+        }.decodeList<PlayerMedalRow>().map { EarnedMedal(code = it.medalCode, earnedAt = it.earnedAt) }
+    }
 }
 
 @Serializable
@@ -40,6 +48,12 @@ internal data class PublicOnlineProfileRow(
     val id: String? = null,
     val nickname: String,
     @SerialName("avatar_url") val avatarUrl: String? = null
+)
+
+@Serializable
+internal data class PlayerMedalRow(
+    @SerialName("medal_code") val medalCode: String,
+    @SerialName("earned_at") val earnedAt: String? = null
 )
 
 internal fun PublicOnlineProfileRow.toDomain(): OnlineProfile {
