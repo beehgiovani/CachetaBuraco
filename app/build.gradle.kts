@@ -88,4 +88,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    // So pra mudar a escala de fonte do sistema via shell antes do teste de
+    // fonte grande (settings put system font_scale) e devolver ao normal depois.
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0")
 }

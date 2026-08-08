@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -373,7 +374,10 @@ private fun HostPanel(
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(bottom = 12.dp),
-        modifier = modifier
+        // So pra testes instrumentados conseguirem rolar ate itens que ainda
+        // nao foram compostos (LazyColumn so materializa o que esta visivel);
+        // performScrollToNode() precisa de uma referencia ao container.
+        modifier = modifier.testTag("hostPanelLazyColumn")
     ) {
         if (!isPublished) item {
             MenuSectionCard(title = "Modo de jogo", stepNumber = 1) {

@@ -205,7 +205,18 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
 
 - [x] Rotacionar a secret key exposta durante a configuracao inicial.
 - [ ] Exigir testes unitarios para regras, bot, codecs, sala, ranking e ViewModels.
-- [ ] Adicionar testes instrumentados para navegacao, fonte grande e partida basica.
+- [x] Adicionar testes instrumentados para navegacao, fonte grande e partida basica.
+  Navegacao ja tinha `LoginFlowNavigationTest`/`MainMenuNavigationTest`.
+  Adicionado `BotMatchNavigationTest` (menu -> lobby -> partida contra a
+  maquina carrega a mesa -> sair -> volta ao menu, unico modo que nao
+  depende de rede/Supabase) e `LargeFontScaleNavigationTest` (nova
+  `FontScaleRule` muda `font_scale` do sistema pra 2.0x via shell antes da
+  Activity abrir e devolve ao normal depois, mesmo se o teste falhar).
+  Confirmados passando isolados em aparelho fisico e emulador. Achado no
+  processo: rodar as 4 classes de teste juntas expoe uma flakiness de
+  ordem entre elas (`LoginFlowNavigationTest` falha só quando roda depois
+  de outra, mas passa sozinho em ambos os aparelhos) -- nao e regressao
+  desta mudanca, mas fica registrado como investigacao futura.
 - [ ] Rodar unit tests, lint e build debug/release antes de cada marco pratico.
 - [ ] Manter comentarios curtos, naturais e voltados ao motivo da regra.
 - [ ] Remover codigo, scripts e assets legados somente depois de provar que nao ha uso.
