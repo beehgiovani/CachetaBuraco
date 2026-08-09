@@ -28,6 +28,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,6 +58,7 @@ import com.brunogiovani.cachetaburaco.presentation.components.AdPlacement
 import com.brunogiovani.cachetaburaco.presentation.components.MenuActionRow
 import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
 import com.brunogiovani.cachetaburaco.presentation.components.MenuEntrance
+import com.brunogiovani.cachetaburaco.presentation.components.MenuGroupLabel
 import com.brunogiovani.cachetaburaco.presentation.components.MenuSectionCard
 import com.brunogiovani.cachetaburaco.presentation.components.MenuShapes
 import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
@@ -263,6 +266,23 @@ private fun MainMenuContent(
                 }
             }
         }
+
+        // Atalho pro chat geral sem precisar rolar ate o fim da lista de
+        // acoes -- ela ja tem 8 itens agrupados em 3 secoes, e o chat e a
+        // unica acao sem estado (nunca tem "regra pra configurar antes"),
+        // entao vale ficar sempre a um toque de distancia.
+        FloatingActionButton(
+            onClick = onOpenGlobalChat,
+            containerColor = MenuColors.TableGreenLight,
+            contentColor = Color.White,
+            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(20.dp)
+        ) {
+            Text("💬", fontSize = 22.sp)
+        }
     }
 }
 
@@ -313,6 +333,7 @@ private fun ActionsPanel(
                 highlighted = true
             )
         }
+        MenuGroupLabel("Rede local")
         MenuActionRow(
             title = "Criar sala local",
             subtitle = "Configure regras para jogar na mesma rede Wi-Fi",
@@ -335,6 +356,7 @@ private fun ActionsPanel(
             accentColor = MenuColors.TableGreenDeep,
             onClick = onJoinRoom
         )
+        MenuGroupLabel("Online")
         MenuActionRow(
             title = "Criar sala online",
             subtitle = "Publique as regras e jogue pela internet",
@@ -352,19 +374,20 @@ private fun ActionsPanel(
             badge = "BETA"
         )
         MenuActionRow(
-            title = "Chat geral",
-            subtitle = "Converse com quem estiver online agora",
-            glyph = "💬",
-            accentColor = MenuColors.TableGreenLight,
-            onClick = onOpenGlobalChat,
-            badge = "BETA"
-        )
-        MenuActionRow(
             title = "Campeonatos",
             subtitle = "Crie ou entre com código, veja a classificação",
             glyph = "🏆",
             accentColor = MenuColors.Gold,
             onClick = onOpenChampionships,
+            badge = "BETA"
+        )
+        MenuGroupLabel("Comunidade")
+        MenuActionRow(
+            title = "Chat geral",
+            subtitle = "Converse com quem estiver online agora",
+            glyph = "💬",
+            accentColor = MenuColors.TableGreenLight,
+            onClick = onOpenGlobalChat,
             badge = "BETA"
         )
     }
