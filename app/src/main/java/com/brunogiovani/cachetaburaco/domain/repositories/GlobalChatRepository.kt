@@ -2,11 +2,13 @@ package com.brunogiovani.cachetaburaco.domain.repositories
 
 import kotlinx.coroutines.flow.Flow
 
-// Chat geral (fora de sala): Realtime Broadcast puro, sem tabela nem
-// historico -- decisao deliberada pra nao criar mais uma superficie de
-// moderacao/RLS pra algo sem escopo (mensagem global, qualquer um pode ver).
-// Quem entra depois so ve mensagens novas, nada retroativo.
+// Chat geral (fora de sala): tabela + Realtime Postgres Changes (migration
+// 0036), mesmo padrao do chat de sala -- mas com retencao curta (trigger
+// mantem so as ultimas 200 linhas) em vez de apagar no fim de uma partida,
+// ja que o chat geral nao tem esse gatilho. Quem entra ve as ultimas
+// mensagens (contexto do assunto) e depois recebe as novas ao vivo.
 data class GlobalChatEntry(
+    val id: Long,
     val senderName: String,
     val body: String,
     val isSelf: Boolean

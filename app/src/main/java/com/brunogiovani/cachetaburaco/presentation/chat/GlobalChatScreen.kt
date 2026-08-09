@@ -12,12 +12,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -51,9 +53,9 @@ import com.brunogiovani.cachetaburaco.presentation.components.MenuStatusMessage
 import com.brunogiovani.cachetaburaco.presentation.components.MenuTopBar
 import kotlinx.coroutines.launch
 
-// So em memoria, nunca persistido -- e Realtime Broadcast puro (ver
-// SupabaseGlobalChatRepository), entao esse limite so evita a lista crescer
-// sem fim numa sessao muito longa com o chat aberto.
+// O servidor ja retem so as ultimas 200 linhas (migration 0036); este
+// limite e so um teto extra pra lista em memoria nao crescer sem fim numa
+// sessao muito longa com o chat aberto.
 private const val MAX_DISPLAYED_GLOBAL_CHAT_MESSAGES = 200
 
 @Composable
@@ -102,7 +104,7 @@ fun GlobalChatScreen(
         ) {
             MenuTopBar(
                 title = "Chat geral",
-                subtitle = "Sem histórico -- mensagens somem quando você sai",
+                subtitle = "Veja as últimas mensagens e continue a conversa",
                 onBack = onBack
             )
 
@@ -122,7 +124,7 @@ fun GlobalChatScreen(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(messages) { entry -> GlobalChatBubble(entry) }
+                        items(messages, key = { it.id }) { entry -> GlobalChatBubble(entry) }
                     }
                 }
             }
@@ -168,28 +170,70 @@ fun GlobalChatScreen(
     }
 }
 
+// Paleta pra distinguir remetentes num chat sem avatar de verdade (broadcast
+// puro, sem tabela -- ver GlobalChatRepository.kt). Cor derivada de um hash
+// do nome, nao de quem enviou primeiro, entao a mesma pessoa sempre aparece
+// com a mesma cor durante a sessao inteira.
+private val SenderPalette = listOf(
+    MenuColors.TableGreenLight,
+    MenuColors.Gold,
+    Color(0xFF7EA6FF),
+    Color(0xFFFF8A65),
+    Color(0xFFBA68C8),
+    Color(0xFF4DD0E1)
+)
+
+private fun senderColor(name: String): Color =
+    SenderPalette[(name.hashCode().let { if (it == Int.MIN_VALUE) 0 else kotlin.math.abs(it) }) % SenderPalette.size]
+
+private fun senderInitial(name: String): String =
+    name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+
 @Composable
 private fun GlobalChatBubble(entry: GlobalChatEntry) {
-    Column(
-        horizontalAlignment = if (entry.isSelf) Alignment.End else Alignment.Start,
+    val accent = if (entry.isSelf) MenuColors.TableGreenLight else senderColor(entry.senderName)
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp, if (entry.isSelf) Alignment.End else Alignment.Start),
+        verticalAlignment = Alignment.Bottom,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Text(
-            text = if (entry.isSelf) "Você" else entry.senderName,
-            color = Color.White.copy(alpha = 0.5f),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Box(
-            modifier = Modifier
-                .background(
-                    if (entry.isSelf) MenuColors.TableGreenLight.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.08f),
-                    RoundedCornerShape(12.dp)
-                )
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            Text(text = entry.body, color = Color.White, fontSize = 13.sp)
+        if (!entry.isSelf) SenderAvatar(name = entry.senderName, color = accent)
+        Column(horizontalAlignment = if (entry.isSelf) Alignment.End else Alignment.Start) {
+            Text(
+                text = if (entry.isSelf) "Você" else entry.senderName,
+                color = accent.copy(alpha = 0.85f),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Box(
+                modifier = Modifier
+                    .background(
+                        if (entry.isSelf) accent.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.08f),
+                        RoundedCornerShape(
+                            topStart = 12.dp,
+                            topEnd = 12.dp,
+                            bottomStart = if (entry.isSelf) 12.dp else 2.dp,
+                            bottomEnd = if (entry.isSelf) 2.dp else 12.dp
+                        )
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Text(text = entry.body, color = Color.White, fontSize = 13.sp)
+            }
         }
+        if (entry.isSelf) SenderAvatar(name = "Você", color = accent)
+    }
+}
+
+@Composable
+private fun SenderAvatar(name: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .background(color.copy(alpha = 0.24f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(senderInitial(name), color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -210,9 +254,9 @@ private fun GlobalChatScreenPreview() {
             playerName = "Bruno",
             repository = PreviewGlobalChatRepository(
                 listOf(
-                    GlobalChatEntry(senderName = "Carlos", body = "Alguém pra jogar Buraco?", isSelf = false),
-                    GlobalChatEntry(senderName = "Bruno", body = "Eu topo!", isSelf = true),
-                    GlobalChatEntry(senderName = "Ana", body = "Cria a sala aí", isSelf = false)
+                    GlobalChatEntry(id = 1, senderName = "Carlos", body = "Alguém pra jogar Buraco?", isSelf = false),
+                    GlobalChatEntry(id = 2, senderName = "Bruno", body = "Eu topo!", isSelf = true),
+                    GlobalChatEntry(id = 3, senderName = "Ana", body = "Cria a sala aí", isSelf = false)
                 )
             ),
             onBack = {}
