@@ -94,6 +94,82 @@ class MatchViewModelStartGameTest {
     }
 
     @Test
+    fun `client draw request times out and forces reconnect when host never serves a card`() = runTest {
+        // Bug real (2026-08-09, relatado pelo usuario): "compra fica aguardando
+        // carta do host e nada acontece". O cliente mandava REQ_DRAW_DECK e
+        // ficava preso em WAITING_OPPONENT pra sempre se o SERVE_CARD nunca
+        // chegasse -- nada existia pra tirar ele desse estado.
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "client",
+            isHost = false,
+            config = MatchConfig(gameType = GameType.CACHETA, maxPlayers = 2)
+        )
+        repo.emitIncoming(
+            NetworkMessage(
+                senderId = "host",
+                type = "GAME_START",
+                payload = gameStartPayload(gameType = GameType.CACHETA, seat = 1, activeSeat = 1, maxPlayers = 2),
+                senderSeat = 0
+            )
+        )
+        runCurrent()
+        assertEquals(TurnPhase.DRAW, viewModel.gameState.value.turnPhase)
+
+        viewModel.drawFromDeck()
+        runCurrent()
+        assertEquals(TurnPhase.WAITING_OPPONENT, viewModel.gameState.value.turnPhase)
+        assertEquals(1, repo.broadcastMessages.count { it.type == "REQ_DRAW_DECK" })
+        assertTrue(
+            "Nao deveria reconectar antes do prazo vencer.",
+            repo.broadcastMessages.none { it.type == "REQ_RECONNECT" }
+        )
+
+        advanceTimeBy(9_000)
+        runCurrent()
+
+        assertEquals(
+            "Depois do prazo sem SERVE_CARD, o cliente deveria pedir reconexao sozinho.",
+            1,
+            repo.broadcastMessages.count { it.type == "REQ_RECONNECT" }
+        )
+    }
+
+    @Test
+    fun `client draw request rejected by server unsticks waiting state immediately`() = runTest {
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "client",
+            isHost = false,
+            config = MatchConfig(gameType = GameType.CACHETA, maxPlayers = 2)
+        )
+        repo.emitIncoming(
+            NetworkMessage(
+                senderId = "host",
+                type = "GAME_START",
+                payload = gameStartPayload(gameType = GameType.CACHETA, seat = 1, activeSeat = 1, maxPlayers = 2),
+                senderSeat = 0
+            )
+        )
+        runCurrent()
+
+        viewModel.drawFromDeck()
+        runCurrent()
+        assertEquals(TurnPhase.WAITING_OPPONENT, viewModel.gameState.value.turnPhase)
+
+        repo.actionRejections.tryEmit("ROOM_NOT_FOUND")
+        runCurrent()
+
+        assertEquals(
+            "Uma rejeicao explicita nao deveria esperar o timeout pra reconectar.",
+            1,
+            repo.broadcastMessages.count { it.type == "REQ_RECONNECT" }
+        )
+    }
+
+    @Test
     fun `disposed view model stops consuming messages from later match`() = runTest {
         val repo = FakeLocalNetworkRepository()
         val viewModel = MatchViewModel(
@@ -3755,6 +3831,7 @@ private class FakeLocalNetworkRepository(
     override val connectedClientsCount: StateFlow<Int> = MutableStateFlow(0)
     override val incomingMessages: MutableSharedFlow<NetworkMessage> = MutableSharedFlow(replay = 64)
     override val connectionStatus: StateFlow<ConnectionStatus> = MutableStateFlow(ConnectionStatus.IDLE)
+    override val actionRejections: MutableSharedFlow<String> = MutableSharedFlow(extraBufferCapacity = 8)
 
     val broadcastMessages = mutableListOf<NetworkMessage>()
     val privateClientMessages = mutableListOf<PrivateClientMessage>()

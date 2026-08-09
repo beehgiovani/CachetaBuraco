@@ -147,6 +147,14 @@ class MatchViewModel(
     private var pendingDiscardDrawCardId: String? = null
     private var pendingDiscardDrawRest: List<Card> = emptyList()
     private val pendingRemoteDiscardDraws = mutableMapOf<Int, PendingRemoteDiscardDraw>()
+    // Incrementado a cada REQ_DRAW_DECK que o cliente manda pro host (so
+    // online). Se o SERVE_CARD nunca chegar -- mensagem perdida, RPC do host
+    // falhando silenciosamente, etc. -- o cliente ficava preso pra sempre em
+    // WAITING_OPPONENT sem nenhum jeito de sair (achado real, 2026-08-09: "compra
+    // fica aguardando carta do host e nada acontece"). O timeout em
+    // drawFromDeck() confere esse numero antes de agir, pra nao reconectar por
+    // engano se um SERVE_CARD legitimo ja tiver resolvido a espera antes do prazo.
+    private var drawRequestSequence = 0
     private val processedNetworkMessageIds = linkedSetOf<String>()
     private val readyRemoteSeats = mutableSetOf<Int>()
     private var gameStartRequested = false
@@ -215,9 +223,17 @@ class MatchViewModel(
         // jogada invalida acabava mostrando "conexao falhou" (achado real).
         viewModelScope.launch {
             networkRepository.actionRejections.collect {
+                // Uma jogada recusada bem na hora que o cliente esperava resposta do
+                // host (compra, morto) travava ele pra sempre em WAITING_OPPONENT --
+                // nada nunca tirava o jogador desse estado (achado real, 2026-08-09).
+                // Alem da mensagem, pede reconexao pra puxar o estado real do host.
+                val stuckWaiting = !isHost && _gameState.value.turnPhase == TurnPhase.WAITING_OPPONENT
                 _gameState.value = _gameState.value.copy(
                     feedbackMessage = "Jogada não aceita pelo servidor. Sincronize a partida."
                 )
+                if (stuckWaiting) {
+                    requestReconnect()
+                }
             }
         }
         if (!isHost && networkRepository.requiresClientReadyHandshake) {
@@ -570,6 +586,16 @@ class MatchViewModel(
                 feedbackMessage = "Aguardando carta do host..."
             )
             networkRepository.sendMessage(NetworkMessage(playerId, "REQ_DRAW_DECK", buildSeatPayload(localSeat)))
+
+            if (networkRepository.isOnlineTransport) {
+                val requestId = ++drawRequestSequence
+                viewModelScope.launch {
+                    delay(DRAW_REQUEST_TIMEOUT_MS)
+                    if (requestId == drawRequestSequence && _gameState.value.turnPhase == TurnPhase.WAITING_OPPONENT) {
+                        requestReconnect()
+                    }
+                }
+            }
         }
     }
 
@@ -3510,6 +3536,12 @@ class MatchViewModel(
         // So pra contar tamanho do monte online (ver applyServerDeal); nunca
         // representa uma carta real e nunca deve ser lido por conteudo.
         private val PLACEHOLDER_DECK_CARD = Card(Suit.SPADES, Rank.ACE)
+
+        // Prazo pro cliente esperar o SERVE_CARD antes de forcar uma
+        // reconexao/resync (ver drawRequestSequence). Generoso o bastante pra
+        // nao disparar em falso com uma rede lenta, curto o bastante pra nao
+        // deixar o jogador travado por muito tempo se algo der errado.
+        private const val DRAW_REQUEST_TIMEOUT_MS = 8_000L
 
         fun hasSavedGame(context: Context): Boolean {
             return context.filesDir.listFiles { _, name -> name.startsWith("game_snapshot_") && name.endsWith(".json") }?.isNotEmpty() == true
