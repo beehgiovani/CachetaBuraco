@@ -68,8 +68,8 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:storage-kt")
 
     // Carrega a foto de perfil (Supabase Storage) nos avatares.
-    implementation("io.coil-kt.coil3:coil-compose:3.4.0")
-    implementation("io.coil-kt.coil3:coil-network-okhttp:3.4.0")
+    implementation("io.coil-kt.coil3:coil-compose:3.5.0")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
     // O engine Android do Ktor (HttpURLConnection) nao suporta WebSocket, o que
     // quebra o Realtime do Supabase (usado para descobrir salas online).
     implementation("io.ktor:ktor-client-okhttp:3.5.2")
