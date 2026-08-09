@@ -72,7 +72,13 @@ class SupabaseGlobalChatRepository(
         } finally {
             collector.cancel()
             liveMessages.close()
-            realtimeChannel.unsubscribe()
+            // Se o flow for cancelado antes do subscribe(blockUntilSubscribed
+            // = true) terminar (ex.: sai da tela rapido), o WebSocket
+            // subjacente ainda nao foi inicializado -- unsubscribe() acessa
+            // ele direto e lanca IllegalStateException("Websocket not yet
+            // initialized"), derrubando o app com uma FATAL EXCEPTION so por
+            // causa de uma limpeza que nao tinha nada real pra desfazer.
+            runCatching { realtimeChannel.unsubscribe() }
         }
     }
 

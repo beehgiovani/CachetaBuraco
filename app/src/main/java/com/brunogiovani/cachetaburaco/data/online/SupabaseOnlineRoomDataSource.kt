@@ -87,7 +87,13 @@ class SupabaseOnlineRoomDataSource(
         } finally {
             changeCollector.cancel()
             refreshes.close()
-            realtimeChannel.unsubscribe()
+            // Se o flow for cancelado antes do subscribe(blockUntilSubscribed
+            // = true) confirmar, o WebSocket ainda nao foi inicializado --
+            // unsubscribe() acessa ele direto e lanca IllegalStateException
+            // ("Websocket not yet initialized"), derrubando o app com uma
+            // FATAL EXCEPTION so por causa de uma limpeza sem nada real pra
+            // desfazer (achado testando o chat geral, mesmo padrao usado la).
+            runCatching { realtimeChannel.unsubscribe() }
         }
     }.distinctUntilChanged()
 
@@ -260,7 +266,10 @@ class SupabaseOnlineRoomDataSource(
         } finally {
             liveCollector.cancel()
             liveRows.close()
-            realtimeChannel.unsubscribe()
+            // Mesmo risco do bloco de observeWaitingRooms acima: unsubscribe()
+            // pode lancar se o socket ainda nao tiver inicializado quando o
+            // flow e cancelado.
+            runCatching { realtimeChannel.unsubscribe() }
         }
     }
 
@@ -309,7 +318,10 @@ class SupabaseOnlineRoomDataSource(
         } finally {
             liveCollector.cancel()
             liveRows.close()
-            realtimeChannel.unsubscribe()
+            // Mesmo risco do bloco de observeWaitingRooms acima: unsubscribe()
+            // pode lancar se o socket ainda nao tiver inicializado quando o
+            // flow e cancelado.
+            runCatching { realtimeChannel.unsubscribe() }
         }
     }
 
@@ -343,7 +355,13 @@ class SupabaseOnlineRoomDataSource(
         } finally {
             changeCollector.cancel()
             refreshes.close()
-            realtimeChannel.unsubscribe()
+            // Se o flow for cancelado antes do subscribe(blockUntilSubscribed
+            // = true) confirmar, o WebSocket ainda nao foi inicializado --
+            // unsubscribe() acessa ele direto e lanca IllegalStateException
+            // ("Websocket not yet initialized"), derrubando o app com uma
+            // FATAL EXCEPTION so por causa de uma limpeza sem nada real pra
+            // desfazer (achado testando o chat geral, mesmo padrao usado la).
+            runCatching { realtimeChannel.unsubscribe() }
         }
     }.distinctUntilChanged()
 
