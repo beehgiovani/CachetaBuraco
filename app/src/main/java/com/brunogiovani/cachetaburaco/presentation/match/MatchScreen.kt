@@ -29,9 +29,13 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +57,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -75,6 +80,7 @@ import com.brunogiovani.cachetaburaco.domain.usecases.GameRulesEngine
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
 import com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom
 import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
+import com.brunogiovani.cachetaburaco.domain.repositories.RoomChatMessage
 import com.brunogiovani.cachetaburaco.presentation.components.CardView
 import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
 import com.brunogiovani.cachetaburaco.presentation.components.MenuMotion
@@ -94,6 +100,11 @@ private val ColorRed = Color(0xFFB71C1C)
 private val ColorRedLight = Color(0xFFEF5350)
 private val ColorSurface = Color(0xAA000000)
 private val ColorLockRed = Color(0xFFEF5350)
+
+// Chat de sala nao tem historico no banco alem da propria partida (migration
+// 0032 apaga tudo quando ela encerra) -- este limite e so pra nao deixar a
+// lista em memoria crescer sem fim numa partida muito longa.
+private const val MAX_DISPLAYED_CHAT_MESSAGES = 200
 
 private fun String.isErrorFeedback(): Boolean {
     return contains("nao", ignoreCase = true) ||
@@ -172,6 +183,21 @@ fun MatchScreen(
     var showDealingAnimation by remember { mutableStateOf(false) }
     var mortoNoticeText by remember { mutableStateOf<String?>(null) }
     var lastMortoNoticeKey by remember { mutableStateOf("") }
+
+    // Chat de sala: so faz sentido no transporte online (Wi-Fi local e maquina
+    // nao tem, ver LocalNetworkRepository.roomChatMessages).
+    val roomChatEnabled = networkRepository.isOnlineTransport
+    val roomChatMessages = remember { mutableStateListOf<RoomChatMessage>() }
+    var showRoomChat by remember { mutableStateOf(false) }
+    var unreadRoomChatCount by remember { mutableIntStateOf(0) }
+    LaunchedEffect(networkRepository, roomChatEnabled) {
+        if (!roomChatEnabled) return@LaunchedEffect
+        networkRepository.roomChatMessages.collect { message ->
+            roomChatMessages.add(message)
+            if (roomChatMessages.size > MAX_DISPLAYED_CHAT_MESSAGES) roomChatMessages.removeAt(0)
+            if (!showRoomChat) unreadRoomChatCount++
+        }
+    }
 
     LaunchedEffect(Unit) { if (isHost && !viewModel.isRestored) viewModel.startGame() }
 
@@ -309,12 +335,22 @@ fun MatchScreen(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            TopBar(state = state, config = state.config, onLeave = {
-                viewModel.clearGameSnapshot()
-                networkRepository.stopHosting()
-                networkRepository.disconnect()
-                onLeaveMatch()
-            })
+            TopBar(
+                state = state,
+                config = state.config,
+                onLeave = {
+                    viewModel.clearGameSnapshot()
+                    networkRepository.stopHosting()
+                    networkRepository.disconnect()
+                    onLeaveMatch()
+                },
+                showChatButton = roomChatEnabled,
+                unreadChatCount = unreadRoomChatCount,
+                onOpenChat = {
+                    showRoomChat = true
+                    unreadRoomChatCount = 0
+                }
+            )
 
             Column(
                 modifier = Modifier
@@ -462,6 +498,15 @@ fun MatchScreen(
                 onMeldNew = { viewModel.meldSelectedCards(chosenTargetIndex = -1) },
                 canMeldNew = canMeldNew,
                 onDismiss = { viewModel.cancelMeldTargetSelection() }
+            )
+        }
+
+        // -- Chat da sala (so online) -----------------------------------------------------------------
+        if (showRoomChat) {
+            RoomChatDialog(
+                messages = roomChatMessages,
+                onSend = { body -> networkRepository.sendRoomChatMessage(body) },
+                onDismiss = { showRoomChat = false }
             )
         }
     }
@@ -1137,7 +1182,14 @@ private fun ScoreColumn(
 
 // ── Top Bar ───────────────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun TopBar(state: GameState, config: MatchConfig, onLeave: () -> Unit) {
+private fun TopBar(
+    state: GameState,
+    config: MatchConfig,
+    onLeave: () -> Unit,
+    showChatButton: Boolean = false,
+    unreadChatCount: Int = 0,
+    onOpenChat: () -> Unit = {}
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1147,9 +1199,27 @@ private fun TopBar(state: GameState, config: MatchConfig, onLeave: () -> Unit) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Sair
-        TextButton(onClick = onLeave) {
-            Text("Sair", color = Color.White, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Sair
+            TextButton(onClick = onLeave) {
+                Text("Sair", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+
+            if (showChatButton) {
+                Box {
+                    TextButton(onClick = onOpenChat) {
+                        Text("💬", fontSize = 18.sp)
+                    }
+                    if (unreadChatCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(9.dp)
+                                .background(ColorRedLight, CircleShape)
+                        )
+                    }
+                }
+            }
         }
 
         // Fase / Status central. A cor troca com uma transicao curta (em vez de
@@ -3125,6 +3195,139 @@ private fun RestartMatchDialog(onConfirm: () -> Unit, onDecline: () -> Unit) {
     )
 }
 
+// --- Chat da sala ------------------------------------------
+@Composable
+private fun RoomChatDialog(
+    messages: List<RoomChatMessage>,
+    onSend: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var draft by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            color = Color(0xEE101820),
+            shape = MenuShapes.Card,
+            shadowElevation = 18.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 480.dp)
+                .border(1.dp, MenuColors.Gold.copy(alpha = 0.3f), MenuShapes.Card)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Chat da sala", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = onDismiss) {
+                        Text("Fechar", color = MenuColors.Gold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (messages.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Nenhuma mensagem ainda. Mande um oi!",
+                            color = Color.White.copy(alpha = 0.5f),
+                            fontSize = 13.sp
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.weight(1f, fill = false).heightIn(max = 320.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(messages) { message -> RoomChatBubble(message) }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { if (it.length <= 500) draft = it },
+                        placeholder = { Text("Mensagem...", color = Color.White.copy(alpha = 0.4f)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = {
+                            val body = draft.trim()
+                            if (body.isNotEmpty()) {
+                                onSend(body)
+                                draft = ""
+                            }
+                        }),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MenuColors.TableGreenLight,
+                            unfocusedBorderColor = MenuColors.BorderStrong,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            cursorColor = MenuColors.TableGreenLight
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = {
+                            val body = draft.trim()
+                            if (body.isNotEmpty()) {
+                                onSend(body)
+                                draft = ""
+                            }
+                        },
+                        enabled = draft.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MenuColors.TableGreenLight)
+                    ) {
+                        Text("Enviar")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoomChatBubble(message: RoomChatMessage) {
+    val senderLabel = if (message.isSelf) "Você" else message.senderSeat?.let { "J${it + 1}" } ?: "Jogador"
+    Column(
+        horizontalAlignment = if (message.isSelf) Alignment.End else Alignment.Start,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = senderLabel,
+            color = Color.White.copy(alpha = 0.5f),
+            fontSize = 10.sp
+        )
+        Box(
+            modifier = Modifier
+                .background(
+                    if (message.isSelf) MenuColors.TableGreenLight.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.08f),
+                    RoundedCornerShape(12.dp)
+                )
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .widthIn(max = 260.dp)
+        ) {
+            Text(text = message.body, color = Color.White, fontSize = 13.sp)
+        }
+    }
+}
+
 // --- Diálogo de Desconexão --------------------------------
 @Composable
 private fun DisconnectDialog(message: String, isClient: Boolean, onBack: () -> Unit, onWait: () -> Unit, onReconnect: () -> Unit) {
@@ -3166,11 +3369,11 @@ fun MatchScreenPreview() {
                 override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(1)
                 override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<NetworkMessage>()
                 override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(ConnectionStatus.CONNECTED)
-                override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
+                override fun startHosting(playerName: String, port: Int, config: MatchConfig?, password: String?) {}
                 override fun stopHosting() {}
                 override fun startDiscovery() {}
                 override fun stopDiscovery() {}
-                override fun connectToRoom(host: String, port: Int) {}
+                override fun connectToRoom(host: String, port: Int, password: String?) {}
                 override fun disconnect() {}
                 override fun sendMessage(message: NetworkMessage) {}
                 override fun sendMessageToClient(clientIndex: Int, message: NetworkMessage) = true
@@ -3195,11 +3398,11 @@ fun MatchScreenCachetaPreview() {
                 override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(1)
                 override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<NetworkMessage>()
                 override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(ConnectionStatus.CONNECTED)
-                override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
+                override fun startHosting(playerName: String, port: Int, config: MatchConfig?, password: String?) {}
                 override fun stopHosting() {}
                 override fun startDiscovery() {}
                 override fun stopDiscovery() {}
-                override fun connectToRoom(host: String, port: Int) {}
+                override fun connectToRoom(host: String, port: Int, password: String?) {}
                 override fun disconnect() {}
                 override fun sendMessage(message: NetworkMessage) {}
                 override fun sendMessageToClient(clientIndex: Int, message: NetworkMessage) = true
@@ -3230,11 +3433,11 @@ fun MatchScreenTrancaPreview() {
                 override val connectedClientsCount = kotlinx.coroutines.flow.MutableStateFlow(1)
                 override val incomingMessages = kotlinx.coroutines.flow.MutableSharedFlow<NetworkMessage>()
                 override val connectionStatus = kotlinx.coroutines.flow.MutableStateFlow(ConnectionStatus.CONNECTED)
-                override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
+                override fun startHosting(playerName: String, port: Int, config: MatchConfig?, password: String?) {}
                 override fun stopHosting() {}
                 override fun startDiscovery() {}
                 override fun stopDiscovery() {}
-                override fun connectToRoom(host: String, port: Int) {}
+                override fun connectToRoom(host: String, port: Int, password: String?) {}
                 override fun disconnect() {}
                 override fun sendMessage(message: NetworkMessage) {}
                 override fun sendMessageToClient(clientIndex: Int, message: NetworkMessage) = true

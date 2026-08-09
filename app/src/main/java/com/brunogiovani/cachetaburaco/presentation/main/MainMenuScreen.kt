@@ -70,6 +70,7 @@ fun MainMenuScreen(
     onJoinOnlineRoom: () -> Unit,
     onOpenOnlineProfile: () -> Unit,
     onOpenOnlineRanking: () -> Unit,
+    onOpenGlobalChat: () -> Unit = {},
     onPlayBot: () -> Unit,
     onResumeGame: () -> Unit = {}
 ) {
@@ -91,6 +92,7 @@ fun MainMenuScreen(
         onOpenOnlineProfile = onOpenOnlineProfile,
         onRequestLogout = { showLogoutDialog = true },
         onOpenOnlineRanking = onOpenOnlineRanking,
+        onOpenGlobalChat = onOpenGlobalChat,
         onResumeGame = onResumeGame,
         onHostRoom = onHostRoom,
         onPlayBot = onPlayBot,
@@ -139,6 +141,7 @@ private fun MainMenuContent(
     onOpenOnlineProfile: () -> Unit,
     onRequestLogout: () -> Unit,
     onOpenOnlineRanking: () -> Unit,
+    onOpenGlobalChat: () -> Unit = {},
     onResumeGame: () -> Unit,
     onHostRoom: () -> Unit,
     onPlayBot: () -> Unit,
@@ -179,7 +182,8 @@ private fun MainMenuContent(
                             onPlayBot = onPlayBot,
                             onJoinRoom = onJoinRoom,
                             onHostOnlineRoom = onHostOnlineRoom,
-                            onJoinOnlineRoom = onJoinOnlineRoom
+                            onJoinOnlineRoom = onJoinOnlineRoom,
+                            onOpenGlobalChat = onOpenGlobalChat
                         )
                     }
                     MenuEntrance(delayMillis = 60) {
@@ -245,7 +249,8 @@ private fun MainMenuContent(
                                 onPlayBot = onPlayBot,
                                 onJoinRoom = onJoinRoom,
                                 onHostOnlineRoom = onHostOnlineRoom,
-                                onJoinOnlineRoom = onJoinOnlineRoom
+                                onJoinOnlineRoom = onJoinOnlineRoom,
+                                onOpenGlobalChat = onOpenGlobalChat
                             )
                         }
                         SafeAdBannerSlot(compact = true, placement = AdPlacement.MAIN_MENU)
@@ -285,7 +290,8 @@ private fun ActionsPanel(
     onPlayBot: () -> Unit,
     onJoinRoom: () -> Unit,
     onHostOnlineRoom: () -> Unit,
-    onJoinOnlineRoom: () -> Unit
+    onJoinOnlineRoom: () -> Unit,
+    onOpenGlobalChat: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier.widthIn(max = 460.dp),
@@ -337,6 +343,14 @@ private fun ActionsPanel(
             glyph = "★",
             accentColor = MenuColors.GoldDeep,
             onClick = onJoinOnlineRoom,
+            badge = "BETA"
+        )
+        MenuActionRow(
+            title = "Chat geral",
+            subtitle = "Converse com quem estiver online agora",
+            glyph = "💬",
+            accentColor = MenuColors.TableGreenLight,
+            onClick = onOpenGlobalChat,
             badge = "BETA"
         )
     }

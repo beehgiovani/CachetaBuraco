@@ -45,7 +45,8 @@ class SupabaseOnlineRoomDataSource(
     override suspend fun createRoom(
         playerName: String,
         roomCode: String,
-        config: MatchConfig
+        config: MatchConfig,
+        password: String?
     ): OnlineRoomSession {
         val playerId = ensureIdentity(playerName)
         val row = client.postgrest.rpc(
@@ -55,6 +56,7 @@ class SupabaseOnlineRoomDataSource(
                 put("p_game_type", config.gameType.name)
                 put("p_config", config.toOnlineRoomConfigJson())
                 put("p_max_players", config.maxPlayers)
+                password?.trim()?.takeIf { it.isNotEmpty() }?.let { put("p_password", it) }
             }
         ).decodeSingle<RoomSessionRow>()
         return row.toSession(localPlayerId = playerId)
@@ -91,12 +93,16 @@ class SupabaseOnlineRoomDataSource(
 
     override suspend fun joinRoom(
         playerName: String,
-        roomCode: String
+        roomCode: String,
+        password: String?
     ): OnlineRoomSession {
         val playerId = ensureIdentity(playerName)
         val row = client.postgrest.rpc(
             function = "join_match_room",
-            parameters = buildJsonObject { put("p_room_code", roomCode) }
+            parameters = buildJsonObject {
+                put("p_room_code", roomCode)
+                password?.trim()?.takeIf { it.isNotEmpty() }?.let { put("p_password", it) }
+            }
         ).decodeSingle<RoomSessionRow>()
         return row.toSession(localPlayerId = playerId)
     }
@@ -256,6 +262,64 @@ class SupabaseOnlineRoomDataSource(
             liveRows.close()
             realtimeChannel.unsubscribe()
         }
+    }
+
+    override suspend fun sendRoomChatMessage(session: OnlineRoomSession, body: String): Boolean {
+        val trimmed = body.trim()
+        if (trimmed.isEmpty()) return false
+        client.from("room_chat_messages").insert(
+            RoomChatInsert(
+                roomId = session.room.roomId,
+                senderId = session.playerId,
+                senderSeat = session.seat,
+                body = trimmed
+            )
+        )
+        return true
+    }
+
+    override fun observeRoomChat(session: OnlineRoomSession): Flow<OnlineChatMessage> = channelFlow {
+        val roomId = session.room.roomId
+        val realtimeChannel = client.channel("room-chat-$roomId")
+        val liveRows = Channel<RoomChatMessageRow>(capacity = Channel.UNLIMITED)
+        val changes = realtimeChannel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
+            table = "room_chat_messages"
+            filter("room_id", FilterOperator.EQ, roomId)
+        }
+        val liveCollector = launch {
+            changes.collect { change ->
+                liveRows.send(change.decodeRecord())
+            }
+        }
+        val emittedIds = linkedSetOf<Long>()
+
+        try {
+            realtimeChannel.subscribe(blockUntilSubscribed = true)
+
+            // A consulta inicial cobre quem abre o chat no meio da partida ou
+            // reconecta. O canal ja esta inscrito antes disso pra nao perder
+            // uma mensagem enviada durante essa leitura.
+            loadRoomChatMessages(roomId).forEach { row ->
+                if (emittedIds.add(row.id)) send(row.toChatMessage())
+            }
+
+            for (row in liveRows) {
+                if (emittedIds.add(row.id)) send(row.toChatMessage())
+            }
+        } finally {
+            liveCollector.cancel()
+            liveRows.close()
+            realtimeChannel.unsubscribe()
+        }
+    }
+
+    private suspend fun loadRoomChatMessages(roomId: String): List<RoomChatMessageRow> {
+        return client.from("room_chat_messages").select {
+            filter {
+                filter("room_id", FilterOperator.EQ, roomId)
+            }
+            order(column = "id", order = Order.ASCENDING)
+        }.decodeList()
     }
 
     override fun observeConnectedSeats(session: OnlineRoomSession): Flow<Set<Int>> = channelFlow {
@@ -423,3 +487,30 @@ private data class RoomPlayerPresenceRow(
     val seat: Int,
     val connected: Boolean
 )
+
+@Serializable
+private data class RoomChatInsert(
+    @SerialName("room_id") val roomId: String,
+    @SerialName("sender_id") val senderId: String,
+    @SerialName("sender_seat") val senderSeat: Int,
+    val body: String
+)
+
+@Serializable
+private data class RoomChatMessageRow(
+    val id: Long,
+    @SerialName("sender_id") val senderId: String? = null,
+    @SerialName("sender_seat") val senderSeat: Int? = null,
+    val body: String,
+    @SerialName("created_at") val createdAt: String
+)
+
+private fun RoomChatMessageRow.toChatMessage(): OnlineChatMessage {
+    return OnlineChatMessage(
+        id = id,
+        senderId = senderId,
+        senderSeat = senderSeat,
+        body = body,
+        createdAt = createdAt
+    )
+}

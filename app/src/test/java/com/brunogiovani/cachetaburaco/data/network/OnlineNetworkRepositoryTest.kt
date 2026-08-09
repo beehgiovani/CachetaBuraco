@@ -1,6 +1,7 @@
 package com.brunogiovani.cachetaburaco.data.network
 
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomDataSource
+import com.brunogiovani.cachetaburaco.data.online.OnlineChatMessage
 import com.brunogiovani.cachetaburaco.data.online.OnlineCompletedMatch
 import com.brunogiovani.cachetaburaco.data.online.OnlineFailureCategory
 import com.brunogiovani.cachetaburaco.data.online.OnlineRoomSession
@@ -12,6 +13,7 @@ import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus
 import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
+import com.brunogiovani.cachetaburaco.domain.repositories.RoomChatMessage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -710,6 +712,65 @@ class OnlineNetworkRepositoryTest {
         assertEquals(ConnectionStatus.ROOM_READY, repository.connectionStatus.value)
     }
 
+    @Test
+    fun `room chat message sent is delivered back marked as self`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource()
+        dataSource.waitingRooms.value = listOf(dataSource.roomSummary(roomCode = "CHAT2345"))
+        val repository = repository(dataSource)
+        repository.connectToRoom("CHAT2345", 0)
+        runCurrent()
+
+        val received = mutableListOf<RoomChatMessage>()
+        val collector = launch { repository.roomChatMessages.collect { received += it } }
+        runCurrent()
+
+        var sendResult: Boolean? = null
+        repository.sendRoomChatMessage("oi pessoal") { sendResult = it }
+        runCurrent()
+
+        assertEquals(true, sendResult)
+        assertEquals(listOf("oi pessoal"), dataSource.sentChatMessages)
+        assertEquals(1, received.size)
+        assertEquals("oi pessoal", received.single().body)
+        assertEquals(1, received.single().senderSeat)
+        assertTrue(received.single().isSelf)
+        collector.cancel()
+    }
+
+    @Test
+    fun `room chat message from another session is not marked as self`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource()
+        dataSource.waitingRooms.value = listOf(dataSource.roomSummary(roomCode = "CHAT3456"))
+        val repository = repository(dataSource)
+        repository.connectToRoom("CHAT3456", 0)
+        runCurrent()
+
+        val received = mutableListOf<RoomChatMessage>()
+        val collector = launch { repository.roomChatMessages.collect { received += it } }
+        runCurrent()
+
+        dataSource.emitChatMessage(senderId = "auth-host", senderSeat = 0, body = "oi do host")
+        runCurrent()
+
+        assertEquals(1, received.size)
+        assertEquals("oi do host", received.single().body)
+        assertFalse(received.single().isSelf)
+        collector.cancel()
+    }
+
+    @Test
+    fun `sending room chat without an active session fails immediately`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource()
+        val repository = repository(dataSource)
+
+        var sendResult: Boolean? = null
+        repository.sendRoomChatMessage("ninguem vai ver isso") { sendResult = it }
+        runCurrent()
+
+        assertEquals(false, sendResult)
+        assertTrue(dataSource.sentChatMessages.isEmpty())
+    }
+
     private fun completedSummaryPayload(
         winnerTeam: Int,
         teamScores: List<Int>,
@@ -776,9 +837,11 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
 
     var createdPlayerName: String? = null
     var createdConfig: MatchConfig? = null
+    var createdPassword: String? = null
     var discoveryPlayerName: String? = null
     var joinedPlayerName: String? = null
     var joinedRoomCode: String? = null
+    var joinedPassword: String? = null
     var joinCalls: Int = 0
     var failJoin: Boolean = false
     var failPublish: Boolean = false
@@ -791,18 +854,22 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
     var resultAttempts: Int = 0
     var signOutCalls: Int = 0
     val publishDelayMsByMessageId = mutableMapOf<String, Long>()
+    val sentChatMessages = mutableListOf<String>()
 
     private val events = MutableSharedFlow<OnlineStoredEvent>(extraBufferCapacity = 32)
+    private val chatMessages = MutableSharedFlow<OnlineChatMessage>(extraBufferCapacity = 32)
     private val publishedById = mutableMapOf<String, PublishedEvent>()
     val publishAttempts = mutableListOf<PublishedEvent>()
 
     override suspend fun createRoom(
         playerName: String,
         roomCode: String,
-        config: MatchConfig
+        config: MatchConfig,
+        password: String?
     ): OnlineRoomSession {
         createdPlayerName = playerName
         createdConfig = config
+        createdPassword = password
         connectedSeats.value = setOf(0)
         return OnlineRoomSession(
             room = roomSummary(
@@ -826,9 +893,10 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
         return waitingRooms
     }
 
-    override suspend fun joinRoom(playerName: String, roomCode: String): OnlineRoomSession {
+    override suspend fun joinRoom(playerName: String, roomCode: String, password: String?): OnlineRoomSession {
         joinedPlayerName = playerName
         joinedRoomCode = roomCode
+        joinedPassword = password
         joinCalls += 1
         if (failJoin) error("join failed")
         val room = waitingRooms.value.firstOrNull { it.roomCode == roomCode }
@@ -909,6 +977,22 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
 
     override fun observeConnectedSeats(session: OnlineRoomSession): Flow<Set<Int>> = connectedSeats
 
+    override suspend fun sendRoomChatMessage(session: OnlineRoomSession, body: String): Boolean {
+        sentChatMessages += body
+        chatMessages.emit(
+            OnlineChatMessage(
+                id = sentChatMessages.size.toLong(),
+                senderId = session.playerId,
+                senderSeat = session.seat,
+                body = body,
+                createdAt = "2026-01-01T00:00:00Z"
+            )
+        )
+        return true
+    }
+
+    override fun observeRoomChat(session: OnlineRoomSession): Flow<OnlineChatMessage> = chatMessages
+
     var startRoundResult: String = "{}"
     var startRoundCalls: Int = 0
     var failStartRound: Boolean = false
@@ -947,6 +1031,20 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
 
     fun emitEvent(event: OnlineStoredEvent) {
         assertTrue(events.tryEmit(event))
+    }
+
+    fun emitChatMessage(senderId: String?, senderSeat: Int?, body: String) {
+        assertTrue(
+            chatMessages.tryEmit(
+                OnlineChatMessage(
+                    id = sentChatMessages.size.toLong() + 1,
+                    senderId = senderId,
+                    senderSeat = senderSeat,
+                    body = body,
+                    createdAt = "2026-01-01T00:00:00Z"
+                )
+            )
+        )
     }
 
     fun roomSummary(

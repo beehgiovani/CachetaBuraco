@@ -13,6 +13,7 @@ import com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus
 import com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
 import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
+import com.brunogiovani.cachetaburaco.domain.repositories.RoomChatMessage
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -70,6 +71,12 @@ class OnlineNetworkRepository(
     private val _actionRejections = MutableSharedFlow<String>(extraBufferCapacity = 8)
     override val actionRejections: SharedFlow<String> = _actionRejections
 
+    private val _joinedRoomConfig = MutableStateFlow<MatchConfig?>(null)
+    override val joinedRoomConfig: StateFlow<MatchConfig?> = _joinedRoomConfig
+
+    private val _roomChatMessages = MutableSharedFlow<RoomChatMessage>(extraBufferCapacity = 64)
+    override val roomChatMessages: SharedFlow<RoomChatMessage> = _roomChatMessages
+
     private val roomMutex = Mutex()
     private val eventPublishMutex = Mutex()
     private val operationVersion = AtomicLong(0L)
@@ -87,6 +94,13 @@ class OnlineNetworkRepository(
     @Volatile
     private var reconnectRoomCode: String? = null
 
+    // join_match_room exige a senha em toda chamada, mesmo pra quem ja e
+    // membro da sala (a checagem de senha no banco roda antes da checagem de
+    // assento existente) -- por isso reconnect() precisa reenviar a mesma
+    // senha usada na entrada original, nao so na primeira vez.
+    @Volatile
+    private var reconnectRoomPassword: String? = null
+
     @Volatile
     private var identityResetPending: Boolean = false
 
@@ -100,12 +114,14 @@ class OnlineNetworkRepository(
     private var eventJob: Job? = null
     private var presenceJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var chatJob: Job? = null
     private var hadCompleteRoom = false
 
-    override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {
+    override fun startHosting(playerName: String, port: Int, config: MatchConfig?, password: String?) {
         val matchConfig = config ?: MatchConfig()
         localPlayerName = normalizedPlayerName(playerName)
         reconnectRoomCode = null
+        reconnectRoomPassword = password
         stopDiscovery()
         cancelSessionObservers()
         resetVisibleConnectionState()
@@ -122,7 +138,8 @@ class OnlineNetworkRepository(
                     val session = dataSource.createRoom(
                         playerName = localPlayerName,
                         roomCode = OnlineRoomCode.create(localPlayerName),
-                        config = matchConfig
+                        config = matchConfig,
+                        password = password
                     )
                     if (version != operationVersion.get()) {
                         safelyClose(session)
@@ -184,7 +201,7 @@ class OnlineNetworkRepository(
         _discoveredRooms.value = emptyList()
     }
 
-    override fun connectToRoom(host: String, port: Int) {
+    override fun connectToRoom(host: String, port: Int, password: String?) {
         val roomCode = host.trim().uppercase()
         if (roomCode.isBlank()) {
             _connectionStatus.value = ConnectionStatus.ERROR
@@ -196,6 +213,7 @@ class OnlineNetworkRepository(
         resetVisibleConnectionState()
         localPlayerName = normalizedPlayerName(playerNameProvider())
         reconnectRoomCode = roomCode
+        reconnectRoomPassword = password
         val version = operationVersion.incrementAndGet()
 
         scope.launch {
@@ -206,7 +224,7 @@ class OnlineNetworkRepository(
 
                 try {
                     resetIdentityIfNeeded()
-                    val session = dataSource.joinRoom(localPlayerName, roomCode)
+                    val session = dataSource.joinRoom(localPlayerName, roomCode, password)
                     if (version != operationVersion.get()) {
                         safelyLeave(session)
                         return@withLock
@@ -223,7 +241,7 @@ class OnlineNetworkRepository(
 
     override fun reconnect(): Boolean {
         val roomCode = reconnectRoomCode ?: currentSession?.room?.roomCode ?: return false
-        connectToRoom(roomCode, port = 0)
+        connectToRoom(roomCode, port = 0, password = reconnectRoomPassword)
         return true
     }
 
@@ -233,6 +251,7 @@ class OnlineNetworkRepository(
         cancelSessionObservers()
         resetVisibleConnectionState()
         reconnectRoomCode = null
+        reconnectRoomPassword = null
         scope.launch {
             roomMutex.withLock {
                 if (version == operationVersion.get()) closeCurrentSession()
@@ -247,6 +266,7 @@ class OnlineNetworkRepository(
         cancelSessionObservers()
         resetVisibleConnectionState()
         reconnectRoomCode = null
+        reconnectRoomPassword = null
         scope.launch {
             roomMutex.withLock {
                 if (version != operationVersion.get()) return@withLock
@@ -360,6 +380,24 @@ class OnlineNetworkRepository(
         }
     }
 
+    override fun sendRoomChatMessage(body: String, onResult: (Boolean) -> Unit) {
+        val session = currentSession
+        if (session == null) {
+            onResult(false)
+            return
+        }
+        scope.launch {
+            val sent = try {
+                dataSource.sendRoomChatMessage(session, body)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                false
+            }
+            onResult(sent)
+        }
+    }
+
     override fun requestServerMorto(seat: Int, indirect: Boolean, onResult: (String?) -> Unit) {
         val session = currentSession
         if (session == null) {
@@ -385,6 +423,7 @@ class OnlineNetworkRepository(
         currentRoundIsActive = false
         hadCompleteRoom = false
         playerSeatsBySenderId.clear()
+        _joinedRoomConfig.value = session.room.config
         synchronized(recordedResultKeys) { recordedResultKeys.clear() }
         val initialSeats = if (session.isHost) {
             setOf(0)
@@ -459,6 +498,27 @@ class OnlineNetworkRepository(
                     }
                 }
                 delay(PRESENCE_HEARTBEAT_MS)
+            }
+        }
+
+        // Chat e um extra, nao uma parte critica da partida -- uma falha aqui
+        // nunca deve derrubar a conexao da mesa (por isso nao chama
+        // reportSessionFailure), so para de atualizar o chat em si.
+        chatJob = scope.launch {
+            try {
+                dataSource.observeRoomChat(session).collect { chatMessage ->
+                    _roomChatMessages.emit(
+                        RoomChatMessage(
+                            senderSeat = chatMessage.senderSeat,
+                            body = chatMessage.body,
+                            isSelf = chatMessage.senderId == session.playerId
+                        )
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // Silencioso de proposito: ver comentario acima.
             }
         }
     }
@@ -639,9 +699,11 @@ class OnlineNetworkRepository(
         eventJob?.cancel()
         presenceJob?.cancel()
         heartbeatJob?.cancel()
+        chatJob?.cancel()
         eventJob = null
         presenceJob = null
         heartbeatJob = null
+        chatJob = null
     }
 
     private fun reportSessionFailure(
@@ -673,6 +735,7 @@ class OnlineNetworkRepository(
         _connectedClientsCount.value = 0
         _discoveredRooms.value = emptyList()
         _connectionStatus.value = ConnectionStatus.IDLE
+        _joinedRoomConfig.value = null
         hadCompleteRoom = false
         playerSeatsBySenderId.clear()
         currentRoundId = null

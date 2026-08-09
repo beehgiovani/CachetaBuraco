@@ -3763,11 +3763,11 @@ private class FakeLocalNetworkRepository(
     val eventLog = mutableListOf<String>()
     var confirmedDeliveryResult: Boolean = true
 
-    override fun startHosting(playerName: String, port: Int, config: MatchConfig?) = Unit
+    override fun startHosting(playerName: String, port: Int, config: MatchConfig?, password: String?) = Unit
     override fun stopHosting() = Unit
     override fun startDiscovery() = Unit
     override fun stopDiscovery() = Unit
-    override fun connectToRoom(host: String, port: Int) = Unit
+    override fun connectToRoom(host: String, port: Int, password: String?) = Unit
     override fun reconnect(): Boolean = false
     override fun disconnect() = Unit
     override fun resetConnectionStatus() = Unit

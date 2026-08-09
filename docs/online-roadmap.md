@@ -162,12 +162,61 @@ publicacao esta em `product-roadmap.md`.
 - [x] Persistir estado publico da mesa como evento do host.
 - [x] Persistir eventos de jogada com ordem e deduplicacao.
 - [x] Reconectar integrante no mesmo assento sem vazar mao privada.
-- [ ] Sala privada com senha (pedido do usuario, 2026-08-08): dedicar uma
-  partida entre duas pessoas especificas, sem aparecer na busca publica ou
-  exigir senha pra entrar mesmo achando o codigo.
-- [ ] Chat geral (fora de sala) e chat por sala (pedido do usuario,
+- [x] Sala privada com senha (pedido do usuario, 2026-08-08): dedicar uma
+  partida entre duas pessoas especificas, sem aparecer na busca publica nem
+  dar pra entrar so achando o codigo. Migration `0031_private_rooms.sql`:
+  `room_password_hash` (pgcrypto `crypt`/`gen_salt('bf')`, nunca a senha em
+  texto puro), `rooms_select_joined_or_waiting` e `list_waiting_match_rooms`
+  passam a exigir `room_password_hash is null` pra sala aparecer via select
+  direto OU via RPC de descoberta -- fecha o vazamento real que a pesquisa
+  identificou (RLS antiga liberava select de qualquer sala `waiting`).
+  `create_match_room`/`join_match_room` ganham `p_password` opcional. Testado
+  local com Postgres real: sala privada some da lista e do select direto pra
+  quem nao e membro, senha errada/faltando rejeitada, senha certa funciona,
+  sala publica sem regressao. Kotlin: `LocalNetworkRepository.startHosting`/
+  `connectToRoom` ganham `password` (Wi-Fi/maquina ignoram); `OnlineNetworkRepository`
+  guarda a senha usada pra reenviar em `reconnect()` (achado: `join_match_room`
+  exige a senha em toda chamada, mesmo de quem ja e membro, porque a checagem
+  de senha roda antes da checagem de assento existente). UI em `LobbyScreen.kt`:
+  checkbox "Sala privada" + campo de senha no host (secao "Privacidade",
+  minimo de 4 caracteres); bloco novo "Entrar com codigo" no cliente (nao
+  existia nenhuma forma de entrar por codigo digitado antes desta leva --
+  sala privada so pode ser encontrada assim).
+- [x] Chat geral (fora de sala) e chat por sala (pedido do usuario,
   2026-08-08). Chat de sala e apagado depois que a partida encerra, pra nao
-  acumular historico no banco.
+  acumular historico no banco. Migration `0032_room_chat.sql`: tabela
+  `room_chat_messages` dedicada (nao reaproveita `match_events` -- a RPC
+  `append_match_event` exige o tipo do evento numa de 3 listas de direcao,
+  nenhuma cobre "qualquer assento manda pra todo mundo"), RLS restrita a
+  `private.is_room_member`, limpeza explicita em `close_match_room` E em
+  `complete_match` (as duas unicas formas de uma sala "encerrar" hoje).
+  Correcao no processo: ao editar `complete_match` percebi que tinha
+  reconstruido parte do corpo de memoria em vez de copiar o texto exato da
+  `0005` -- parei, li o arquivo original completo e corrigi antes de seguir
+  (ver commit desta migration). Testado local com Postgres real: RLS bloqueia
+  outsider e spoof de `sender_id`, limpeza dispara nos dois pontos, fluxo
+  completo de `complete_match` continua batendo com o comportamento original.
+  Chat geral usa Realtime Broadcast puro (`SupabaseGlobalChatRepository`,
+  topico `global-chat`, sem tabela/RLS/historico -- decisao deliberada pra
+  nao criar mais uma superficie de moderacao pra algo sem escopo definido
+  ainda). Achado de API: `client.channel(topico)` e cacheado pelo SDK por
+  topico -- o builder (`broadcast { receiveOwnBroadcasts = true }`) so e
+  aplicado na primeira vez que o topico e criado, entao envio e observacao
+  precisam pedir sempre o mesmo builder, senao quem chama primeiro "decide"
+  a config pra sempre. UI: `MatchScreen.kt` ganha painel de chat de sala
+  (icone na TopBar com indicador de nao lidas); `GlobalChatScreen.kt` novo,
+  com entrada no menu principal ("Chat geral").
+  **Pendente**: verificacao end-to-end no emulador nao foi possivel nesta
+  leva -- o AVD usado ficou com o `/data` em 94%+ de uso, causando ANR
+  persistente ate no launcher do sistema (nao so no app), mesmo depois de
+  reboot, desinstalar o app e limpar cache/tmp. Compensado com: as duas
+  migrations testadas exaustivamente contra Postgres real (RLS, senha,
+  limpeza, idempotencia); build completo (`assembleDebug`), suite de testes
+  unitarios inteira e lint verdes, incluindo testes novos dedicados
+  (`OnlineNetworkRepositoryTest`: senha threading, `isSelf` do chat de sala,
+  envio sem sessao ativa). Homologacao visual real (sala privada some da
+  busca, entrar por codigo+senha, chat de sala e chat geral end-to-end)
+  ainda precisa rodar num aparelho fisico ou AVD com mais espaco livre.
 
 ## Fase 4 - Antitrapaca e consistencia
 

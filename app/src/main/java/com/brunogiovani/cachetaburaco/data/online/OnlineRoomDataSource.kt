@@ -64,6 +64,14 @@ data class OnlineCompletedMatch(
     val breakdown: String
 )
 
+data class OnlineChatMessage(
+    val id: Long,
+    val senderId: String?,
+    val senderSeat: Int?,
+    val body: String,
+    val createdAt: String
+)
+
 /**
  * Operacoes remotas usadas pelo transporte online.
  *
@@ -75,7 +83,8 @@ interface OnlineRoomDataSource {
     suspend fun createRoom(
         playerName: String,
         roomCode: String,
-        config: MatchConfig
+        config: MatchConfig,
+        password: String? = null
     ): OnlineRoomSession
 
     suspend fun listWaitingRooms(playerName: String): List<OnlineRoomSummary>
@@ -84,7 +93,8 @@ interface OnlineRoomDataSource {
 
     suspend fun joinRoom(
         playerName: String,
-        roomCode: String
+        roomCode: String,
+        password: String? = null
     ): OnlineRoomSession
 
     suspend fun leaveRoom(session: OnlineRoomSession)
@@ -151,4 +161,21 @@ interface OnlineRoomDataSource {
      * pra nao quebrar dublês de teste que ainda nao implementam isso.
      */
     suspend fun reportFailure(category: OnlineFailureCategory, roomId: String? = null) = Unit
+
+    /**
+     * Envia uma mensagem no chat da sala. Insert direto via Postgrest -- RLS
+     * (`room_chat_messages_insert_member`) ja garante que so quem esta na
+     * sala consegue escrever, sem precisar de RPC dedicada (mesmo padrao
+     * simples ja usado em `avatar_photo_reports`).
+     */
+    suspend fun sendRoomChatMessage(session: OnlineRoomSession, body: String): Boolean
+
+    /**
+     * Observa o chat da sala: uma carga inicial (cobre quem entra no meio da
+     * partida ou reconecta) seguida das mensagens novas via Realtime. A
+     * tabela e apagada quando a partida encerra (migration 0032), entao nao
+     * ha necessidade de paginacao aqui -- o historico de uma sala e sempre
+     * pequeno.
+     */
+    fun observeRoomChat(session: OnlineRoomSession): Flow<OnlineChatMessage>
 }

@@ -102,7 +102,7 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
         override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
     }
 
-    override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {
+    override fun startHosting(playerName: String, port: Int, config: MatchConfig?, password: String?) {
         stopHosting()
         hostedMaxClients = ((config?.maxPlayers ?: 2) - 1).coerceIn(1, 3)
 
@@ -364,7 +364,7 @@ class LocalNetworkRepositoryImpl(private val context: Context) : LocalNetworkRep
         return true
     }
 
-    override fun connectToRoom(host: String, port: Int) {
+    override fun connectToRoom(host: String, port: Int, password: String?) {
         lastConnectedHost = host
         lastConnectedPort = port
         clientJob = coroutineScope.launch {

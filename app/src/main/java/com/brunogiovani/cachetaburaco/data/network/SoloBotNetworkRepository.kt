@@ -74,7 +74,7 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
     private var pendingDiscardTopId: String? = null
     private var pendingDiscardRest = emptyList<Card>()
 
-    override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {
+    override fun startHosting(playerName: String, port: Int, config: MatchConfig?, password: String?) {
         currentConfig = (config ?: currentConfig).copy(maxPlayers = 2)
         (connectedClientsCount as MutableStateFlow).value = 1
         (connectionStatus as MutableStateFlow).value = ConnectionStatus.CONNECTED
@@ -83,7 +83,7 @@ class SoloBotNetworkRepository : LocalNetworkRepository {
     override fun stopHosting() = Unit
     override fun startDiscovery() = Unit
     override fun stopDiscovery() = Unit
-    override fun connectToRoom(host: String, port: Int) = Unit
+    override fun connectToRoom(host: String, port: Int, password: String?) = Unit
     override fun reconnect(): Boolean = true
     override fun disconnect() {
         resetBotState()

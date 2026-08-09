@@ -18,11 +18,13 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.brunogiovani.cachetaburaco.data.network.LocalNetworkRepositoryImpl
 import com.brunogiovani.cachetaburaco.data.network.OnlineNetworkRepository
 import com.brunogiovani.cachetaburaco.data.network.SoloBotNetworkRepository
+import com.brunogiovani.cachetaburaco.data.online.SupabaseGlobalChatRepository
 import com.brunogiovani.cachetaburaco.data.online.SupabaseOnlineProfileRepository
 import com.brunogiovani.cachetaburaco.data.online.SupabaseOnlineRankingRepository
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
+import com.brunogiovani.cachetaburaco.presentation.chat.GlobalChatScreen
 import com.brunogiovani.cachetaburaco.presentation.lobby.LobbyScreen
 import com.brunogiovani.cachetaburaco.presentation.login.LoginScreen
 import com.brunogiovani.cachetaburaco.presentation.main.MainMenuScreen
@@ -43,6 +45,7 @@ enum class AppState {
     LOBBY_BOT,
     ONLINE_PROFILE,
     ONLINE_RANKING,
+    GLOBAL_CHAT,
     MATCH
 }
 
@@ -97,6 +100,7 @@ class MainActivity : ComponentActivity() {
                     }
                     val onlineProfileRepository = remember { SupabaseOnlineProfileRepository() }
                     val onlineRankingRepository = remember { SupabaseOnlineRankingRepository() }
+                    val globalChatRepository = remember { SupabaseGlobalChatRepository() }
                     // Este repositorio ativo e a tomada da mesa: local, maquina
                     // e online podem trocar por aqui sem duplicar tela ou regra.
                     var activeRepository by remember { mutableStateOf<LocalNetworkRepository>(networkRepository) }
@@ -117,6 +121,7 @@ class MainActivity : ComponentActivity() {
                             onJoinOnlineRoom = { currentScreen = AppState.LOBBY_ONLINE_CLIENT },
                             onOpenOnlineProfile = { currentScreen = AppState.ONLINE_PROFILE },
                             onOpenOnlineRanking = { currentScreen = AppState.ONLINE_RANKING },
+                            onOpenGlobalChat = { currentScreen = AppState.GLOBAL_CHAT },
                             onPlayBot = { currentScreen = AppState.LOBBY_BOT },
                             onResumeGame = {
                                 val savedInfo = MatchViewModel.getSavedGameInfo(applicationContext)
@@ -247,6 +252,12 @@ class MainActivity : ComponentActivity() {
                             repository = onlineRankingRepository,
                             onBack = { currentScreen = AppState.MAIN_MENU },
                             profileRepository = onlineProfileRepository
+                        )
+
+                        AppState.GLOBAL_CHAT -> GlobalChatScreen(
+                            playerName = FakeAuthRepository.getCurrentPlayer()?.name ?: "Jogador",
+                            repository = globalChatRepository,
+                            onBack = { currentScreen = AppState.MAIN_MENU }
                         )
 
                         AppState.MATCH -> MatchScreen(

@@ -2,6 +2,7 @@ package com.brunogiovani.cachetaburaco.domain.repositories
 
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
@@ -15,6 +16,14 @@ data class NetworkMessage(
     val senderSeat: Int? = null,
     // Separa eventos de rodadas diferentes quando a mesma sala e reutilizada.
     val roundId: String? = null
+)
+
+// Chat de sala (so online, migration 0032) -- mensagens somem quando a
+// partida encerra, entao nao ha necessidade de historico persistente aqui.
+data class RoomChatMessage(
+    val senderSeat: Int?,
+    val body: String,
+    val isSelf: Boolean
 )
 
 data class DiscoveredRoom(
@@ -75,7 +84,25 @@ interface LocalNetworkRepository {
     // nunca emitem aqui -- ficam com este padrao vazio.
     val actionRejections: SharedFlow<String> get() = MutableSharedFlow()
 
-    fun startHosting(playerName: String, port: Int = 9090, config: MatchConfig? = null)
+    // So o online popula isso de verdade: o config de uma sala com senha so e
+    // conhecido depois do join_match_room responder (sala privada nao aparece
+    // na lista de descoberta, entao quem entra por codigo nao tem o config
+    // antecipado como no fluxo normal de "Entrar" a partir de uma sala
+    // listada). Wi-Fi local e maquina continuam com o padrao (null) porque ja
+    // conhecem o config antes de conectar.
+    val joinedRoomConfig: StateFlow<MatchConfig?> get() = MutableStateFlow(null)
+
+    // So o online popula isso de verdade: chat de sala (migration 0032).
+    // Wi-Fi local e maquina nao tem chat nesta leva -- ficam com o padrao vazio.
+    val roomChatMessages: SharedFlow<RoomChatMessage> get() = MutableSharedFlow()
+
+    fun sendRoomChatMessage(body: String, onResult: (Boolean) -> Unit = {}) {
+        onResult(false)
+    }
+
+    // `password` so o transporte online usa (sala privada) -- Wi-Fi local e
+    // maquina ignoram, ja que nao tem conceito de sala com senha.
+    fun startHosting(playerName: String, port: Int = 9090, config: MatchConfig? = null, password: String? = null)
     fun stopHosting()
 
     // Só o transporte Wi-Fi local implementa isto de verdade: reaplica, antes de
@@ -88,7 +115,7 @@ interface LocalNetworkRepository {
     fun startDiscovery()
     fun stopDiscovery()
 
-    fun connectToRoom(host: String, port: Int)
+    fun connectToRoom(host: String, port: Int, password: String? = null)
     fun reconnect(): Boolean
     fun disconnect()
     fun clearAuthenticatedSession() = Unit

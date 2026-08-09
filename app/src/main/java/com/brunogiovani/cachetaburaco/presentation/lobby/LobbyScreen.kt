@@ -2,6 +2,8 @@ package com.brunogiovani.cachetaburaco.presentation.lobby
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,6 +30,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -46,6 +50,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -86,6 +94,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 private inline fun <reified T : Enum<T>> enumSaver(): Saver<T, String> =
     Saver(save = { it.name }, restore = { enumValueOf<T>(it) })
 
+// Mesmo minimo exigido pelo banco (length > 0) seria fraco demais pra uma
+// senha de verdade -- 4 caracteres bate com o tamanho minimo do proprio
+// codigo da sala.
+private const val MIN_ROOM_PASSWORD_LENGTH = 4
+
+// create_match_room valida ^[A-Z0-9]{4,8}$ pro codigo -- limitar a digitacao
+// aqui evita mandar pro servidor um codigo que ja sei de antemao que vai
+// voltar INVALID_ROOM_CODE.
+private const val MIN_ROOM_CODE_LENGTH = 4
+private const val MAX_ROOM_CODE_LENGTH = 8
+
 @Composable
 fun LobbyScreen(
     isHosting: Boolean,
@@ -115,6 +134,8 @@ fun LobbyScreen(
     var botDifficulty by rememberSaveable(stateSaver = enumSaver()) { mutableStateOf(BotDifficulty.NORMAL) }
     var pointsMode by rememberSaveable(stateSaver = enumSaver()) { mutableStateOf(PointsMode.FREE) }
     var selectedPointLimit by rememberSaveable { mutableIntStateOf(5) }
+    var isPrivateRoom by rememberSaveable { mutableStateOf(false) }
+    var roomPassword by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(selectedGameType) {
         selectedPointLimit = if (selectedGameType == GameType.CACHETA) 5 else 1500
@@ -153,6 +174,12 @@ fun LobbyScreen(
     var pendingPublishConfig by remember { mutableStateOf<MatchConfig?>(null) }
     var pendingJoinConfig by remember { mutableStateOf<MatchConfig?>(null) }
     var joinError by remember { mutableStateOf<String?>(null) }
+    // Sala privada nao aparece na lista de descoberta, entao "entrar por
+    // codigo" nao tem o MatchConfig de antemao como o fluxo normal (que usa o
+    // config ja publicado na sala listada) -- so sei o config depois que
+    // join_match_room responder, via joinedRoomConfig.
+    var isJoiningByCode by remember { mutableStateOf(false) }
+    val joinedRoomConfig by networkRepository.joinedRoomConfig.collectAsState()
 
     LaunchedEffect(connectionStatus, pendingPublishConfig) {
         val readyConfig = pendingPublishConfig ?: return@LaunchedEffect
@@ -196,6 +223,24 @@ fun LobbyScreen(
         }
     }
 
+    LaunchedEffect(connectionStatus, isJoiningByCode, joinedRoomConfig) {
+        if (!isJoiningByCode) return@LaunchedEffect
+        when (connectionStatus) {
+            ConnectionStatus.CONNECTED -> {
+                val config = joinedRoomConfig ?: return@LaunchedEffect
+                isJoiningByCode = false
+                gameStarted = true
+                onGameStarted(config)
+            }
+            ConnectionStatus.ERROR,
+            ConnectionStatus.HOST_DISCONNECTED -> {
+                isJoiningByCode = false
+                joinError = "Não foi possível entrar na sala. Confira o código e a senha."
+            }
+            else -> Unit
+        }
+    }
+
     LaunchedEffect(isHosting) {
         if (!isHosting) {
             networkRepository.startDiscovery()
@@ -208,9 +253,14 @@ fun LobbyScreen(
         isPublishing = true
         pendingPublishConfig = frozenConfig
 
+        val effectivePassword = if (isPrivateRoom && networkRepository.isOnlineTransport) {
+            roomPassword.trim().takeIf { it.isNotEmpty() }
+        } else {
+            null
+        }
         runCatching {
             // Contra a máquina esta chamada apenas entrega as regras ao adaptador; nenhuma sala Wi-Fi é anunciada.
-            networkRepository.startHosting(player.name, config = frozenConfig)
+            networkRepository.startHosting(player.name, config = frozenConfig, password = effectivePassword)
         }.onFailure { error ->
             pendingPublishConfig = null
             networkRepository.stopHosting()
@@ -293,6 +343,11 @@ fun LobbyScreen(
                     onPointsModeChange = { pointsMode = it },
                     selectedPointLimit = selectedPointLimit,
                     onPointLimitChange = { selectedPointLimit = it },
+                    isOnlineTransport = networkRepository.isOnlineTransport,
+                    isPrivateRoom = isPrivateRoom,
+                    onPrivateRoomChange = { isPrivateRoom = it },
+                    roomPassword = roomPassword,
+                    onRoomPasswordChange = { roomPassword = it },
                     onPublish = publishOrStart,
                     onStart = {
                         val configToStart = publishedConfig
@@ -307,7 +362,7 @@ fun LobbyScreen(
             } else {
                 ClientPanel(
                     discoveredRooms = discoveredRooms,
-                    isJoining = pendingJoinConfig != null,
+                    isJoining = pendingJoinConfig != null || isJoiningByCode,
                     joinError = joinError,
                     isOnlineTransport = networkRepository.isOnlineTransport,
                     onJoin = { room ->
@@ -319,6 +374,11 @@ fun LobbyScreen(
                             pendingJoinConfig = roomConfig
                             networkRepository.connectToRoom(room.host, room.port)
                         }
+                    },
+                    onJoinByCode = { roomCode, password ->
+                        joinError = null
+                        isJoiningByCode = true
+                        networkRepository.connectToRoom(roomCode, port = 0, password = password)
                     },
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
@@ -365,11 +425,18 @@ private fun HostPanel(
     onPointsModeChange: (PointsMode) -> Unit,
     selectedPointLimit: Int,
     onPointLimitChange: (Int) -> Unit,
+    isOnlineTransport: Boolean = false,
+    isPrivateRoom: Boolean = false,
+    onPrivateRoomChange: (Boolean) -> Unit = {},
+    roomPassword: String = "",
+    onRoomPasswordChange: (String) -> Unit = {},
     onPublish: () -> Unit,
     onStart: () -> Unit
 ) {
     val requiredClients = config.maxPlayers - 1
     val canStart = isPublished && connectedClients >= requiredClients
+    val privatePasswordValid = roomPassword.trim().length >= MIN_ROOM_PASSWORD_LENGTH
+    val canPublish = !isPrivateRoom || privatePasswordValid
 
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -582,6 +649,26 @@ private fun HostPanel(
             }
         }
 
+        if (!isPublished && isOnlineTransport) item {
+            MenuSectionCard(title = "Privacidade") {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    MenuToggleRow(
+                        label = "Sala privada",
+                        description = "Só quem tiver o código e a senha consegue entrar",
+                        checked = isPrivateRoom,
+                        onCheckedChange = onPrivateRoomChange
+                    )
+                    if (isPrivateRoom) {
+                        RoomPasswordField(
+                            password = roomPassword,
+                            onPasswordChange = onRoomPasswordChange,
+                            isError = roomPassword.isNotEmpty() && !privatePasswordValid
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             RuleSummaryCard(config = config)
         }
@@ -599,10 +686,16 @@ private fun HostPanel(
 
                 !isPublished -> PublishActionCard(
                     title = "Concluir criação",
-                    description = "A sala só aparece para os outros jogadores depois desta confirmação.",
+                    description = if (isPrivateRoom)
+                        "A sala só aparece para os outros jogadores depois desta confirmação. Compartilhe o código e a senha com quem vai jogar."
+                    else
+                        "A sala só aparece para os outros jogadores depois desta confirmação.",
                     buttonLabel = "Publicar sala",
                     isPublishing = isPublishing,
-                    errorMessage = publicationError,
+                    errorMessage = publicationError ?: if (isPrivateRoom && !privatePasswordValid && roomPassword.isNotEmpty())
+                        "A senha precisa ter pelo menos $MIN_ROOM_PASSWORD_LENGTH caracteres."
+                    else null,
+                    enabled = canPublish,
                     onClick = onPublish
                 )
 
@@ -741,7 +834,8 @@ private fun PublishActionCard(
     buttonLabel: String,
     isPublishing: Boolean,
     errorMessage: String?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    enabled: Boolean = true
 ) {
     MenuSectionCard {
         Column(
@@ -769,6 +863,7 @@ private fun PublishActionCard(
             MenuFilledButton(
                 text = if (isPublishing) "Preparando..." else buttonLabel,
                 onClick = onClick,
+                enabled = enabled && !isPublishing,
                 loading = isPublishing,
                 containerColor = MenuColors.TableGreenLight
             )
@@ -823,6 +918,87 @@ private fun PublishedRoomCard(
     }
 }
 
+@Composable
+private fun RoomPasswordField(
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    isError: Boolean,
+    modifier: Modifier = Modifier,
+    label: String = "Senha da sala",
+    imeAction: ImeAction = ImeAction.Done,
+    onImeAction: () -> Unit = {}
+) {
+    OutlinedTextField(
+        value = password,
+        onValueChange = onPasswordChange,
+        label = { Text(label, color = Color.White.copy(alpha = 0.55f)) },
+        singleLine = true,
+        isError = isError,
+        visualTransformation = PasswordVisualTransformation(),
+        supportingText = if (isError) {
+            { Text("Mínimo de $MIN_ROOM_PASSWORD_LENGTH caracteres.", color = MenuColors.Red) }
+        } else null,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = imeAction),
+        keyboardActions = KeyboardActions(onDone = { onImeAction() }),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = MenuColors.TableGreenLight,
+            unfocusedBorderColor = MenuColors.BorderStrong,
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color.White,
+            cursorColor = MenuColors.TableGreenLight
+        ),
+        modifier = modifier.fillMaxWidth()
+    )
+}
+
+// Sala privada nunca aparece na lista de descoberta (RLS/RPC filtram por
+// design) -- este e o unico jeito de entrar nela: quem recebeu o codigo e a
+// senha de quem criou a sala digita aqui. Funciona tambem pra sala publica,
+// que so ignora a senha se vier preenchida.
+@Composable
+private fun JoinByCodeCard(
+    isJoining: Boolean,
+    onJoin: (roomCode: String, password: String?) -> Unit
+) {
+    var roomCode by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    val canJoin = roomCode.trim().length >= MIN_ROOM_CODE_LENGTH && !isJoining
+
+    MenuSectionCard(title = "Entrar com código") {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = roomCode,
+                onValueChange = { roomCode = it.uppercase().filter(Char::isLetterOrDigit).take(MAX_ROOM_CODE_LENGTH) },
+                label = { Text("Código da sala", color = Color.White.copy(alpha = 0.55f)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Next),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MenuColors.TableGreenLight,
+                    unfocusedBorderColor = MenuColors.BorderStrong,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = MenuColors.TableGreenLight
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+            RoomPasswordField(
+                password = password,
+                onPasswordChange = { password = it },
+                isError = false,
+                label = "Senha (se a sala tiver)",
+                onImeAction = { if (canJoin) onJoin(roomCode.trim(), password.trim().takeIf { it.isNotEmpty() }) }
+            )
+            MenuFilledButton(
+                text = "Entrar",
+                onClick = { onJoin(roomCode.trim(), password.trim().takeIf { it.isNotEmpty() }) },
+                enabled = canJoin,
+                loading = isJoining,
+                containerColor = MenuColors.TableGreenLight
+            )
+        }
+    }
+}
+
 //Painel do Cliente (Discovery)
 @Composable
 private fun ClientPanel(
@@ -831,7 +1007,8 @@ private fun ClientPanel(
     joinError: String?,
     onJoin: (DiscoveredRoom) -> Unit,
     modifier: Modifier = Modifier,
-    isOnlineTransport: Boolean = false
+    isOnlineTransport: Boolean = false,
+    onJoinByCode: (roomCode: String, password: String?) -> Unit = { _, _ -> }
 ) {
     LazyColumn(
         modifier = modifier,
@@ -839,6 +1016,14 @@ private fun ClientPanel(
         contentPadding = PaddingValues(bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        if (isOnlineTransport) {
+            item {
+                JoinByCodeCard(
+                    isJoining = isJoining,
+                    onJoin = onJoinByCode
+                )
+            }
+        }
         if (joinError != null) {
             item {
                 Text(
@@ -1052,17 +1237,19 @@ private fun RuleSummaryText(config: MatchConfig) {
 private fun previewNetworkRepository(
     rooms: List<DiscoveredRoom> = emptyList(),
     clients: Int = 0,
-    status: ConnectionStatus = ConnectionStatus.CONNECTED
+    status: ConnectionStatus = ConnectionStatus.CONNECTED,
+    onlineTransport: Boolean = false
 ): LocalNetworkRepository = object : LocalNetworkRepository {
     override val discoveredRooms = MutableStateFlow(rooms)
     override val connectedClientsCount = MutableStateFlow(clients)
     override val incomingMessages = MutableSharedFlow<NetworkMessage>()
     override val connectionStatus = MutableStateFlow(status)
-    override fun startHosting(playerName: String, port: Int, config: MatchConfig?) {}
+    override val isOnlineTransport = onlineTransport
+    override fun startHosting(playerName: String, port: Int, config: MatchConfig?, password: String?) {}
     override fun stopHosting() {}
     override fun startDiscovery() {}
     override fun stopDiscovery() {}
-    override fun connectToRoom(host: String, port: Int) {}
+    override fun connectToRoom(host: String, port: Int, password: String?) {}
     override fun reconnect(): Boolean = false
     override fun disconnect() {}
     override fun sendMessage(message: NetworkMessage) {}
@@ -1172,6 +1359,42 @@ private fun LobbyScreenPublishedRoomPreview() {
         Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             PublishedRoomCard(connectedClients = 1, requiredClients = 3, canStart = false, onStart = {})
         }
+    }
+}
+
+@Preview(
+    showBackground = true,
+    device = "spec:width=1280dp,height=800dp,dpi=240",
+    name = "LobbyScreen - Host sala privada (online)"
+)
+@Composable
+fun LobbyScreenHostPrivateRoomPreview() {
+    FakeAuthRepository.forceSetForPreview(Player("preview_host_private", "Jogador"))
+    MaterialTheme {
+        LobbyScreen(
+            isHosting = true,
+            networkRepository = previewNetworkRepository(onlineTransport = true),
+            onBack = {},
+            onGameStarted = {}
+        )
+    }
+}
+
+@Preview(
+    showBackground = true,
+    device = "spec:width=1280dp,height=800dp,dpi=240",
+    name = "LobbyScreen - Cliente online (entrar com código)"
+)
+@Composable
+fun LobbyScreenClientOnlineJoinByCodePreview() {
+    FakeAuthRepository.forceSetForPreview(Player("preview_client_online", "Joao"))
+    MaterialTheme {
+        LobbyScreen(
+            isHosting = false,
+            networkRepository = previewNetworkRepository(onlineTransport = true),
+            onBack = {},
+            onGameStarted = {}
+        )
     }
 }
 
