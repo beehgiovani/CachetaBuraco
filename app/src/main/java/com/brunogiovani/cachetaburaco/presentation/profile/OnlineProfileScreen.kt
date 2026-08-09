@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -43,12 +44,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.brunogiovani.cachetaburaco.R
 import com.brunogiovani.cachetaburaco.data.online.GoogleAccountLinker
 import com.brunogiovani.cachetaburaco.data.online.GoogleLinkResult
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
@@ -624,13 +628,11 @@ private fun MedalBadge(medal: MedalDefinition, earned: Boolean, compact: Boolean
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(if (compact) 32.dp else 40.dp)
-                .background(
-                    if (earned) tierColor else Color.White.copy(alpha = 0.08f),
-                    CircleShape
-                )
+        Image(
+            painter = painterResource(id = R.drawable.achievement_medal),
+            contentDescription = null,
+            colorFilter = ColorFilter.tint(if (earned) tierColor else Color.White.copy(alpha = 0.14f)),
+            modifier = Modifier.size(if (compact) 32.dp else 40.dp)
         )
         Text(
             medal.title,
