@@ -18,12 +18,16 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.brunogiovani.cachetaburaco.data.network.LocalNetworkRepositoryImpl
 import com.brunogiovani.cachetaburaco.data.network.OnlineNetworkRepository
 import com.brunogiovani.cachetaburaco.data.network.SoloBotNetworkRepository
+import com.brunogiovani.cachetaburaco.data.online.SupabaseChampionshipRepository
 import com.brunogiovani.cachetaburaco.data.online.SupabaseGlobalChatRepository
 import com.brunogiovani.cachetaburaco.data.online.SupabaseOnlineProfileRepository
 import com.brunogiovani.cachetaburaco.data.online.SupabaseOnlineRankingRepository
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
+import com.brunogiovani.cachetaburaco.domain.models.Championship
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
+import com.brunogiovani.cachetaburaco.presentation.championship.ChampionshipDetailScreen
+import com.brunogiovani.cachetaburaco.presentation.championship.ChampionshipListScreen
 import com.brunogiovani.cachetaburaco.presentation.chat.GlobalChatScreen
 import com.brunogiovani.cachetaburaco.presentation.lobby.LobbyScreen
 import com.brunogiovani.cachetaburaco.presentation.login.LoginScreen
@@ -46,6 +50,8 @@ enum class AppState {
     ONLINE_PROFILE,
     ONLINE_RANKING,
     GLOBAL_CHAT,
+    CHAMPIONSHIP_LIST,
+    CHAMPIONSHIP_DETAIL,
     MATCH
 }
 
@@ -101,6 +107,8 @@ class MainActivity : ComponentActivity() {
                     val onlineProfileRepository = remember { SupabaseOnlineProfileRepository() }
                     val onlineRankingRepository = remember { SupabaseOnlineRankingRepository() }
                     val globalChatRepository = remember { SupabaseGlobalChatRepository() }
+                    val championshipRepository = remember { SupabaseChampionshipRepository() }
+                    var selectedChampionship by remember { mutableStateOf<Championship?>(null) }
                     // Este repositorio ativo e a tomada da mesa: local, maquina
                     // e online podem trocar por aqui sem duplicar tela ou regra.
                     var activeRepository by remember { mutableStateOf<LocalNetworkRepository>(networkRepository) }
@@ -122,6 +130,7 @@ class MainActivity : ComponentActivity() {
                             onOpenOnlineProfile = { currentScreen = AppState.ONLINE_PROFILE },
                             onOpenOnlineRanking = { currentScreen = AppState.ONLINE_RANKING },
                             onOpenGlobalChat = { currentScreen = AppState.GLOBAL_CHAT },
+                            onOpenChampionships = { currentScreen = AppState.CHAMPIONSHIP_LIST },
                             onPlayBot = { currentScreen = AppState.LOBBY_BOT },
                             onResumeGame = {
                                 val savedInfo = MatchViewModel.getSavedGameInfo(applicationContext)
@@ -207,7 +216,8 @@ class MainActivity : ComponentActivity() {
                                 isHosting = true
                                 activeRepository = onlineRepository
                                 currentScreen = AppState.MATCH
-                            }
+                            },
+                            championshipRepository = championshipRepository
                         )
 
                         AppState.LOBBY_ONLINE_CLIENT -> LobbyScreen(
@@ -259,6 +269,30 @@ class MainActivity : ComponentActivity() {
                             repository = globalChatRepository,
                             onBack = { currentScreen = AppState.MAIN_MENU }
                         )
+
+                        AppState.CHAMPIONSHIP_LIST -> ChampionshipListScreen(
+                            playerName = FakeAuthRepository.getCurrentPlayer()?.name ?: "Jogador",
+                            repository = championshipRepository,
+                            onBack = { currentScreen = AppState.MAIN_MENU },
+                            onOpenChampionship = { championship ->
+                                selectedChampionship = championship
+                                currentScreen = AppState.CHAMPIONSHIP_DETAIL
+                            }
+                        )
+
+                        AppState.CHAMPIONSHIP_DETAIL -> {
+                            val championship = selectedChampionship
+                            if (championship == null) {
+                                currentScreen = AppState.CHAMPIONSHIP_LIST
+                            } else {
+                                ChampionshipDetailScreen(
+                                    playerName = FakeAuthRepository.getCurrentPlayer()?.name ?: "Jogador",
+                                    championship = championship,
+                                    repository = championshipRepository,
+                                    onBack = { currentScreen = AppState.CHAMPIONSHIP_LIST }
+                                )
+                            }
+                        }
 
                         AppState.MATCH -> MatchScreen(
                             networkRepository = activeRepository,

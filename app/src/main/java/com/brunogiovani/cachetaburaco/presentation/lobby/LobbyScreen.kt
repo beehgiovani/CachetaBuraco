@@ -44,6 +44,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -64,6 +65,7 @@ import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.models.Player
 import com.brunogiovani.cachetaburaco.domain.models.PointsMode
+import com.brunogiovani.cachetaburaco.domain.repositories.ChampionshipRepository
 import com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus
 import com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
@@ -86,6 +88,7 @@ import com.brunogiovani.cachetaburaco.presentation.components.MenuTopBar
 import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 // AppState em MainActivity troca de tela com um "when" manual, entao sair do
 // lobby e voltar recria o composable do zero -- sem rememberSaveable, um
@@ -105,13 +108,18 @@ private const val MIN_ROOM_PASSWORD_LENGTH = 4
 private const val MIN_ROOM_CODE_LENGTH = 4
 private const val MAX_ROOM_CODE_LENGTH = 8
 
+// Codigo de campeonato sempre tem 6 chars (md5 truncado, gerado so no
+// servidor -- ver migration 0034_championships.sql).
+private const val CHAMPIONSHIP_CODE_LENGTH = 6
+
 @Composable
 fun LobbyScreen(
     isHosting: Boolean,
     singlePlayerMode: Boolean = false,
     networkRepository: LocalNetworkRepository,
     onBack: () -> Unit,
-    onGameStarted: (MatchConfig) -> Unit
+    onGameStarted: (MatchConfig) -> Unit,
+    championshipRepository: ChampionshipRepository? = null
 ) {
     val player = FakeAuthRepository.getCurrentPlayer() ?: return
 
@@ -180,6 +188,18 @@ fun LobbyScreen(
     // join_match_room responder, via joinedRoomConfig.
     var isJoiningByCode by remember { mutableStateOf(false) }
     val joinedRoomConfig by networkRepository.joinedRoomConfig.collectAsState()
+
+    // So existe uma vez que a sala online foi publicada de verdade (o proprio
+    // servidor cria a sala dentro de startHosting) -- discoveredRooms vira uma
+    // lista com um unico item (a propria sala) cujo .host e o room_code.
+    val hostedRoomCode = if (isHosting && networkRepository.isOnlineTransport) {
+        discoveredRooms.firstOrNull()?.host
+    } else null
+    var championshipLinkCode by rememberSaveable { mutableStateOf("") }
+    var isLinkingChampionship by remember { mutableStateOf(false) }
+    var linkedChampionshipCode by remember { mutableStateOf<String?>(null) }
+    var championshipLinkError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(connectionStatus, pendingPublishConfig) {
         val readyConfig = pendingPublishConfig ?: return@LaunchedEffect
@@ -271,6 +291,25 @@ fun LobbyScreen(
         Unit
     }
 
+    val linkChampionship = {
+        val repository = championshipRepository
+        val roomCode = hostedRoomCode
+        val code = championshipLinkCode.trim().uppercase()
+        if (repository != null && roomCode != null && code.isNotEmpty()) {
+            championshipLinkError = null
+            isLinkingChampionship = true
+            scope.launch {
+                runCatching { repository.linkRoomToChampionship(player.name, roomCode, code) }
+                    .onSuccess { linkedChampionshipCode = code }
+                    .onFailure {
+                        championshipLinkError = "Não foi possível vincular a sala a este campeonato. Confira o código."
+                    }
+                isLinkingChampionship = false
+            }
+        }
+        Unit
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             if (!gameStarted) {
@@ -348,6 +387,14 @@ fun LobbyScreen(
                     onPrivateRoomChange = { isPrivateRoom = it },
                     roomPassword = roomPassword,
                     onRoomPasswordChange = { roomPassword = it },
+                    hostedRoomCode = hostedRoomCode,
+                    showChampionshipLink = championshipRepository != null,
+                    championshipLinkCode = championshipLinkCode,
+                    onChampionshipLinkCodeChange = { championshipLinkCode = it },
+                    isLinkingChampionship = isLinkingChampionship,
+                    linkedChampionshipCode = linkedChampionshipCode,
+                    championshipLinkError = championshipLinkError,
+                    onLinkChampionship = linkChampionship,
                     onPublish = publishOrStart,
                     onStart = {
                         val configToStart = publishedConfig
@@ -430,6 +477,14 @@ private fun HostPanel(
     onPrivateRoomChange: (Boolean) -> Unit = {},
     roomPassword: String = "",
     onRoomPasswordChange: (String) -> Unit = {},
+    hostedRoomCode: String? = null,
+    showChampionshipLink: Boolean = false,
+    championshipLinkCode: String = "",
+    onChampionshipLinkCodeChange: (String) -> Unit = {},
+    isLinkingChampionship: Boolean = false,
+    linkedChampionshipCode: String? = null,
+    championshipLinkError: String? = null,
+    onLinkChampionship: () -> Unit = {},
     onPublish: () -> Unit,
     onStart: () -> Unit
 ) {
@@ -703,9 +758,20 @@ private fun HostPanel(
                     connectedClients = connectedClients,
                     requiredClients = requiredClients,
                     canStart = canStart,
-                    onStart = onStart
+                    onStart = onStart,
+                    roomCode = hostedRoomCode
                 )
             }
+        }
+        if (isPublished && showChampionshipLink) item {
+            ChampionshipLinkCard(
+                isLinking = isLinkingChampionship,
+                linkedCode = linkedChampionshipCode,
+                errorMessage = championshipLinkError,
+                championshipCode = championshipLinkCode,
+                onChampionshipCodeChange = onChampionshipLinkCodeChange,
+                onLink = onLinkChampionship
+            )
         }
         item {
             SafeAdBannerSlot(
@@ -876,7 +942,8 @@ private fun PublishedRoomCard(
     connectedClients: Int,
     requiredClients: Int,
     canStart: Boolean,
-    onStart: () -> Unit
+    onStart: () -> Unit,
+    roomCode: String? = null
 ) {
     MenuSectionCard {
         Column(
@@ -884,6 +951,19 @@ private fun PublishedRoomCard(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text("Sala publicada", color = MenuColors.OnDark, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            // Sem isso, ninguem contava pro host como compartilhar a sala com
+            // quem vai jogar -- nem pra convidar pra sala privada, nem pra
+            // vincular um campeonato depois.
+            roomCode?.let {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "Código: $it",
+                    color = MenuColors.Gold,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 18.sp,
+                    letterSpacing = 2.sp
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
@@ -949,6 +1029,66 @@ private fun RoomPasswordField(
         ),
         modifier = modifier.fillMaxWidth()
     )
+}
+
+// So aparece depois que a sala foi publicada (precisa existir de verdade no
+// servidor pra link_room_to_championship achar via room_code) e so o host
+// consegue vincular -- migration 0035 exige host_id = auth.uid() e
+// status = 'waiting'.
+@Composable
+private fun ChampionshipLinkCard(
+    isLinking: Boolean,
+    linkedCode: String?,
+    errorMessage: String?,
+    championshipCode: String,
+    onChampionshipCodeChange: (String) -> Unit,
+    onLink: () -> Unit
+) {
+    MenuSectionCard(title = "Campeonato") {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (linkedCode != null) {
+                Text(
+                    "Sala vinculada ao campeonato $linkedCode. O resultado desta partida vai contar para a classificação.",
+                    color = MenuColors.TableGreenLight,
+                    fontSize = 12.sp
+                )
+            } else {
+                Text(
+                    "Tem o código de um campeonato? Vincule esta sala para que o resultado conte na classificação.",
+                    color = MenuColors.OnDarkMuted,
+                    fontSize = 12.sp
+                )
+                OutlinedTextField(
+                    value = championshipCode,
+                    onValueChange = { onChampionshipCodeChange(it.uppercase().filter(Char::isLetterOrDigit).take(CHAMPIONSHIP_CODE_LENGTH)) },
+                    label = { Text("Código do campeonato", color = Color.White.copy(alpha = 0.55f)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (championshipCode.trim().length == CHAMPIONSHIP_CODE_LENGTH && !isLinking) onLink()
+                    }),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MenuColors.TableGreenLight,
+                        unfocusedBorderColor = MenuColors.BorderStrong,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = MenuColors.TableGreenLight
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                errorMessage?.let {
+                    Text(it, color = MenuColors.Red, fontSize = 12.sp)
+                }
+                MenuFilledButton(
+                    text = "Vincular",
+                    onClick = onLink,
+                    enabled = championshipCode.trim().length == CHAMPIONSHIP_CODE_LENGTH && !isLinking,
+                    loading = isLinking,
+                    containerColor = MenuColors.TableGreenLight
+                )
+            }
+        }
+    }
 }
 
 // Sala privada nunca aparece na lista de descoberta (RLS/RPC filtram por

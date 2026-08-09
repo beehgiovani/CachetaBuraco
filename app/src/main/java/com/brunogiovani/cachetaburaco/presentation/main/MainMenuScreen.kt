@@ -71,6 +71,7 @@ fun MainMenuScreen(
     onOpenOnlineProfile: () -> Unit,
     onOpenOnlineRanking: () -> Unit,
     onOpenGlobalChat: () -> Unit = {},
+    onOpenChampionships: () -> Unit = {},
     onPlayBot: () -> Unit,
     onResumeGame: () -> Unit = {}
 ) {
@@ -93,6 +94,7 @@ fun MainMenuScreen(
         onRequestLogout = { showLogoutDialog = true },
         onOpenOnlineRanking = onOpenOnlineRanking,
         onOpenGlobalChat = onOpenGlobalChat,
+        onOpenChampionships = onOpenChampionships,
         onResumeGame = onResumeGame,
         onHostRoom = onHostRoom,
         onPlayBot = onPlayBot,
@@ -142,6 +144,7 @@ private fun MainMenuContent(
     onRequestLogout: () -> Unit,
     onOpenOnlineRanking: () -> Unit,
     onOpenGlobalChat: () -> Unit = {},
+    onOpenChampionships: () -> Unit = {},
     onResumeGame: () -> Unit,
     onHostRoom: () -> Unit,
     onPlayBot: () -> Unit,
@@ -183,7 +186,8 @@ private fun MainMenuContent(
                             onJoinRoom = onJoinRoom,
                             onHostOnlineRoom = onHostOnlineRoom,
                             onJoinOnlineRoom = onJoinOnlineRoom,
-                            onOpenGlobalChat = onOpenGlobalChat
+                            onOpenGlobalChat = onOpenGlobalChat,
+                            onOpenChampionships = onOpenChampionships
                         )
                     }
                     MenuEntrance(delayMillis = 60) {
@@ -250,7 +254,8 @@ private fun MainMenuContent(
                                 onJoinRoom = onJoinRoom,
                                 onHostOnlineRoom = onHostOnlineRoom,
                                 onJoinOnlineRoom = onJoinOnlineRoom,
-                                onOpenGlobalChat = onOpenGlobalChat
+                                onOpenGlobalChat = onOpenGlobalChat,
+                                onOpenChampionships = onOpenChampionships
                             )
                         }
                         SafeAdBannerSlot(compact = true, placement = AdPlacement.MAIN_MENU)
@@ -291,7 +296,8 @@ private fun ActionsPanel(
     onJoinRoom: () -> Unit,
     onHostOnlineRoom: () -> Unit,
     onJoinOnlineRoom: () -> Unit,
-    onOpenGlobalChat: () -> Unit = {}
+    onOpenGlobalChat: () -> Unit = {},
+    onOpenChampionships: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier.widthIn(max = 460.dp),
@@ -351,6 +357,14 @@ private fun ActionsPanel(
             glyph = "💬",
             accentColor = MenuColors.TableGreenLight,
             onClick = onOpenGlobalChat,
+            badge = "BETA"
+        )
+        MenuActionRow(
+            title = "Campeonatos",
+            subtitle = "Crie ou entre com código, veja a classificação",
+            glyph = "🏆",
+            accentColor = MenuColors.Gold,
+            onClick = onOpenChampionships,
             badge = "BETA"
         )
     }

@@ -285,16 +285,36 @@ publicacao esta em `product-roadmap.md`.
   conquistadas, apagadas quando ainda faltam.
 - [ ] Evitar fichas, aposta, moeda ou mecanica que pareca jogo de azar com valor real.
 
-## Fase 6 - Campeonatos (adiada, 2026-08-08)
+## Fase 6 - Campeonatos (retomada, 2026-08-09)
 
-Substituida por enquanto por sala privada com senha + chat (Fase 3 acima),
-que o usuario preferiu priorizar. Fica registrada aqui pra retomar depois.
+Ficou adiada em 2026-08-08 (substituida por sala privada com senha + chat,
+Fase 3 acima); o usuario pediu pra retomar logo depois de temporadas ficarem
+no ar.
 
-- [ ] Criar campeonato simples por pontos.
-- [ ] Inscricao por sala/codigo.
-- [ ] Tabela de classificacao.
-- [ ] Historico de partidas do campeonato.
-- [ ] Temporadas com reset programado do ranking.
+- [x] Criar campeonato simples por pontos. Migration `0034_championships.sql`:
+  tabelas `championships`/`championship_participants`, RPCs
+  `create_championship`/`join_championship`/`finish_championship`. Mesmo
+  padrao de sala privada -- sem lista publica, so quem tem o codigo entra.
+- [x] Inscricao por sala/codigo. `link_room_to_championship(p_room_code,
+  p_championship_code)` (migration `0035`, corrigida pra receber o codigo da
+  sala em vez do UUID -- a UI nunca teve acesso ao UUID da sala, so ao codigo,
+  igual `join_match_room` ja fazia). So o host da sala vincula, e so antes da
+  partida comecar. `complete_match` propaga o `championship_id` pro resultado.
+- [x] Tabela de classificacao. `list_championship_standings` (vitorias e
+  partidas por participante, ordenado por posicao) exibida em
+  `ChampionshipDetailScreen`.
+- [x] Historico de partidas do campeonato. `list_championship_matches`
+  (vencedor, time, data) exibido na mesma tela.
+- [x] UI completa: `ChampionshipListScreen` (criar/entrar por codigo, lista
+  "meus campeonatos") e `ChampionshipDetailScreen` (classificacao + historico
+  + encerrar campeonato, host-only). Entrada nova no menu principal
+  ("Campeonatos", com badge BETA). Vincular sala vira uma secao nova no
+  `LobbyScreen` do host, so quando a sala ja foi publicada (precisa existir de
+  verdade no servidor pra ter room_code).
+- [ ] Temporadas com reset programado do ranking. Nao se aplica a campeonatos
+  (eles encerram manualmente via `finish_championship`, sem reset
+  automatico) -- o equivalente pra ranking global ja foi resolvido na Fase 5
+  com periodos calculados ao vivo (sem reset nem tabela nova), ver acima.
 
 ## Ordem recomendada
 
