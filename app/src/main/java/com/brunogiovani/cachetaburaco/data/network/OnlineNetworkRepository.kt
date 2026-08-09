@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -350,13 +351,13 @@ class OnlineNetworkRepository(
         }
         scope.launch {
             val result = try {
-                dataSource.startRound(session)
+                withTimeoutOrNull(SERVER_RPC_TIMEOUT_MS) { dataSource.startRound(session) }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
-                reportFailureTelemetry(OnlineFailureCategory.DEAL_REQUEST_FAILED, session.room.roomId)
                 null
             }
+            if (result == null) reportFailureTelemetry(OnlineFailureCategory.DEAL_REQUEST_FAILED, session.room.roomId)
             onResult(result)
         }
     }
@@ -369,13 +370,13 @@ class OnlineNetworkRepository(
         }
         scope.launch {
             val result = try {
-                dataSource.drawDeckCard(session, seat)
+                withTimeoutOrNull(SERVER_RPC_TIMEOUT_MS) { dataSource.drawDeckCard(session, seat) }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
-                reportFailureTelemetry(OnlineFailureCategory.DRAW_REQUEST_FAILED, session.room.roomId)
                 null
             }
+            if (result == null) reportFailureTelemetry(OnlineFailureCategory.DRAW_REQUEST_FAILED, session.room.roomId)
             onResult(result)
         }
     }
@@ -406,13 +407,13 @@ class OnlineNetworkRepository(
         }
         scope.launch {
             val result = try {
-                dataSource.takeMorto(session, seat, indirect)
+                withTimeoutOrNull(SERVER_RPC_TIMEOUT_MS) { dataSource.takeMorto(session, seat, indirect) }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
-                reportFailureTelemetry(OnlineFailureCategory.MORTO_REQUEST_FAILED, session.room.roomId)
                 null
             }
+            if (result == null) reportFailureTelemetry(OnlineFailureCategory.MORTO_REQUEST_FAILED, session.room.roomId)
             onResult(result)
         }
     }
@@ -842,6 +843,15 @@ class OnlineNetworkRepository(
         const val CONFIRMED_SEND_RETRY_MS = 250L
         const val PRESENCE_HEARTBEAT_MS = 10_000L
         const val MAX_HEARTBEAT_FAILURES = 3
+        // Nenhum HttpTimeout configurado no client Ktor/Supabase -- sem um
+        // limite aqui, uma chamada de rede que nunca fecha (troca de rede,
+        // app em segundo plano) deixa a coroutine pendurada pra sempre, o
+        // callback nunca dispara, e quem chamou (ex.: handleClientDrawRequest
+        // no host) fica com o guard de "ja processando" preso pro resto do
+        // turno -- nenhuma reconexao do cliente resolve, porque o travamento
+        // esta do lado de quem nunca respondeu. Achado com um relato real de
+        // "compra trava, reconecta, trava nunca de novo, sempre a mesma sala".
+        const val SERVER_RPC_TIMEOUT_MS = 10_000L
         val ROUND_UNSCOPED_TYPES = setOf("CLIENT_READY", "REQ_RECONNECT")
         val CLIENT_TO_HOST_TYPES = setOf(
             "CLIENT_READY",
