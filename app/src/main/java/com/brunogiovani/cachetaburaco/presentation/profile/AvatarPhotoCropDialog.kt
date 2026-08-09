@@ -52,11 +52,23 @@ import com.brunogiovani.cachetaburaco.presentation.components.MenuShapes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 
 private val CropWindowSize = 260.dp
 private const val MAX_ZOOM = 4f
 private const val JPEG_QUALITY = 85
+// ContentResolver.openInputStream pode travar indefinidamente sem lancar
+// excecao em alguns provedores de midia (achado testando em emulador) --
+// sem isso o dialogo fica com spinner eterno, sem jeito de desistir a nao
+// ser fechando na mao.
+private const val PHOTO_LOAD_TIMEOUT_MS = 12_000L
+
+private sealed interface CropPhotoState {
+    data object Loading : CropPhotoState
+    data class Loaded(val bitmap: Bitmap) : CropPhotoState
+    data object Failed : CropPhotoState
+}
 
 /** Recorte da foto de perfil direto no Compose -- sem lib de terceiro (o projeto
  * so usa google()/mavenCentral(), adicionar uma lib de crop exigiria JitPack). */
@@ -73,10 +85,15 @@ fun AvatarPhotoCropDialog(
     var offset by remember { mutableStateOf(Offset.Zero) }
     var exporting by remember { mutableStateOf(false) }
 
-    val bitmapState = produceState<Bitmap?>(initialValue = null, imageUri) {
-        value = withContext(Dispatchers.IO) { loadDownsampledBitmap(context, imageUri) }
+    val photoState = produceState<CropPhotoState>(initialValue = CropPhotoState.Loading, imageUri) {
+        value = CropPhotoState.Loading
+        val loaded = withTimeoutOrNull(PHOTO_LOAD_TIMEOUT_MS) {
+            withContext(Dispatchers.IO) { loadDownsampledBitmap(context, imageUri) }
+        }
+        value = loaded?.let { CropPhotoState.Loaded(it) } ?: CropPhotoState.Failed
     }
-    val bitmap = bitmapState.value
+    val bitmap = (photoState.value as? CropPhotoState.Loaded)?.bitmap
+    val loadFailed = photoState.value is CropPhotoState.Failed
 
     Dialog(onDismissRequest = { if (!exporting) onDismiss() }) {
         Surface(color = MenuColors.Ink, shape = MenuShapes.Card) {
@@ -134,6 +151,14 @@ fun AvatarPhotoCropDialog(
                                     translationX = offset.x,
                                     translationY = offset.y
                                 )
+                        )
+                    } else if (loadFailed) {
+                        Text(
+                            "Não deu pra abrir essa foto. Tente escolher outra.",
+                            color = MenuColors.OnDarkMuted,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(16.dp)
                         )
                     } else {
                         CircularProgressIndicator(color = MenuColors.Gold, modifier = Modifier.size(28.dp))

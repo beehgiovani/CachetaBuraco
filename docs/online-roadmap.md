@@ -152,6 +152,25 @@ publicacao esta em `product-roadmap.md`.
   confirmar o caminho completo (escolher -> recortar -> subir -> aparecer no
   proprio perfil e no ranking) em aparelho fisico, junto dos outros itens de
   homologacao ja pendentes neste documento.
+  **Retomado em 2026-08-09**: reproduzi o travamento de novo, agora de forma
+  consistente (nao mais flakiness pontual) -- os emuladores usados nesta
+  sessao sao instancias BlueStacks (`ro.product.manufacturer=samsung`,
+  processos `BstHostCallManagerService`/`BstGCallService` no logcat, nao um
+  AVD padrao do Google), e o `openInputStream` de uma imagem recem-empurrada
+  via `adb push` trava ali sem excecao, todo santo teste. Gap real
+  encontrado: `AvatarPhotoCropDialog.kt` nao tinha NENHUM timeout nem estado
+  de erro pra esse caso -- o spinner ficava girando pra sempre, o usuario so
+  descobria que travou tentando fechar na mao. Corrigido com
+  `withTimeoutOrNull(12_000L)` envolvendo o `loadDownsampledBitmap` (mesmo
+  padrao ja usado em `OnlineNetworkRepository.kt` pro RPC de compra) e um
+  estado `CropPhotoState` (Loading/Loaded/Failed) pra mostrar mensagem de
+  erro e liberar o usuario a tentar outra foto. Testado no emulador: apos
+  ~12s aparece "Não deu pra abrir essa foto. Tente escolher outra." e o
+  dialogo fecha normalmente pelo Cancelar. O caminho feliz (imagem que abre
+  de verdade) continua sem confirmacao de ponta a ponta nesta sessao -- o
+  ambiente BlueStacks nao serviu nenhuma imagem local via content URI em
+  nenhuma tentativa; falta testar num AVD padrao do Google ou aparelho
+  fisico de verdade.
 
 ## Fase 3 - Salas online
 
