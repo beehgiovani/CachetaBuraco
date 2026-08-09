@@ -34,4 +34,32 @@ class SupabaseOnlineRankingRepositoryTest {
         assertEquals("MONTHLY", request.parameters.getValue("p_period").jsonPrimitive.content)
         assertEquals(25, request.parameters.getValue("p_limit").jsonPrimitive.int)
     }
+
+    @Test
+    fun `weekly ranking defaults offset to zero`() {
+        val request = buildRankingRpcRequest(OnlineRankingPeriod.WEEKLY, 50)
+
+        assertEquals(0, request.parameters.getValue("p_offset").jsonPrimitive.int)
+    }
+
+    @Test
+    fun `weekly ranking sends negative offset for past seasons`() {
+        val request = buildRankingRpcRequest(OnlineRankingPeriod.WEEKLY, 50, offset = -2)
+
+        assertEquals(-2, request.parameters.getValue("p_offset").jsonPrimitive.int)
+    }
+
+    @Test
+    fun `positive offset is clamped to zero`() {
+        val request = buildRankingRpcRequest(OnlineRankingPeriod.MONTHLY, 50, offset = 3)
+
+        assertEquals(0, request.parameters.getValue("p_offset").jsonPrimitive.int)
+    }
+
+    @Test
+    fun `overall ranking never sends offset`() {
+        val request = buildRankingRpcRequest(OnlineRankingPeriod.OVERALL, 50, offset = -1)
+
+        assertFalse(request.parameters.containsKey("p_offset"))
+    }
 }

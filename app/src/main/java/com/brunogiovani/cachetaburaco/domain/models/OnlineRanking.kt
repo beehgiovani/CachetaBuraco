@@ -29,8 +29,19 @@ data class OnlineRankingEntry(
 data class OnlineRankingSnapshot(
     val localPlayerId: String,
     val entries: List<OnlineRankingEntry>,
-    val period: OnlineRankingPeriod = OnlineRankingPeriod.OVERALL
+    val period: OnlineRankingPeriod = OnlineRankingPeriod.OVERALL,
+    // So preenchido pra WEEKLY/MONTHLY -- offset 0 e o periodo atual (em
+    // andamento), negativo e temporada passada (fechada). periodStart/End
+    // vem sempre do servidor (migration 0033), mesmo quando entries fica
+    // vazio, pra UI conseguir mostrar o intervalo de datas de um periodo sem
+    // nenhuma partida.
+    val periodOffset: Int = 0,
+    val periodStart: String? = null,
+    val periodEnd: String? = null
 ) {
     val localPlayer: OnlineRankingEntry?
         get() = entries.firstOrNull { it.playerId == localPlayerId }
+
+    val isClosedPeriod: Boolean
+        get() = periodOffset < 0
 }

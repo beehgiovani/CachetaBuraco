@@ -249,9 +249,35 @@ publicacao esta em `product-roadmap.md`.
   (limiares multiplos, idempotencia, backfill, RLS) antes de aplicar em
   producao. A parte de campeonato deste item fica pendente pra Fase 6, que
   ainda nao tem nenhuma tabela no banco -- nao ha o que premiar ainda.
-- [ ] Temporadas semanais/mensais. Ja existe ranking por periodo (semanal/
-  mensal, migration `0009`), mas uma "temporada" de verdade com reset e
-  premiacao e feature separada, maior, ainda nao coberta.
+- [x] Temporadas semanais/mensais (pedido do usuario, 2026-08-08). Decisao de
+  design: nao precisa de tabela nova, cron nem "reset" de verdade --
+  `match_results`/`match_result_players` ja sao permanentes, entao "temporada
+  passada" e so rodar a mesma agregacao (`list_period_ranking`, migration
+  `0009`/`0030`) com uma janela de datas fechada no passado em vez da janela
+  aberta "desde o inicio do periodo atual". Migration `0033_period_ranking_history.sql`:
+  novo `p_offset` (0 = periodo atual, negativo = anterior, positivo
+  rejeitado com `INVALID_RANKING_PERIOD_OFFSET`), retorna `period_start`/
+  `period_end` mesmo quando o periodo nao teve nenhuma partida (join a partir
+  de uma linha-ancora, senao a UI perderia o intervalo de datas de um
+  periodo vazio). Corpo copiado verbatim do atual (0030, que ja tinha
+  `avatar_photo_path`) antes de acrescentar os campos novos -- conferido
+  contra o arquivo real, nao de memoria. Testado local com Postgres real:
+  semana atual isola so a partida da semana atual, semana anterior isola so
+  a de 9 dias atras, duas semanas atras fica vazio mas ainda devolve as
+  datas do periodo, mes atual soma corretamente as duas (mesmo mes), offset
+  positivo rejeitado. Kotlin: `OnlineRankingSnapshot` ganha `periodOffset`/
+  `periodStart`/`periodEnd`/`isClosedPeriod`; `OnlineRankingScreen` ganha
+  navegador "◀ Anterior / Próximo ▶" com o intervalo de datas formatado
+  (so aparece pra Semana/Mês, nao pro Geral), e destaque "🏆 Campeão" pro
+  1º lugar quando o período exibido está fechado (offset < 0) -- a
+  "premiação" pedida vira um momento visual em vez de um sistema de
+  recompensa com estado proprio. 4 testes novos em
+  `SupabaseOnlineRankingRepositoryTest` cobrindo o parametro `p_offset`.
+  **Pendente**: mesma limitacao de ambiente das duas migrations anteriores
+  -- o AVD ficou sem espaco (`INSTALL_FAILED_INSUFFICIENT_STORAGE` mesmo
+  apos limpar cache/tmp/app), entao a navegacao de periodo nao foi clicada
+  de verdade na tela. Compensado com testes exaustivos da migration contra
+  Postgres real e suite Kotlin completa (build, lint, testes) verde.
 - [x] Estatisticas por modo: Cacheta, Buraco e Tranca.
 - [x] Badges visuais no perfil. `OnlineProfileScreen` ganhou secao
   "Medalhas": grid com as 18 medalhas do catalogo, coloridas por tier

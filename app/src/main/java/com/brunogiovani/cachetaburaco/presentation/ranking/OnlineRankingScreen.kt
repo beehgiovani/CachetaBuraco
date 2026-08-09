@@ -30,6 +30,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -79,12 +80,13 @@ fun OnlineRankingScreen(
 ) {
     var reloadRequest by remember { mutableIntStateOf(0) }
     var selectedPeriod by remember { mutableStateOf(OnlineRankingPeriod.OVERALL) }
+    var periodOffset by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf<OnlineRankingUiState>(OnlineRankingUiState.Loading) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(playerName, selectedPeriod, reloadRequest) {
+    LaunchedEffect(playerName, selectedPeriod, periodOffset, reloadRequest) {
         state = OnlineRankingUiState.Loading
-        state = runCatching { repository.loadRanking(playerName, selectedPeriod) }
+        state = runCatching { repository.loadRanking(playerName, selectedPeriod, periodOffset = periodOffset) }
             .fold(
                 onSuccess = { OnlineRankingUiState.Ready(it) },
                 onFailure = {
@@ -98,7 +100,12 @@ fun OnlineRankingScreen(
     OnlineRankingContent(
         state = state,
         selectedPeriod = selectedPeriod,
-        onPeriodSelected = { selectedPeriod = it },
+        periodOffset = periodOffset,
+        // Trocar de aba (Geral/Semana/Mes) sempre volta pro periodo atual --
+        // senao "Semana" lembraria o offset deixado em "Mes" (ou vice-versa),
+        // que nao faz sentido nenhum entre unidades de tempo diferentes.
+        onPeriodSelected = { selectedPeriod = it; periodOffset = 0 },
+        onPeriodOffsetChange = { periodOffset = it },
         onBack = onBack,
         onRetry = { reloadRequest++ },
         onReportPhoto = { targetProfileId ->
@@ -116,7 +123,9 @@ internal fun OnlineRankingContent(
     onPeriodSelected: (OnlineRankingPeriod) -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
-    onReportPhoto: (String) -> Unit = {}
+    onReportPhoto: (String) -> Unit = {},
+    periodOffset: Int = 0,
+    onPeriodOffsetChange: (Int) -> Unit = {}
 ) {
     MenuBackdrop {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -141,6 +150,21 @@ internal fun OnlineRankingContent(
                         onPeriodSelected = onPeriodSelected,
                         compact = compact
                     )
+                }
+
+                if (selectedPeriod != OnlineRankingPeriod.OVERALL) {
+                    val periodLabel = (state as? OnlineRankingUiState.Ready)?.snapshot?.let {
+                        formatPeriodRange(it.periodStart, it.periodEnd)
+                    }
+                    MenuEntrance {
+                        PeriodNavigator(
+                            label = periodLabel,
+                            periodOffset = periodOffset,
+                            onPrevious = { onPeriodOffsetChange(periodOffset - 1) },
+                            onNext = { onPeriodOffsetChange((periodOffset + 1).coerceAtMost(0)) },
+                            compact = compact
+                        )
+                    }
                 }
 
                 when (state) {
@@ -207,6 +231,54 @@ internal fun rankingEmptyMessage(period: OnlineRankingPeriod): String = when (pe
     OnlineRankingPeriod.MONTHLY -> "Nenhuma partida online foi concluída neste mês."
 }
 
+// Temporadas (semana/mes anterior): navega pelo periodOffset da migration
+// 0033. "Anterior" fica sempre disponivel (no pior caso mostra periodo
+// vazio); "Proximo" so ate o periodo atual (offset 0), nunca existe futuro.
+@Composable
+private fun PeriodNavigator(
+    label: String?,
+    periodOffset: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    compact: Boolean
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TextButton(onClick = onPrevious) {
+            Text("◀ Anterior", color = MenuColors.OnDark, fontSize = if (compact) 11.sp else 13.sp)
+        }
+        Text(
+            label ?: "···",
+            color = MenuColors.OnDarkMuted,
+            fontWeight = FontWeight.Bold,
+            fontSize = if (compact) 11.sp else 13.sp
+        )
+        TextButton(onClick = onNext, enabled = periodOffset < 0) {
+            Text(
+                "Próximo ▶",
+                color = if (periodOffset < 0) MenuColors.OnDark else MenuColors.OnDarkFaint,
+                fontSize = if (compact) 11.sp else 13.sp
+            )
+        }
+    }
+}
+
+private fun formatPeriodRange(startIso: String?, endIsoExclusive: String?): String? {
+    if (startIso == null || endIsoExclusive == null) return null
+    return runCatching {
+        val zone = java.time.ZoneId.systemDefault()
+        val formatter = java.time.format.DateTimeFormatter.ofPattern("dd/MM")
+        val start = formatter.format(java.time.Instant.parse(startIso).atZone(zone))
+        // period_end e exclusivo (comeco do proximo periodo) -- subtraio 1
+        // dia pra mostrar o ultimo dia de verdade do periodo.
+        val end = formatter.format(java.time.Instant.parse(endIsoExclusive).atZone(zone).minusDays(1))
+        "$start - $end"
+    }.getOrNull()
+}
+
 @Composable
 private fun RankingReady(
     snapshot: OnlineRankingSnapshot,
@@ -233,6 +305,7 @@ private fun RankingReady(
         if (!compact) {
             CurrentPlayerSummary(
                 entry = localPlayer,
+                isChampion = snapshot.isClosedPeriod && localPlayer?.position == 1,
                 modifier = Modifier
                     .width(230.dp)
                     .fillMaxHeight()
@@ -245,13 +318,14 @@ private fun RankingReady(
         ) {
             if (compact && localPlayer != null) {
                 item(key = "current-player-summary") {
-                    CompactCurrentPlayerSummary(localPlayer)
+                    CompactCurrentPlayerSummary(localPlayer, isChampion = snapshot.isClosedPeriod && localPlayer.position == 1)
                 }
             }
             items(snapshot.entries, key = { it.playerId }) { entry ->
                 RankingEntryRow(
                     entry = entry,
                     isCurrentPlayer = entry.playerId == snapshot.localPlayerId,
+                    isChampion = snapshot.isClosedPeriod && entry.position == 1,
                     compact = compact,
                     onReportPhoto = onReportPhoto
                 )
@@ -261,7 +335,7 @@ private fun RankingReady(
 }
 
 @Composable
-private fun CurrentPlayerSummary(entry: OnlineRankingEntry?, modifier: Modifier = Modifier) {
+private fun CurrentPlayerSummary(entry: OnlineRankingEntry?, isChampion: Boolean = false, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
         color = MenuColors.InkPanel,
@@ -309,6 +383,15 @@ private fun CurrentPlayerSummary(entry: OnlineRankingEntry?, modifier: Modifier 
                 )
             }
             entry?.let {
+                if (isChampion) {
+                    Text(
+                        "🏆 Campeão da temporada!",
+                        color = MenuColors.Gold,
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center,
+                        fontSize = 13.sp
+                    )
+                }
                 Text(
                     "${it.totalWins} vitórias em ${it.totalMatches} partidas",
                     color = MenuColors.OnDark,
@@ -327,7 +410,7 @@ private fun CurrentPlayerSummary(entry: OnlineRankingEntry?, modifier: Modifier 
 }
 
 @Composable
-private fun CompactCurrentPlayerSummary(entry: OnlineRankingEntry) {
+private fun CompactCurrentPlayerSummary(entry: OnlineRankingEntry, isChampion: Boolean = false) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -348,7 +431,11 @@ private fun CompactCurrentPlayerSummary(entry: OnlineRankingEntry) {
                 Text("#${entry.position}", color = MenuColors.TableGreenLight, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Você", color = MenuColors.TableGreenLight, fontWeight = FontWeight.Bold)
+            Text(
+                if (isChampion) "🏆 Você" else "Você",
+                color = if (isChampion) MenuColors.Gold else MenuColors.TableGreenLight,
+                fontWeight = FontWeight.Bold
+            )
         }
         Text("${entry.totalWins} vitórias  |  ${entry.xp} XP", color = MenuColors.OnDark, fontSize = 12.sp)
     }
@@ -359,7 +446,8 @@ private fun RankingEntryRow(
     entry: OnlineRankingEntry,
     isCurrentPlayer: Boolean,
     compact: Boolean,
-    onReportPhoto: (String) -> Unit
+    onReportPhoto: (String) -> Unit,
+    isChampion: Boolean = false
 ) {
     val medalColor = when (entry.position) {
         1 -> MenuColors.Gold
@@ -418,8 +506,8 @@ private fun RankingEntryRow(
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    entry.playerName,
-                    color = if (isCurrentPlayer) MenuColors.TableGreenLight else MenuColors.OnDark,
+                    if (isChampion) "🏆 ${entry.playerName}" else entry.playerName,
+                    color = if (isChampion) MenuColors.Gold else if (isCurrentPlayer) MenuColors.TableGreenLight else MenuColors.OnDark,
                     fontWeight = FontWeight.Bold,
                     fontSize = if (compact) 13.sp else 15.sp,
                     maxLines = 1,
