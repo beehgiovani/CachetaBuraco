@@ -321,8 +321,7 @@ private fun ChampionshipRow(championship: Championship, onClick: () -> Unit) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-                .then(Modifier),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -345,11 +344,18 @@ private fun ChampionshipRow(championship: Championship, onClick: () -> Unit) {
                     fontSize = 11.sp
                 )
             }
+            Spacer(modifier = Modifier.width(12.dp))
+            // MenuFilledButton sempre pede fillMaxWidth por dentro -- sem uma
+            // largura fixa aqui ele disputa espaco com o Column(weight=1f) ao
+            // lado e vence a medicao (é medido antes, por nao ter weight),
+            // espremendo o texto do campeonato numa coluna de poucos pixels
+            // (cada letra quebra numa linha). Mesmo ajuste ja feito em
+            // LobbyScreen.kt pro botao "Entrar" da lista de salas.
             MenuFilledButton(
                 text = "Ver",
                 onClick = onClick,
                 containerColor = MenuColors.TableGreenLight,
-                modifier = Modifier.widthIn(min = 88.dp)
+                modifier = Modifier.width(96.dp)
             )
         }
     }
