@@ -32,7 +32,7 @@ Projeto em fase de testes praticos, com modo local, modo contra a maquina e modo
 
 A implementacao `OnlineNetworkRepository` usa o mesmo contrato de `LocalNetworkRepository`, mantendo `MatchViewModel`, `MatchScreen`, `MatchConfig` e `GameRulesEngine` compartilhados entre os transportes. A identidade autenticada e usada na partida online; assentos, presenca, entrega idempotente, isolamento de eventos privados e encerramento de sessao possuem cobertura automatizada. O resultado final e enviado pelo host com chave idempotente e validado contra o evento persistido antes de atualizar as estatisticas.
 
-O teste pratico com dois aparelhos ainda faz parte da homologacao. As migracoes `0001` a `0023` estao aplicadas no projeto remoto e o schema passa pelo lint da CLI. A RPC de eventos rejeita tipos desconhecidos, separa mensagens do host e dos clientes e valida identidade, turno, rodada, formato dos jogos e posse das cartas dos assentos clientes. Eventos atrasados de uma rodada anterior nao podem alterar a rodada atual, o ledger respeita a configuracao opcional do 3 vermelho automatico na Tranca e um Joker impresso nao pode se passar por carta natural quando os curingas estao desativados. A RPC `start_online_round` agora embaralha e distribui a rodada inteira dentro do Postgres, tirando essa decisao do aparelho do host. A secret key usada na configuracao inicial ja foi rotacionada; o Android contem somente URL publica e publishable key.
+O teste pratico com dois aparelhos ainda faz parte da homologacao. As migracoes `0001` a `0036` estao aplicadas no projeto remoto e o schema passa pelo lint da CLI. A RPC de eventos rejeita tipos desconhecidos, separa mensagens do host e dos clientes e valida identidade, turno, rodada, formato dos jogos e posse das cartas dos assentos clientes. Eventos atrasados de uma rodada anterior nao podem alterar a rodada atual, o ledger respeita a configuracao opcional do 3 vermelho automatico na Tranca e um Joker impresso nao pode se passar por carta natural quando os curingas estao desativados. A RPC `start_online_round` agora embaralha e distribui a rodada inteira dentro do Postgres, tirando essa decisao do aparelho do host. A secret key usada na configuracao inicial ja foi rotacionada; o Android contem somente URL publica e publishable key.
 
 ## Build e testes
 
@@ -42,7 +42,7 @@ Configuracao atual do Android:
 - `targetSdk`: 37
 - `minSdk`: 26
 - Java/Kotlin JVM target: 21
-- Android Gradle Plugin: 9.2.1
+- Android Gradle Plugin: 9.3.1
 - Kotlin Compose plugin: 2.4.10
 - Gradle Wrapper: 9.6.1
 
