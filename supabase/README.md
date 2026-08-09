@@ -24,7 +24,8 @@ Os dois resultados precisam apontar para `yvpbegrdepevppglbcbm`.
 
 ## Migracoes
 
-As migracoes `0001` a `0016` estao aplicadas no projeto remoto. Para uma nova
+As migracoes `0001` a `0035` estao aplicadas no projeto remoto (ver
+`docs/online-roadmap.md` pra decisao de design por fase). Para uma nova
 migracao, simular antes e conferir se somente o arquivo esperado aparece:
 
 ```powershell
@@ -37,18 +38,26 @@ npx supabase migration list --linked --profile carteado-br-online
 ## Responsabilidades
 
 - Supabase guarda perfis, estatisticas, ranking, salas, presenca e eventos.
-- A `0009` congela os participantes de cada resultado e calcula rankings semanal e mensal no fuso de Sao Paulo.
-- A `0010` aceita somente avatares internos conhecidos e atualiza apenas o perfil autenticado.
-- A `0011` redige maos e cartas privadas assim que o resultado da partida e confirmado.
-- A `0012` rejeita acoes criticas de um cliente quando outro assento esta na vez.
-- A `0013` deriva remetente e assento da sessao autenticada e valida payloads criticos.
-- A `0014` valida formato dos jogos, IDs das cartas e compra do topo publico do lixo.
-- A `0015` corrige tipagem/volatilidade desses helpers e mantem o lint sem avisos.
-- A `0016` guarda maos de clientes no schema privado e valida posse, lixo, morto e vitoria.
+- `0001`-`0016`: fundacao online -- salas, RLS, entrega confiavel, ranking
+  global/por periodo, redacao de mao/carta privada, guarda de turno ativo,
+  identidade autenticada nos eventos, validacao estrutural de jogos/descarte.
+- `0017`-`0026`: servidor vira autoridade da partida -- guarda de identidade
+  de rodada, baralho/mao/morto sorteados e servidos pelo servidor
+  (`start_online_round`, `online_draw_deck_card`, `online_take_morto`), nao
+  mais pelo host sozinho.
+- `0027`-`0030`: gamificacao sem fichas -- medalhas (`player_medals`, trigger
+  em `player_stats`), foto de avatar real (upload + moderacao basica).
+- `0031`-`0033`: sala privada com senha, chat de sala (apagado ao encerrar a
+  partida), historico de ranking por periodo (semanal/mensal, sem tabela de
+  reset -- calculado ao vivo por `period_offset`).
+- `0034`-`0035`: campeonatos por pontos -- inscricao por codigo (mesmo padrao
+  de sala privada, sem lista publica), vinculo de sala por `room_code`
+  (`link_room_to_championship`), classificacao e historico calculados ao
+  vivo (sem tabela de leaderboard persistida).
 - A RPC de eventos aplica tipo, papel e destinatario antes de persistir a mensagem.
 - Android mantem interface, fluxo local e validacao imediata.
-- O host e a autoridade da primeira versao online.
-- Antes da versao competitiva, o servidor ainda deve assumir o baralho e a mao do host por completo.
+- O servidor e a autoridade da partida online desde a Fase de compra/deal
+  server-side (`0020`-`0026`) -- o host so manda no fluxo Wi-Fi local.
 
 A secret key compartilhada durante a configuracao inicial ja foi rotacionada.
 A autenticacao anonima fica habilitada durante o Beta e depois pode ser

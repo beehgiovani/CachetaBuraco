@@ -9,8 +9,6 @@ data class Player(
 
 enum class GameType { CACHETA, BURACO, TRANCA }
 
-enum class MatchMode { ONLINE, LOCAL_NETWORK }
-
 enum class PointsMode { FREE, CHIPS }
 
 enum class BotDifficulty { EASY, NORMAL, HARD }
@@ -161,10 +159,3 @@ data class MatchConfig(
         }
     }
 }
-
-data class Match(
-    val id: String,
-    val config: MatchConfig,
-    val mode: MatchMode,
-    val players: List<Player>
-)

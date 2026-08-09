@@ -7,6 +7,7 @@ Arquivos principais cobertos:
 - `icon-512.png`: PNG 512 x 512 para o ícone da Play Store.
 - `feature-graphic-1024x500.png`: PNG 1024 x 500 sem alpha para o gráfico de destaque.
 - `screenshots/*.png`: quatro capturas reais em 1920 x 1080: menu, regras, partida e ações.
+- `screenshots-phone/*.png`: capturas em formato celular (menu, lobby contra a máquina, partida de Cacheta).
 
 Texto sugerido para a listagem:
 
