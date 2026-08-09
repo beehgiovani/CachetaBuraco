@@ -4,7 +4,11 @@
         <!-- Fundo da splash screen. -->
         <item name="windowSplashScreenBackground">@android:color/black</item>
 
-        <!-- Icone da splash screen. -->
+        <!-- Icone da splash screen. ic_launcher_foreground.png tinha o brasao
+             preenchendo quase todo o quadro, sem a margem de seguranca que a
+             API de splash espera; corrigido direto na arte (mais margem
+             transparente ao redor), entao volta a usar o mipmap adaptativo
+             normal em vez de um recurso separado so pra splash. -->
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_round</item>
 
         <!-- Tema assumido depois da splash screen. -->
