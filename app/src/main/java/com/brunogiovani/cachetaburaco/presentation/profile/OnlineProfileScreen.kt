@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -303,6 +304,15 @@ internal fun OnlineProfileContent(
     MenuBackdrop {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val compact = maxWidth < 760.dp || maxHeight < 430.dp
+            // Fonte grande (sistema) deixa 6 colunas apertadas demais e quebra
+            // palavra no meio (ex.: "Inician-te") -- reduz a grade nesse caso,
+            // mesmo em tela larga.
+            val largeFont = LocalDensity.current.fontScale >= 1.25f
+            val gridColumns = when {
+                compact -> 3
+                largeFont -> 3
+                else -> 6
+            }
 
             Column(
                 modifier = Modifier
@@ -422,7 +432,7 @@ internal fun OnlineProfileContent(
                                     )
                                     FlowRow(
                                         modifier = Modifier.fillMaxWidth(),
-                                        maxItemsInEachRow = if (compact) 3 else 6,
+                                        maxItemsInEachRow = gridColumns,
                                         horizontalArrangement = Arrangement.SpaceEvenly,
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
@@ -430,7 +440,8 @@ internal fun OnlineProfileContent(
                                             MedalBadge(
                                                 medal = medal,
                                                 earned = medal.code in earnedCodes,
-                                                compact = compact
+                                                compact = compact,
+                                                largeFont = largeFont
                                             )
                                         }
                                     }
@@ -446,7 +457,7 @@ internal fun OnlineProfileContent(
                                 ) {
                                     FlowRow(
                                         modifier = Modifier.fillMaxWidth(),
-                                        maxItemsInEachRow = 6,
+                                        maxItemsInEachRow = gridColumns,
                                         horizontalArrangement = Arrangement.SpaceEvenly,
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
@@ -609,12 +620,12 @@ private fun MedalTier.color(): Color = when (this) {
 }
 
 @Composable
-private fun MedalBadge(medal: MedalDefinition, earned: Boolean, compact: Boolean) {
+private fun MedalBadge(medal: MedalDefinition, earned: Boolean, compact: Boolean, largeFont: Boolean = false) {
     val tierColor = medal.tier.color()
     Column(
         modifier = Modifier
             .heightIn(min = 48.dp)
-            .widthIn(max = if (compact) 76.dp else 92.dp)
+            .widthIn(max = if (compact) 76.dp else if (largeFont) 140.dp else 92.dp)
             .background(
                 if (earned) tierColor.copy(alpha = 0.16f) else Color.Transparent,
                 MenuShapes.Card

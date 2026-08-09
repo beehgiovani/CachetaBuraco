@@ -208,6 +208,9 @@ private fun MainMenuContent(
                         )
                     }
                     SafeAdBannerSlot(compact = true, placement = AdPlacement.MAIN_MENU)
+                    // Espaco reservado pro FAB do chat nao tampar o fim da lista
+                    // em telas curtas (ele fica fixo por cima do conteudo rolado).
+                    Spacer(modifier = Modifier.height(72.dp))
                 }
             } else {
                 Row(
@@ -262,6 +265,9 @@ private fun MainMenuContent(
                             )
                         }
                         SafeAdBannerSlot(compact = true, placement = AdPlacement.MAIN_MENU)
+                        // Mesmo motivo do ramo empilhado: o FAB do chat fica fixo
+                        // no canto e nao pode tampar o fim desta coluna.
+                        Spacer(modifier = Modifier.height(72.dp))
                     }
                 }
             }

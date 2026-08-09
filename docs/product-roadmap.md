@@ -75,8 +75,19 @@ backend fica em `online-roadmap.md` e a monetizacao fica em
   em `MatchScreen.kt`: mesa vazia, mesa cheia (2 tamanhos), erro, retrato
   compacto, fonte grande (`fontScale=2.0`), alem de previews isolados de
   `MeldArea` sozinha (cheia com canastra, vazia em caixa pequena).
-- [ ] Validar previews e capturas em larguras/fontes variadas antes da entrega.
-  Os previews existem agora; falta a revisao visual manual no Android Studio.
+- [x] Validar previews e capturas em larguras/fontes variadas antes da entrega.
+  Homologacao real em emulador (2026-08-09), nao so preview estatico: largura
+  larga/paisagem (1067dp, "Medium_Phone" cross-checked com dois Samsung
+  emulados), largura compacta (640x360dp, referencia comum de tela pequena em
+  paisagem, ja que o app e travado em landscape) e fontScale=2.0. Achados
+  reais: FAB do chat geral (`MainMenuScreen.kt`) sobrepunha o fim da lista
+  rolavel em telas curtas -- corrigido com `Spacer` reservando 72dp no fim das
+  duas colunas roláveis. Grade de medalhas/avatares (`OnlineProfileScreen.kt`)
+  mantinha 6 colunas fixas mesmo com fontScale grande, quebrando palavra no
+  meio ("Inician-te"); corrigido reduzindo pra 3 colunas e alargando o badge
+  (92dp -> 140dp) quando `fontScale >= 1.25f`, mesmo padrao ja usado em
+  `LobbyScreen.kt`. Lobby, ranking e chat geral auditados nos mesmos tamanhos
+  sem gap encontrado.
 
 ## 4. Animacao, som e identidade visual
 
