@@ -497,6 +497,124 @@ class MatchViewModelStartGameTest {
     }
 
     @Test
+    fun `online host keeps draw guard after normal card so remote seat can discard afterward`() = runTest {
+        // Bug real relatado pelo usuario, em duas partes na mesma sessao:
+        // primeiro "compro carta no online, fica em loop pedindo carta ao
+        // host" (causa raiz de verdade: roundId nunca sincronizado no
+        // OnlineNetworkRepository do host pro caminho server-authoritative,
+        // corrigido via markRoundActive -- ver testes de acceptIncomingRound).
+        // Consertado isso, apareceu um segundo bug: "compra funcionando, mas
+        // o descarte do adversario nao funciona depois que comprou do monte".
+        // Causa: hasRemoteDrawnThisTurn() consulta a PRESENCA do assento em
+        // deckServedSeatsThisTurn pra saber se ele ja comprou e pode
+        // descartar -- exatamente o mesmo guard que uma tentativa anterior de
+        // fix removia logo apos servir uma carta normal (pra "liberar" o
+        // assento), pensando que o guard so servia pra impedir RPC duplicada.
+        // Ele serve pras duas coisas. O caminho Wi-Fi ja fazia certo:
+        // handleClientDrawRequest so remove o guard no 3 vermelho ou falha de
+        // entrega; numa carta normal ele fica ate o proximo descarte limpar
+        // o set inteiro (handleOpponentDiscard). O caminho online precisa do
+        // mesmo comportamento.
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.BURACO, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        runCurrent()
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(activeSeat = 1)
+
+        val drawnCardId = cardId(Rank.TEN, Suit.CLUBS)
+        repo.serverDrawResult = JSONObject().apply {
+            put("status", "OK")
+            put("card", drawnCardId)
+            put("deckSize", 8)
+            put("mortosLeft", 2)
+            put("discardPile", JSONArray())
+        }.toString()
+        repo.emitIncoming(
+            NetworkMessage("client-1", "REQ_DRAW_DECK", JSONObject().put("seat", 1).toString(), senderSeat = 1)
+        )
+        runCurrent()
+
+        assertTrue(
+            "guard deveria continuar marcando que o assento 1 comprou nesta rodada",
+            viewModel.deckServedSeatsForTest().contains(1)
+        )
+
+        repo.emitIncoming(
+            NetworkMessage(
+                senderId = "client-1",
+                type = "DISCARD",
+                payload = JSONObject().put("card", drawnCardId).put("seat", 1).toString(),
+                senderSeat = 1
+            )
+        )
+        runCurrent()
+
+        assertFalse(
+            "descarte apos compra normal do monte devia ser aceito, nao recusado por 'ainda nao comprou'",
+            viewModel.gameState.value.feedbackMessage.contains("recusado", ignoreCase = true)
+        )
+        assertTrue(viewModel.gameState.value.discardPile.any { it.id == drawnCardId })
+        assertFalse(viewModel.remoteHandsForTest()[1].orEmpty().any { it.id == drawnCardId })
+        assertFalse(
+            "descarte deveria limpar o guard inteiro (handleOpponentDiscard) pra proxima rodada",
+            viewModel.deckServedSeatsForTest().contains(1)
+        )
+    }
+
+    @Test
+    fun `online host releases draw guard immediately for tranca auto melded red three`() = runTest {
+        val repo = FakeLocalNetworkRepository(isOnlineTransport = true)
+        val viewModel = MatchViewModel(
+            networkRepository = repo,
+            playerId = "host",
+            isHost = true,
+            config = MatchConfig(gameType = GameType.TRANCA, maxPlayers = 2)
+        )
+        viewModel.startGame()
+        runCurrent()
+        viewModel.mutableGameState().value = viewModel.gameState.value.copy(activeSeat = 1)
+
+        val redThreeId = cardId(Rank.THREE, Suit.HEARTS)
+        repo.serverDrawResult = JSONObject().apply {
+            put("status", "OK")
+            put("card", redThreeId)
+            put("deckSize", 8)
+            put("mortosLeft", 2)
+            put("discardPile", JSONArray())
+        }.toString()
+        repo.emitIncoming(
+            NetworkMessage("client-1", "REQ_DRAW_DECK", JSONObject().put("seat", 1).toString(), senderSeat = 1)
+        )
+        runCurrent()
+
+        assertFalse(
+            "3 vermelho auto-baixado nao conta como a compra da vez -- guard deve liberar na hora",
+            viewModel.deckServedSeatsForTest().contains(1)
+        )
+
+        val nextCardId = cardId(Rank.NINE, Suit.CLUBS)
+        repo.serverDrawResult = JSONObject().apply {
+            put("status", "OK")
+            put("card", nextCardId)
+            put("deckSize", 7)
+            put("mortosLeft", 2)
+            put("discardPile", JSONArray())
+        }.toString()
+        repo.emitIncoming(
+            NetworkMessage("client-1", "REQ_DRAW_DECK", JSONObject().put("seat", 1).toString(), senderSeat = 1)
+        )
+        runCurrent()
+
+        assertEquals(listOf(1, 1), repo.serverDrawCalls)
+        assertTrue(viewModel.remoteHandsForTest()[1].orEmpty().any { it.id == nextCardId })
+    }
+
+    @Test
     fun `online host applies server morto result to its own hand and red three melds`() = runTest {
         // Fase 3b: online_take_morto (0026) decide o conteudo do morto -- o
         // host nao chama mais mortos.removeAt(0)/prepareMortoForPickup()

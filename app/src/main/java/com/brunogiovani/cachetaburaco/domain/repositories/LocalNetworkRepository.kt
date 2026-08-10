@@ -157,6 +157,23 @@ interface LocalNetworkRepository {
         onResult(null)
     }
 
+    // So o online implementa isto de verdade. Bug real encontrado: quando a
+    // distribuicao virou responsabilidade do servidor (RPC start_online_round,
+    // que publica o GAME_START direto via SQL), o host parou de mandar esse
+    // evento ele mesmo -- e so quem manda GAME_START pelo caminho antigo
+    // (prepareOutgoingMessage) e quem recebe um GAME_START de outro remetente
+    // (acceptIncomingRound) marcavam a rodada como ativa dentro do
+    // OnlineNetworkRepository. O host nunca faz nenhum dos dois (nao manda
+    // mais, e descarta o proprio evento pra nao processar ele mesmo), entao
+    // `currentRoundId` do repositorio ficava sempre null -- e qualquer
+    // mensagem do cliente pro host (REQ_DRAW_DECK, DISCARD, MELD, etc.) era
+    // silenciosamente descartada em acceptIncomingRound, porque o roundId
+    // carimbado nela nunca batia com um "esperado" nulo. O ViewModel chama
+    // isto logo depois de aplicar a distribuicao do servidor, com o mesmo
+    // roundId que a RPC devolveu, pra sincronizar o estado do repositorio com
+    // o que o servidor de fato usou.
+    fun markRoundActive(roundId: String) = Unit
+
     // Mesma ideia do requestServerDeal, mas pra cada compra do monte durante a
     // rodada (RPC online_draw_deck_card): so o online implementa de verdade.
     // Wi-Fi local e maquina continuam com o padrao (null) e o ViewModel

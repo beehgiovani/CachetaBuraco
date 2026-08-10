@@ -343,6 +343,11 @@ class OnlineNetworkRepository(
         }
     }
 
+    override fun markRoundActive(roundId: String) {
+        currentRoundId = roundId
+        currentRoundIsActive = true
+    }
+
     override fun requestServerDeal(onResult: (String?) -> Unit) {
         val session = currentSession
         if (session == null) {

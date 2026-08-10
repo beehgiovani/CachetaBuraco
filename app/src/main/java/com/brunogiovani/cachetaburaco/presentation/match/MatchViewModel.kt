@@ -414,6 +414,13 @@ class MatchViewModel(
         }
 
         currentRoundId = json.optString("roundId").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+        // Sincroniza o repositorio online com o roundId que o servidor de fato
+        // usou -- sem isso, acceptIncomingRound() no host nunca sabe que uma
+        // rodada esta ativa (o host nem manda nem "recebe" o proprio
+        // GAME_START, ja que quem publica agora e a RPC direto via SQL) e
+        // descarta toda mensagem do cliente (REQ_DRAW_DECK, DISCARD, MELD...)
+        // em silencio. Achado real: bug que travava toda compra online.
+        networkRepository.markRoundActive(currentRoundId!!)
         // O servidor nao devolve mais o baralho de verdade aqui (ver comentario
         // na migration 0025): devolver a ordem inteira do monte pro host
         // destruiria a propria protecao de online_draw_deck_card, que decide
@@ -2212,6 +2219,13 @@ class MatchViewModel(
                     return
                 }
                 if (isTrancaRedThree(card)) {
+                    // 3 vermelho auto-baixado nao conta como "a compra da vez" --
+                    // o assento precisa poder pedir outra carta imediatamente,
+                    // entao libera o guard aqui (mesmo padrao do caminho Wi-Fi
+                    // em handleClientDrawRequest). Numa carta normal o guard
+                    // fica de proposito ate o descarte: e ele que
+                    // hasRemoteDrawnThisTurn() consulta pra saber se o assento
+                    // ja comprou e pode descartar nesta rodada.
                     setRemoteTableForSeat(requestingSeat, remoteTableForSeat(requestingSeat) + listOf(listOf(card)))
                     deckServedSeatsThisTurn.remove(requestingSeat)
                 } else {
