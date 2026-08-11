@@ -85,6 +85,7 @@ import com.brunogiovani.cachetaburaco.presentation.components.MenuShapes
 import com.brunogiovani.cachetaburaco.presentation.components.MenuStatusMessage
 import com.brunogiovani.cachetaburaco.presentation.components.MenuToggleRow
 import com.brunogiovani.cachetaburaco.presentation.components.MenuTopBar
+import com.brunogiovani.cachetaburaco.presentation.components.NativeAdRoomCard
 import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1246,6 +1247,11 @@ private fun ClientPanel(
                             }
                         }
                     }
+                }
+            }
+            if (isOnlineTransport) {
+                item {
+                    NativeAdRoomCard(modifier = Modifier.padding(top = 2.dp))
                 }
             }
         }
