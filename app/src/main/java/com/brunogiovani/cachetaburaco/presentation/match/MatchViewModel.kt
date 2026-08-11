@@ -526,7 +526,7 @@ class MatchViewModel(
         val preparedHand = rawMorto.toMutableList()
         val redThreeMelds = mutableListOf<List<Card>>()
         while (true) {
-            val redThrees = preparedHand.filter(::isTrancaRedThree)
+            val redThrees = preparedHand.filter { isTrancaRedThree(it, currentConfig) }
             if (redThrees.isEmpty()) break
 
             preparedHand.removeAll(redThrees.toSet())
@@ -737,7 +737,7 @@ class MatchViewModel(
             mortosLeft = json.optInt("mortosLeft", state.mortosLeft),
             deckSize = json.optInt("deckSize", state.deckSize),
             lastMeldResult = meldLabel,
-            activeSeat = if (indirect) nextSeatAfter(localSeat) else state.activeSeat,
+            activeSeat = if (indirect) nextSeatAfter(localSeat, currentConfig) else state.activeSeat,
             turnPhase = if (indirect) TurnPhase.WAITING_OPPONENT else state.turnPhase,
             feedbackMessage = pickupFeedback,
             mortoNoticeSeat = localSeat,
@@ -1151,7 +1151,7 @@ class MatchViewModel(
 
         val updatedHand = state.myHand.filter { it != card }
         val updatedPile = state.discardPile + card
-        val nextSeat = nextSeatAfter(localSeat)
+        val nextSeat = nextSeatAfter(localSeat, currentConfig)
 
         // Verifica condição de bater
         val winCheck = GameRulesEngine.canDeclareWin(
@@ -1608,19 +1608,20 @@ class MatchViewModel(
         val myRoundScore = teamRoundScores[teamForSeat(localSeat)]
         val opponentRoundScore = teamRoundScores[opposingTeam(teamForSeat(localSeat))]
         val updatedTeamScores = if (countOnlyRound) {
-            applyCountRoundToTeamScores(state.teamScores, teamRoundScores)
+            applyCountRoundToTeamScores(state.teamScores, teamRoundScores, currentConfig)
         } else {
             applyRoundToTeamScores(
                 currentScores = state.teamScores,
                 winnerTeam = winnerTeam,
                 winnerRoundScore = teamRoundScores[winnerTeam],
                 loserTeam = loserTeam,
-                loserRoundScore = teamRoundScores[loserTeam]
+                loserRoundScore = teamRoundScores[loserTeam],
+                config = currentConfig
             )
         }
         val myNew = updatedTeamScores[teamForSeat(localSeat)]
         val oppNew = updatedTeamScores[opposingTeam(teamForSeat(localSeat))]
-        val over = isMatchOver(updatedTeamScores)
+        val over = isMatchOver(updatedTeamScores, currentConfig)
         val breakdown = breakdownLines.joinToString("\n")
 
         networkRepository.sendMessage(NetworkMessage(playerId, "ROUND_SUMMARY", buildRoundSummaryPayload(
@@ -2190,7 +2191,7 @@ class MatchViewModel(
         }
 
         val automaticRedThree = cardsFromHand.size == 1 && resultingMeld.size == 1 &&
-            isTrancaRedThree(cardsFromHand.first())
+            isTrancaRedThree(cardsFromHand.first(), currentConfig)
         if (!automaticRedThree) {
             if (state.activeSeat != actorSeat) return rejectRemoteAction("Jogo recusado: nao e o turno desse jogador.")
             if (!hasRemoteDrawnThisTurn(actorSeat)) return rejectRemoteAction("Jogo recusado: o jogador ainda nao comprou.")
@@ -2233,7 +2234,7 @@ class MatchViewModel(
         val newPile = _gameState.value.discardPile + card
         val discardLocked = GameRulesEngine.isDiscardLocked(card, currentConfig.gameType)
         val drawCheck = GameRulesEngine.canDrawFromDiscard(card, currentConfig)
-        val nextSeat = nextSeatAfter(actorSeat)
+        val nextSeat = nextSeatAfter(actorSeat, currentConfig)
         val isMyTurn = localSeat == nextSeat
         deckServedSeatsThisTurn.clear()
         pendingRemoteDiscardDraws.remove(actorSeat)
@@ -2340,7 +2341,7 @@ class MatchViewModel(
         }
         val remoteHandBeforeDraw = remoteHandsBySeat[requestingSeat].orEmpty()
         val remoteTableBeforeDraw = remoteTableForSeat(requestingSeat)
-        val autoMeldedRedThree = isTrancaRedThree(card)
+        val autoMeldedRedThree = isTrancaRedThree(card, currentConfig)
 
         if (autoMeldedRedThree) {
             setRemoteTableForSeat(requestingSeat, remoteTableBeforeDraw + listOf(listOf(card)))
@@ -2406,7 +2407,7 @@ class MatchViewModel(
                     deckServedSeatsThisTurn.remove(requestingSeat)
                     return
                 }
-                if (isTrancaRedThree(card)) {
+                if (isTrancaRedThree(card, currentConfig)) {
                     // 3 vermelho auto-baixado nao conta como "a compra da vez" --
                     // o assento precisa poder pedir outra carta imediatamente,
                     // entao libera o guard aqui (mesmo padrao do caminho Wi-Fi
@@ -2688,7 +2689,7 @@ class MatchViewModel(
             ?: (_gameState.value.mortosLeft - 1).coerceAtLeast(0)
         val isIndirect = json?.optBoolean("indirect", pendingMortoPickupIsIndirect)
             ?: pendingMortoPickupIsIndirect
-        val nextSeat = nextSeatAfter(localSeat)
+        val nextSeat = nextSeatAfter(localSeat, currentConfig)
         val currentHand = _gameState.value.myHand
         if (currentHand.isNotEmpty()) {
             _gameState.value = _gameState.value.copy(
@@ -2977,7 +2978,7 @@ class MatchViewModel(
         val maxSeats = currentConfig.maxPlayers.coerceAtLeast(2)
         return (0 until maxSeats).firstOrNull { seat ->
             seat != playerSeat && teamForSeat(seat) != teamForSeat(playerSeat)
-        } ?: nextSeatAfter(playerSeat)
+        } ?: nextSeatAfter(playerSeat, currentConfig)
     }
 
     private fun buildServeMortoPayload(
@@ -2995,17 +2996,6 @@ class MatchViewModel(
             .toString()
     }
 
-    private fun buildMortosLeftPayload(mortosLeft: Int, pickedSeat: Int): String {
-        val json = JSONObject()
-            .put("v", 1)
-            .put("mortosLeft", mortosLeft)
-        if (pickedSeat >= 0) {
-            json
-                .put("seat", pickedSeat)
-                .put("team", teamForSeat(pickedSeat))
-        }
-        return json.toString()
-    }
 
     private fun requestMorto() {
         val payload = JSONObject()
@@ -3016,23 +3006,7 @@ class MatchViewModel(
         networkRepository.sendMessage(NetworkMessage(playerId, "REQ_PICK_MORTO", payload))
     }
 
-    private fun buildDiscardPayload(card: Card, seat: Int): String {
-        return JSONObject()
-            .put("v", 1)
-            .put("card", card.id)
-            .put("seat", seat)
-            .toString()
-    }
 
-    private fun buildMeldPayload(cards: List<Card>, seat: Int, replaceIndex: Int = -1): String {
-        return JSONObject()
-            .put("v", 1)
-            .put("cards", cardsToJson(cards))
-            .put("seat", seat)
-            .put("team", teamForSeat(seat))
-            .put("replaceIndex", replaceIndex)
-            .toString()
-    }
 
     private fun buildRoundReportPayload(
         report: RoundSeatReport,
@@ -3068,24 +3042,8 @@ class MatchViewModel(
         )
     }
 
-    private fun buildSeatPayload(seat: Int): String {
-        return JSONObject()
-            .put("v", 1)
-            .put("seat", seat)
-            .toString()
-    }
 
-    private fun parseSeatPayload(payload: String): Int {
-        val trimmed = payload.trim()
-        if (!trimmed.startsWith("{")) return -1
-        return runCatching { JSONObject(trimmed).optInt("seat", -1) }.getOrDefault(-1)
-    }
 
-    private fun parseCardId(payload: String): String {
-        val trimmed = payload.trim()
-        if (!trimmed.startsWith("{")) return trimmed
-        return runCatching { JSONObject(trimmed).optString("card", "") }.getOrDefault("")
-    }
 
     private fun trustedRemoteSeat(message: NetworkMessage, claimedSeat: Int): Int? {
         if (!isHost) return claimedSeat
@@ -3156,26 +3114,7 @@ class MatchViewModel(
         }
     }
 
-    private fun containsCards(source: List<Card>, requested: List<Card>): Boolean {
-        val remainingIds = source.map { it.id }.toMutableList()
-        return requested.all { card ->
-            val index = remainingIds.indexOf(card.id)
-            if (index < 0) false else {
-                remainingIds.removeAt(index)
-                true
-            }
-        }
-    }
 
-    private fun subtractCards(fullMeld: List<Card>, existingMeld: List<Card>): List<Card>? {
-        val remaining = fullMeld.toMutableList()
-        existingMeld.forEach { existing ->
-            val index = remaining.indexOfFirst { it.id == existing.id }
-            if (index < 0) return null
-            remaining.removeAt(index)
-        }
-        return remaining
-    }
 
     private fun canRemoteDiscardWildcard(
         card: Card,
@@ -3201,14 +3140,6 @@ class MatchViewModel(
         )
     }
 
-    private fun parseDiscardPayload(payload: String): Pair<String, Int> {
-        val trimmed = payload.trim()
-        if (!trimmed.startsWith("{")) return payload to 0
-
-        val json = runCatching { JSONObject(trimmed) }.getOrNull()
-            ?: return payload to 0
-        return json.optString("card", "") to json.optInt("seat", 0)
-    }
 
     private fun parseMeldPayload(payload: String): Pair<List<Card>, Int> {
         val trimmed = payload.trim()
@@ -3223,11 +3154,6 @@ class MatchViewModel(
         return cardsFromJson(json.optJSONArray("cards") ?: JSONArray()) to json.optInt("seat", 1)
     }
 
-    private fun parseMeldReplaceIndex(payload: String): Int {
-        val trimmed = payload.trim()
-        if (!trimmed.startsWith("{")) return -1
-        return runCatching { JSONObject(trimmed).optInt("replaceIndex", -1) }.getOrDefault(-1)
-    }
 
     private fun applyRemoteMeld(
         currentMelds: List<List<Card>>,
@@ -3271,12 +3197,6 @@ class MatchViewModel(
             ?: _gameState.value.opponentHandCount
     }
 
-    private fun isTrancaRedThree(card: Card): Boolean {
-        return currentConfig.gameType == GameType.TRANCA &&
-            currentConfig.autoMeldTrancaRedThrees &&
-            card.rank == Rank.THREE &&
-            (card.suit == Suit.HEARTS || card.suit == Suit.DIAMONDS)
-    }
 
     private fun canDiscardWildcardNow(card: Card, state: GameState): Boolean {
         if (currentConfig.gameType == GameType.CACHETA) return true
@@ -3299,62 +3219,18 @@ class MatchViewModel(
         return !canUseInExistingOrNewGame && !hasCleanTargetWithoutWildcard
     }
 
-    private fun nextSeatAfter(seat: Int): Int {
-        val maxSeats = currentConfig.maxPlayers.coerceAtLeast(2)
-        return (seat + 1).floorMod(maxSeats)
-    }
 
-    private fun Int.floorMod(mod: Int): Int = ((this % mod) + mod) % mod
 
-    private fun initialTeamScores(config: MatchConfig): List<Int> {
-        val initial = if (config.gameType == GameType.CACHETA) config.pointLimit else 0
-        return listOf(initial, initial)
-    }
 
-    private fun teamForSeat(seat: Int): Int = seat.floorMod(2)
 
-    private fun opposingTeam(team: Int): Int = if (team == 0) 1 else 0
 
-    private fun applyRoundToTeamScores(
-        currentScores: List<Int>,
-        winnerTeam: Int,
-        winnerRoundScore: Int,
-        loserTeam: Int,
-        loserRoundScore: Int
-    ): List<Int> {
-        val scores = currentScores.ifEmpty { initialTeamScores(currentConfig) }.toMutableList()
-        while (scores.size < 2) scores.add(if (currentConfig.gameType == GameType.CACHETA) currentConfig.pointLimit else 0)
-        scores[winnerTeam] = scores[winnerTeam] + winnerRoundScore
-        scores[loserTeam] = scores[loserTeam] + loserRoundScore
-        return scores
-    }
 
-    private fun applyCountRoundToTeamScores(
-        currentScores: List<Int>,
-        roundScores: List<Int>
-    ): List<Int> {
-        val scores = currentScores.ifEmpty { initialTeamScores(currentConfig) }.toMutableList()
-        while (scores.size < 2) scores.add(if (currentConfig.gameType == GameType.CACHETA) currentConfig.pointLimit else 0)
-        roundScores.forEachIndexed { team, roundScore ->
-            if (team < scores.size) scores[team] += roundScore
-        }
-        return scores
-    }
 
     /**
      * Verifica se a partida terminou.
      * - Cacheta: uma equipe ficou com 0 ou menos vidas.
      * - Buraco/Tranca: uma equipe atingiu ou superou o limite de pontos configurado.
      */
-    private fun isMatchOver(teamScores: List<Int>): Boolean {
-        return if (currentConfig.gameType == GameType.CACHETA) {
-            // Na Cacheta os pontos começam em pointLimit e decrescem; acaba quando alguém chega em 0
-            teamScores.any { it <= 0 }
-        } else {
-            // No Buraco/Tranca os pontos começam em 0 e crescem; acaba quando alguém atinge o limite
-            teamScores.any { it >= currentConfig.pointLimit }
-        }
-    }
 
     /**
      * Monta a estrutura de dados (JSON) com o resumo da rodada para enviar aos clientes.
@@ -3408,14 +3284,15 @@ class MatchViewModel(
         val localTeam = teamForSeat(localSeat)
         val opponentTeam = opposingTeam(localTeam)
         val resolvedTeamScores = teamScores ?: if (noWinner) {
-            applyCountRoundToTeamScores(state.teamScores, roundScores ?: listOf(0, 0))
+            applyCountRoundToTeamScores(state.teamScores, roundScores ?: listOf(0, 0), currentConfig)
         } else {
             applyRoundToTeamScores(
                 currentScores = state.teamScores,
                 winnerTeam = winnerTeam,
                 winnerRoundScore = winScore,
                 loserTeam = opposingTeam(winnerTeam),
-                loserRoundScore = loseScore
+                loserRoundScore = loseScore,
+                config = currentConfig
             )
         }
         val myRound = if (noWinner) roundScores?.getOrElse(localTeam) { 0 } ?: 0 else if (localTeam == winnerTeam) winScore else loseScore
@@ -3450,11 +3327,6 @@ class MatchViewModel(
 
     }
 
-    private fun parseTeamScores(jsonArray: JSONArray?): List<Int>? {
-        jsonArray ?: return null
-        if (jsonArray.length() < 2) return null
-        return List(jsonArray.length()) { index -> jsonArray.optInt(index) }
-    }
 
     private fun parseHandPayload(payload: String): List<Card> {
         val trimmed = payload.trim()
@@ -3468,11 +3340,6 @@ class MatchViewModel(
             .mapNotNull { allCardsMap[it] }
     }
 
-    private fun handsToJson(hands: List<List<Card>>): JSONArray {
-        return JSONArray().apply {
-            hands.forEach { hand -> put(cardsToJson(hand)) }
-        }
-    }
 
     private fun handsFromJson(hands: JSONArray): List<List<Card>> {
         return buildList {
@@ -3482,11 +3349,6 @@ class MatchViewModel(
         }
     }
 
-    private fun cardsToJson(cards: List<Card>): JSONArray {
-        return JSONArray().apply {
-            cards.forEach { card -> put(card.id) }
-        }
-    }
 
     private fun cardsFromJson(cards: JSONArray): List<Card> {
         return buildList {
