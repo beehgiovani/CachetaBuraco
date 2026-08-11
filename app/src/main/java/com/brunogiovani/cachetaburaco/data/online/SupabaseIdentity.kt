@@ -6,7 +6,7 @@ import io.github.jan.supabase.postgrest.from
 import kotlinx.serialization.Serializable
 
 /** Mantem a sessao online e o perfil publico usando uma unica identidade. */
-internal class SupabaseIdentity(
+class SupabaseIdentity(
     private val client: SupabaseClient
 ) {
     suspend fun ensure(playerName: String): String {

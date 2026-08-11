@@ -8,6 +8,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +51,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.brunogiovani.cachetaburaco.R
+import com.brunogiovani.cachetaburaco.data.online.GoogleAccountLinker
+import com.brunogiovani.cachetaburaco.data.online.GoogleLinkResult
+import com.brunogiovani.cachetaburaco.data.online.SupabaseClientProvider
+import com.brunogiovani.cachetaburaco.data.online.SupabaseIdentity
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
 import com.brunogiovani.cachetaburaco.domain.models.Player
 import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
@@ -59,15 +65,21 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LoginScreen(onLoginSuccess: () -> Unit) {
+fun LoginScreen(
+    onLoginSuccess: () -> Unit,
+    identity: SupabaseIdentity = remember { SupabaseIdentity(SupabaseClientProvider.client) },
+    googleLinker: GoogleAccountLinker = remember { GoogleAccountLinker() }
+) {
     val hasSaved = FakeAuthRepository.hasSavedProfile()
     val savedPlayer = FakeAuthRepository.getCurrentPlayer()
     var showNewProfile by remember { mutableStateOf(!hasSaved) }
     var nickname by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
+    var isLoadingGoogle by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
 
     Box(modifier = Modifier.fillMaxSize()) {
         Image(
@@ -139,6 +151,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                                     nickname = nickname,
                                     error = error,
                                     isLoading = isLoading,
+                                    isLoadingGoogle = isLoadingGoogle,
                                     hasSaved = hasSaved,
                                     onNicknameChange = {
                                         if (it.length <= 20) {
@@ -147,18 +160,67 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                                         }
                                     },
                                     onDone = { focusManager.clearFocus() },
-                                    onCreate = {
+                                    onCreateGuest = {
                                         val trimmed = nickname.trim()
                                         if (trimmed.length < 2) {
                                             error = "Apelido deve ter ao menos 2 caracteres"
                                             return@NewProfileContent
                                         }
                                         isLoading = true
+                                        error = ""
                                         focusManager.clearFocus()
                                         coroutineScope.launch {
-                                            FakeAuthRepository.login(trimmed)
+                                            // ensure() cria (ou reaproveita) a mesma identidade anonima
+                                            // do Supabase -- o ID local passa a ser o ID de verdade que
+                                            // ja vale pro ranking/campeonato online, nao mais um UUID
+                                            // aleatorio so deste aparelho.
+                                            val playerId = runCatching { identity.ensure(trimmed) }.getOrNull()
                                             isLoading = false
+                                            if (playerId == null) {
+                                                error = "Sem conexão. Tente novamente."
+                                                return@launch
+                                            }
+                                            FakeAuthRepository.loginWithId(playerId, trimmed)
                                             onLoginSuccess()
+                                        }
+                                    },
+                                    onContinueWithGoogle = {
+                                        isLoadingGoogle = true
+                                        error = ""
+                                        focusManager.clearFocus()
+                                        coroutineScope.launch {
+                                            // linkIdentityWithIdToken exige uma sessao anonima ja aberta --
+                                            // o nome aqui e so um rotulo temporario, substituido pelo nome
+                                            // real do Google assim que o vinculo funcionar.
+                                            val fallbackName = nickname.trim().ifBlank { "Jogador" }
+                                            val playerId = runCatching { identity.ensure(fallbackName) }.getOrNull()
+                                            if (playerId == null) {
+                                                isLoadingGoogle = false
+                                                error = "Sem conexão. Tente novamente."
+                                                return@launch
+                                            }
+                                            when (val result = googleLinker.link(context)) {
+                                                is GoogleLinkResult.Success -> {
+                                                    val googleName = result.displayName?.trim()?.take(20)
+                                                        ?.ifBlank { null } ?: fallbackName
+                                                    val finalId = runCatching { identity.ensure(googleName) }
+                                                        .getOrDefault(playerId)
+                                                    isLoadingGoogle = false
+                                                    FakeAuthRepository.loginWithId(finalId, googleName)
+                                                    onLoginSuccess()
+                                                }
+                                                is GoogleLinkResult.Cancelled -> {
+                                                    isLoadingGoogle = false
+                                                }
+                                                is GoogleLinkResult.NoGoogleAccountOnDevice -> {
+                                                    isLoadingGoogle = false
+                                                    error = "Nenhuma conta Google encontrada neste aparelho."
+                                                }
+                                                is GoogleLinkResult.Failed -> {
+                                                    isLoadingGoogle = false
+                                                    error = result.message
+                                                }
+                                            }
                                         }
                                     },
                                     onBackToSaved = { showNewProfile = false }
@@ -214,15 +276,17 @@ private fun NewProfileContent(
     nickname: String,
     error: String,
     isLoading: Boolean,
+    isLoadingGoogle: Boolean,
     hasSaved: Boolean,
     onNicknameChange: (String) -> Unit,
     onDone: () -> Unit,
-    onCreate: () -> Unit,
+    onCreateGuest: () -> Unit,
+    onContinueWithGoogle: () -> Unit,
     onBackToSaved: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Criar perfil", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Escolha um apelido para jogar", color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp)
+        Text("Entrar", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Como convidado (com apelido) ou com sua conta Google", color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp, textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(20.dp))
 
         OutlinedTextField(
@@ -251,11 +315,32 @@ private fun NewProfileContent(
 
         Spacer(modifier = Modifier.height(20.dp))
         MenuFilledButton(
-            text = "CRIAR PERFIL",
-            onClick = onCreate,
-            enabled = !isLoading && nickname.isNotBlank(),
+            text = "ENTRAR COMO CONVIDADO",
+            onClick = onCreateGuest,
+            enabled = !isLoading && !isLoadingGoogle && nickname.isNotBlank(),
             loading = isLoading,
             containerColor = MenuColors.TableGreenLight
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            HorizontalDivider(modifier = Modifier.weight(1f), color = MenuColors.Border)
+            Text(
+                "ou",
+                color = Color.White.copy(alpha = 0.4f),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 10.dp)
+            )
+            HorizontalDivider(modifier = Modifier.weight(1f), color = MenuColors.Border)
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+
+        MenuFilledButton(
+            text = "CONTINUAR COM GOOGLE",
+            onClick = onContinueWithGoogle,
+            enabled = !isLoading && !isLoadingGoogle,
+            loading = isLoadingGoogle,
+            containerColor = MenuColors.InkPanelSoft
         )
 
         if (hasSaved) {

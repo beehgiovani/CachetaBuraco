@@ -71,6 +71,20 @@ object FakeAuthRepository {
         return player
     }
 
+    /**
+     * Igual a login(), mas com o ID vindo de fora (a identidade anônima ou
+     * vinculada ao Google do Supabase) em vez de gerar um UUID aleatório --
+     * assim o mesmo ID que já vale pro ranking/campeonato online também vira
+     * o ID local, sem duas identidades soltas por aparelho.
+     */
+    fun loginWithId(id: String, nickname: String): Player {
+        val player = Player(id = id, name = nickname.trim(), points = 0)
+        currentPlayer = player
+        persistProfile(player)
+        upsertRankingEntry(player)
+        return player
+    }
+
     /** Atualiza o apelido do perfil existente sem gerar novo ID. */
     suspend fun updateNickname(newNickname: String): Player {
         val existing = currentPlayer ?: return login(newNickname)

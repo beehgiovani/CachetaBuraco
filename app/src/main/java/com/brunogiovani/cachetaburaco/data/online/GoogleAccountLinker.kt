@@ -17,7 +17,9 @@ import java.util.UUID
 
 /** Resultado do vinculo de conta Google, distinguindo cancelamento de falha de verdade. */
 sealed interface GoogleLinkResult {
-    data object Success : GoogleLinkResult
+    // displayName vem do proprio token do Google -- usado pra ja sugerir o
+    // apelido do perfil sem pedir de novo na tela de login.
+    data class Success(val displayName: String?) : GoogleLinkResult
     data object Cancelled : GoogleLinkResult
     data object NoGoogleAccountOnDevice : GoogleLinkResult
     data class Failed(val message: String) : GoogleLinkResult
@@ -65,17 +67,17 @@ class GoogleAccountLinker(
             return GoogleLinkResult.Failed(e.message ?: "Não foi possível obter a credencial do Google.")
         }
 
-        val idToken = try {
-            GoogleIdTokenCredential.createFrom(credential.data).idToken
+        val googleCredential = try {
+            GoogleIdTokenCredential.createFrom(credential.data)
         } catch (e: GoogleIdTokenParsingException) {
             return GoogleLinkResult.Failed("Credencial do Google inválida.")
         }
 
         return try {
-            client.auth.linkIdentityWithIdToken(provider = Google, idToken = idToken) {
+            client.auth.linkIdentityWithIdToken(provider = Google, idToken = googleCredential.idToken) {
                 nonce = rawNonce
             }
-            GoogleLinkResult.Success
+            GoogleLinkResult.Success(displayName = googleCredential.displayName)
         } catch (e: Exception) {
             GoogleLinkResult.Failed(e.message ?: "Não foi possível vincular a conta Google.")
         }

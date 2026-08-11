@@ -9,7 +9,7 @@ class OnlineProfileScreenLogicTest {
 
     @Test
     fun `successful google link shows confirmation mentioning protected profile`() {
-        val message = googleLinkFeedbackFor(GoogleLinkResult.Success)
+        val message = googleLinkFeedbackFor(GoogleLinkResult.Success(displayName = "Bruno"))
         assertEquals(
             "Conta Google vinculada! Seu perfil fica protegido mesmo se trocar de aparelho.",
             message
