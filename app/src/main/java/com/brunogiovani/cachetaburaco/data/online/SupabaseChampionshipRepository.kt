@@ -1,10 +1,12 @@
 package com.brunogiovani.cachetaburaco.data.online
 
 import com.brunogiovani.cachetaburaco.domain.models.Championship
+import com.brunogiovani.cachetaburaco.domain.models.ChampionshipCadence
 import com.brunogiovani.cachetaburaco.domain.models.ChampionshipMatchSummary
 import com.brunogiovani.cachetaburaco.domain.models.ChampionshipStandingEntry
 import com.brunogiovani.cachetaburaco.domain.models.ChampionshipStatus
 import com.brunogiovani.cachetaburaco.domain.models.GameType
+import com.brunogiovani.cachetaburaco.domain.models.PlayerLevel
 import com.brunogiovani.cachetaburaco.domain.repositories.ChampionshipRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
@@ -22,13 +24,21 @@ class SupabaseChampionshipRepository(
 ) : ChampionshipRepository {
     private val identity = SupabaseIdentity(client)
 
-    override suspend fun createChampionship(playerName: String, name: String, gameType: GameType): Championship {
+    override suspend fun createChampionship(
+        playerName: String,
+        name: String,
+        gameType: GameType,
+        cadence: ChampionshipCadence,
+        level: PlayerLevel?
+    ): Championship {
         identity.ensure(playerName)
         return client.postgrest.rpc(
             function = "create_championship",
             parameters = buildJsonObject {
                 put("p_name", name)
                 put("p_game_type", gameType.name)
+                put("p_cadence", cadence.name)
+                put("p_level", level?.name)
             }
         ).decodeSingle<ChampionshipRow>().toDomain()
     }
@@ -41,15 +51,10 @@ class SupabaseChampionshipRepository(
         ).decodeSingle<ChampionshipRow>().toDomain()
     }
 
-    override suspend fun linkRoomToChampionship(playerName: String, roomCode: String, championshipCode: String) {
+    override suspend fun getMyLevel(playerName: String): PlayerLevel {
         identity.ensure(playerName)
-        client.postgrest.rpc(
-            function = "link_room_to_championship",
-            parameters = buildJsonObject {
-                put("p_room_code", roomCode)
-                put("p_championship_code", championshipCode)
-            }
-        )
+        val level = client.postgrest.rpc(function = "get_my_level").decodeAs<String>()
+        return runCatching { PlayerLevel.valueOf(level) }.getOrDefault(PlayerLevel.NOOB)
     }
 
     override suspend fun listMyChampionships(playerName: String): List<Championship> {
@@ -109,20 +114,34 @@ private fun String.toGameType(): GameType =
 private fun String.toChampionshipStatus(): ChampionshipStatus =
     runCatching { ChampionshipStatus.valueOf(this) }.getOrDefault(ChampionshipStatus.ACTIVE)
 
+private fun String.toChampionshipCadence(): ChampionshipCadence =
+    runCatching { ChampionshipCadence.valueOf(this) }.getOrDefault(ChampionshipCadence.MANUAL)
+
+private fun String?.toPlayerLevel(): PlayerLevel? =
+    this?.let { runCatching { PlayerLevel.valueOf(it) }.getOrNull() }
+
 @Serializable
 private data class ChampionshipRow(
     @SerialName("championship_id") val championshipId: String,
     val code: String,
     val name: String,
     @SerialName("game_type") val gameType: String,
-    val status: String
+    val status: String,
+    val cadence: String = "MANUAL",
+    val level: String? = null,
+    @SerialName("starts_at") val startsAt: String? = null,
+    @SerialName("ends_at") val endsAt: String? = null
 ) {
     fun toDomain() = Championship(
         id = championshipId,
         code = code,
         name = name,
         gameType = gameType.toGameType(),
-        status = status.toChampionshipStatus()
+        status = status.toChampionshipStatus(),
+        cadence = cadence.toChampionshipCadence(),
+        level = level.toPlayerLevel(),
+        startsAt = startsAt,
+        endsAt = endsAt
     )
 }
 
@@ -134,7 +153,11 @@ private data class MyChampionshipRow(
     @SerialName("game_type") val gameType: String,
     val status: String,
     @SerialName("is_host") val isHost: Boolean,
-    @SerialName("participant_count") val participantCount: Int
+    @SerialName("participant_count") val participantCount: Int,
+    val cadence: String = "MANUAL",
+    val level: String? = null,
+    @SerialName("starts_at") val startsAt: String? = null,
+    @SerialName("ends_at") val endsAt: String? = null
 ) {
     fun toDomain() = Championship(
         id = championshipId,
@@ -142,6 +165,10 @@ private data class MyChampionshipRow(
         name = name,
         gameType = gameType.toGameType(),
         status = status.toChampionshipStatus(),
+        cadence = cadence.toChampionshipCadence(),
+        level = level.toPlayerLevel(),
+        startsAt = startsAt,
+        endsAt = endsAt,
         isHost = isHost,
         participantCount = participantCount
     )

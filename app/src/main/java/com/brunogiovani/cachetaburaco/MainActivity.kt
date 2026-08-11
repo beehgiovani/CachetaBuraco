@@ -228,8 +228,7 @@ class MainActivity : ComponentActivity() {
                                 isHosting = true
                                 activeRepository = onlineRepository
                                 currentScreen = AppState.MATCH
-                            },
-                            championshipRepository = championshipRepository
+                            }
                         )
 
                         AppState.LOBBY_ONLINE_CLIENT -> LobbyScreen(

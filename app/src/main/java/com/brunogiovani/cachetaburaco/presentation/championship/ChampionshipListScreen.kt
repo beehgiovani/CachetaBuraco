@@ -45,8 +45,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.brunogiovani.cachetaburaco.domain.models.Championship
+import com.brunogiovani.cachetaburaco.domain.models.ChampionshipCadence
 import com.brunogiovani.cachetaburaco.domain.models.ChampionshipStatus
 import com.brunogiovani.cachetaburaco.domain.models.GameType
+import com.brunogiovani.cachetaburaco.domain.models.PlayerLevel
 import com.brunogiovani.cachetaburaco.domain.repositories.ChampionshipRepository
 import com.brunogiovani.cachetaburaco.presentation.components.AdPlacement
 import com.brunogiovani.cachetaburaco.presentation.components.MenuBackdrop
@@ -62,9 +64,9 @@ import com.brunogiovani.cachetaburaco.presentation.components.MenuTopBar
 import com.brunogiovani.cachetaburaco.presentation.components.SafeAdBannerSlot
 import kotlinx.coroutines.launch
 
-// create_championship exige nome entre 2 e 40 chars; join_championship/
-// link_room_to_championship recebem sempre um codigo de 6 chars (md5 truncado,
-// gerado so no servidor -- ver migration 0034).
+// create_championship exige nome entre 2 e 40 chars; join_championship recebe
+// sempre um codigo de 6 chars (md5 truncado, gerado so no servidor -- ver
+// migration 0034/0049).
 private const val MIN_CHAMPIONSHIP_NAME_LENGTH = 2
 private const val MAX_CHAMPIONSHIP_NAME_LENGTH = 40
 private const val CHAMPIONSHIP_CODE_LENGTH = 6
@@ -111,13 +113,13 @@ fun ChampionshipListScreen(
         onOpenChampionship = onOpenChampionship,
         isCreating = isCreating,
         createError = createError,
-        onCreate = { name, gameType ->
+        onCreate = { name, gameType, cadence, level ->
             createError = null
             isCreating = true
             scope.launch {
-                runCatching { repository.createChampionship(playerName, name, gameType) }
+                runCatching { repository.createChampionship(playerName, name, gameType, cadence, level) }
                     .onSuccess { reloadRequest++ }
-                    .onFailure { createError = "Não foi possível criar o campeonato agora." }
+                    .onFailure { createError = createChampionshipFeedbackFor(it) }
                 isCreating = false
             }
         },
@@ -129,11 +131,28 @@ fun ChampionshipListScreen(
             scope.launch {
                 runCatching { repository.joinChampionship(playerName, code) }
                     .onSuccess { reloadRequest++ }
-                    .onFailure { joinError = "Não foi possível entrar no campeonato. Confira o código." }
+                    .onFailure { joinError = joinChampionshipFeedbackFor(it) }
                 isJoining = false
             }
         }
     )
+}
+
+internal fun createChampionshipFeedbackFor(error: Throwable): String {
+    val message = error.message.orEmpty()
+    return when {
+        "ADMIN_REQUIRED" in message -> "Só o administrador do jogo pode criar campeonatos."
+        else -> "Não foi possível criar o campeonato agora."
+    }
+}
+
+internal fun joinChampionshipFeedbackFor(error: Throwable): String {
+    val message = error.message.orEmpty()
+    return when {
+        "LEVEL_MISMATCH" in message -> "Esse campeonato é só pra um nível de jogador diferente do seu."
+        "CHAMPIONSHIP_FINISHED" in message -> "Esse campeonato já foi encerrado."
+        else -> "Não foi possível entrar no campeonato. Confira o código."
+    }
 }
 
 @Composable
@@ -144,7 +163,7 @@ internal fun ChampionshipListContent(
     onOpenChampionship: (Championship) -> Unit,
     isCreating: Boolean,
     createError: String?,
-    onCreate: (name: String, gameType: GameType) -> Unit,
+    onCreate: (name: String, gameType: GameType, cadence: ChampionshipCadence, level: PlayerLevel?) -> Unit,
     isJoining: Boolean,
     joinError: String?,
     onJoin: (code: String) -> Unit
@@ -223,14 +242,20 @@ internal fun ChampionshipListContent(
     }
 }
 
+// Visivel pra qualquer jogador, mas so funciona de verdade pro admin do jogo
+// -- create_championship rejeita no servidor (ADMIN_REQUIRED) e a mensagem
+// de erro explica isso, em vez de esconder o card so pra quem e admin (o app
+// nao tem hoje um jeito confiavel de saber isso sem chamar o servidor).
 @Composable
 private fun CreateChampionshipCard(
     isCreating: Boolean,
     errorMessage: String?,
-    onCreate: (name: String, gameType: GameType) -> Unit
+    onCreate: (name: String, gameType: GameType, cadence: ChampionshipCadence, level: PlayerLevel?) -> Unit
 ) {
     var name by rememberSaveable { mutableStateOf("") }
     var gameType by rememberSaveable { mutableStateOf(GameType.CACHETA) }
+    var cadence by rememberSaveable { mutableStateOf(ChampionshipCadence.MANUAL) }
+    var level by rememberSaveable { mutableStateOf<PlayerLevel?>(null) }
     val canCreate = name.trim().length >= MIN_CHAMPIONSHIP_NAME_LENGTH && !isCreating
 
     MenuSectionCard(title = "Criar campeonato") {
@@ -259,10 +284,31 @@ private fun CreateChampionshipCard(
                     )
                 }
             }
+            Text("Cadência", color = MenuColors.OnDarkFaint, fontSize = 11.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ChampionshipCadence.entries.forEach { option ->
+                    MenuChipOption(
+                        label = championshipCadenceLabel(option),
+                        isSelected = option == cadence,
+                        onClick = { cadence = option }
+                    )
+                }
+            }
+            Text("Nível (opcional -- livre aceita todo mundo)", color = MenuColors.OnDarkFaint, fontSize = 11.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MenuChipOption(label = "Livre", isSelected = level == null, onClick = { level = null })
+                PlayerLevel.entries.forEach { option ->
+                    MenuChipOption(
+                        label = playerLevelLabel(option),
+                        isSelected = option == level,
+                        onClick = { level = option }
+                    )
+                }
+            }
             errorMessage?.let { Text(it, color = MenuColors.Red, fontSize = 12.sp) }
             MenuFilledButton(
                 text = "Criar",
-                onClick = { onCreate(name.trim(), gameType) },
+                onClick = { onCreate(name.trim(), gameType, cadence, level) },
                 enabled = canCreate,
                 loading = isCreating,
                 containerColor = MenuColors.TableGreenLight
@@ -311,6 +357,8 @@ private fun JoinChampionshipCard(
 
 @Composable
 private fun ChampionshipRow(championship: Championship, onClick: () -> Unit) {
+    val levelText = championship.level?.let { "Nível ${playerLevelLabel(it)}" } ?: "Nível livre"
+
     Card(
         colors = CardDefaults.cardColors(containerColor = MenuColors.InkPanel),
         shape = MenuShapes.Card,
@@ -339,7 +387,12 @@ private fun ChampionshipRow(championship: Championship, onClick: () -> Unit) {
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "${championshipGameTypeLabel(championship.gameType)} · Código ${championship.code} · ${championship.participantCount} participante(s)",
+                    "${championshipGameTypeLabel(championship.gameType)} · ${championshipCadenceLabel(championship.cadence)} · $levelText",
+                    color = MenuColors.OnDarkFaint,
+                    fontSize = 11.sp
+                )
+                Text(
+                    "Código ${championship.code} · ${championship.participantCount} participante(s)",
                     color = MenuColors.OnDarkFaint,
                     fontSize = 11.sp
                 )
@@ -367,6 +420,19 @@ private fun championshipGameTypeLabel(type: GameType): String = when (type) {
     GameType.TRANCA -> "Tranca"
 }
 
+private fun championshipCadenceLabel(cadence: ChampionshipCadence): String = when (cadence) {
+    ChampionshipCadence.WEEKLY -> "Semanal"
+    ChampionshipCadence.MONTHLY -> "Mensal"
+    ChampionshipCadence.MANUAL -> "Livre"
+}
+
+private fun playerLevelLabel(level: PlayerLevel): String = when (level) {
+    PlayerLevel.NOOB -> "Iniciante"
+    PlayerLevel.MID -> "Intermediário"
+    PlayerLevel.HARD -> "Avançado"
+    PlayerLevel.EXPERT -> "Expert"
+}
+
 // ─── Previews ─────────────────────────────────────────────────────────────
 
 private val previewChampionships = listOf(
@@ -376,6 +442,8 @@ private val previewChampionships = listOf(
         name = "Liga da Sexta",
         gameType = GameType.BURACO,
         status = ChampionshipStatus.ACTIVE,
+        cadence = ChampionshipCadence.WEEKLY,
+        level = PlayerLevel.NOOB,
         isHost = true,
         participantCount = 5
     ),
@@ -385,6 +453,8 @@ private val previewChampionships = listOf(
         name = "Torneio da Firma",
         gameType = GameType.CACHETA,
         status = ChampionshipStatus.FINISHED,
+        cadence = ChampionshipCadence.MONTHLY,
+        level = PlayerLevel.EXPERT,
         isHost = false,
         participantCount = 8
     )
@@ -401,7 +471,7 @@ private fun ChampionshipListPreview() {
             onOpenChampionship = {},
             isCreating = false,
             createError = null,
-            onCreate = { _, _ -> },
+            onCreate = { _, _, _, _ -> },
             isJoining = false,
             joinError = null,
             onJoin = {}
@@ -420,7 +490,7 @@ private fun ChampionshipListEmptyPreview() {
             onOpenChampionship = {},
             isCreating = false,
             createError = null,
-            onCreate = { _, _ -> },
+            onCreate = { _, _, _, _ -> },
             isJoining = false,
             joinError = null,
             onJoin = {}
@@ -439,7 +509,7 @@ private fun ChampionshipListLoadingPreview() {
             onOpenChampionship = {},
             isCreating = false,
             createError = null,
-            onCreate = { _, _ -> },
+            onCreate = { _, _, _, _ -> },
             isJoining = false,
             joinError = null,
             onJoin = {}
