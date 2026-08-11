@@ -157,7 +157,7 @@ publicacao esta em `product-roadmap.md`.
   conserva a compra livre do topo. O smoke cobre os quatro caminhos e o lint
   ficou sem avisos depois do ajuste de volatilidade da `0044`.
 
-  **Atualizacao (`0045`-`0047`, validada no banco local):** o assento `0`
+  **Atualizacao (`0045`-`0047`, aplicada no projeto remoto em 2026-08-11):** o assento `0`
   passou a ter o mesmo ledger privado dos convidados. Distribuicao, compra,
   baixa, descarte e morto atualizam a mao canonica do host na mesma transacao;
   a retirada do morto foi testada com exatamente 11 cartas. Um smoke adicional
@@ -167,8 +167,8 @@ publicacao esta em `product-roadmap.md`.
   distingue GAME_START/SERVE_CARD/SERVE_MORTO criados pelas RPCs de uma entrega
   forjada pelo cliente. Os smokes `0040`-`0047`, 242 testes Kotlin, os dois APKs
   debug e os lints Android/SQL passaram. O APK corrigido foi reinstalado nas duas
-  instancias Android usadas nos testes. A publicacao destas tres migrations aguarda
-  o CLI voltar a conta que possui o projeto `yvpbegrdepevppglbcbm`.
+  instancias Android usadas nos testes. O historico `0001`-`0047` ficou alinhado,
+  o `dry-run` remoto voltou vazio e o lint dos schemas nao encontrou erros.
 
   **Homologacao remota adicional (2026-08-11):** o APK atual abriu duas sessoes
   anonimas isoladas contra o projeto publicado, criou uma sala descartavel de
@@ -177,6 +177,8 @@ publicacao esta em `product-roadmap.md`.
   no ledger privado e o historico registrou `MORTO_TAKEN`; a sala e as sessoes
   de teste foram encerradas no bloco de limpeza. O teste ficou opt-in em
   `OnlineMortoHomologationTest`, para a suite comum nunca criar dados remotos.
+  Repeti a mesma homologacao depois da publicacao de `0045`-`0047`; o resultado
+  continuou com 11 cartas, ledger sincronizado e aviso publicado, sem reconexao.
 
 ## Fase 1 - Base online sem mudar o jogo local
 
@@ -334,14 +336,14 @@ publicacao esta em `product-roadmap.md`.
 - [ ] Remover a dependencia final da autoridade e da visao privada do host.
   As migrations `0020`-`0026` controlam distribuicao, compra do monte e morto;
   a `0040` deixa o conteudo dos mortos apenas no servidor; `0043`-`0047`
-  conferem lixo, curinga e a mao do assento `0` no ledger privado. Depois da
-  publicacao de `0045`-`0047`, ainda falta calcular a contagem final com o
-  estado canonico e parar de devolver as maos dos oponentes ao host.
+  conferem lixo, curinga e a mao do assento `0` no ledger privado. Ainda falta
+  calcular a contagem final com o estado canonico e parar de devolver as maos
+  dos oponentes ao host.
 - [x] Servidor confirma repeticao identica e rejeita colisao diferente pelo `message_id`.
 - [x] Host rejeita evento fora do turno antes de alterar a mesa canonica.
 - [x] Banco rejeita compra, baixa e descarte enviados por um assento fora do turno publico.
 - [x] Banco rejeita segunda compra na mesma vez e acao/descarte sem compra previa (`0041`).
-- [x] Banco valida justificativa do lixo e descarte obrigatorio de curinga para convidados (`0043`) e host (`0045`, pendente de publicacao remota).
+- [x] Banco valida justificativa do lixo e descarte obrigatorio de curinga para convidados (`0043`) e host (`0045`).
 - [x] Banco rejeita evento desconhecido, destinatario incorreto e mensagem exclusiva do papel oposto.
 - [x] App identifica cada rodada, preserva o token nos retries e so redistribui depois do ACK de `NEXT_ROUND`.
 - [x] Reconexao preserva a rodada ativa sem o host encerrar a propria sala no servidor.
