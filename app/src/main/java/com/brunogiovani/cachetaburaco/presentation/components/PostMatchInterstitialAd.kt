@@ -3,15 +3,13 @@ package com.brunogiovani.cachetaburaco.presentation.components
 import android.app.Activity
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import com.brunogiovani.cachetaburaco.R
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
-
-private const val PROD_INTERSTITIAL_POST_MATCH = "ca-app-pub-9473501958357317/2339884534"
-private const val TEST_INTERSTITIAL_ANDROID = "ca-app-pub-3940256099942544/1033173712"
 
 /**
  * Intersticial de pos-partida. So deve ser chamado quando uma partida inteira
@@ -69,6 +67,8 @@ object PostMatchInterstitialAd {
 
     private fun adUnitIdFor(context: Context): String {
         val isDebuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-        return if (isDebuggable) TEST_INTERSTITIAL_ANDROID else PROD_INTERSTITIAL_POST_MATCH
+        return context.getString(
+            if (isDebuggable) R.string.admob_interstitial_test else R.string.admob_interstitial_post_match
+        )
     }
 }

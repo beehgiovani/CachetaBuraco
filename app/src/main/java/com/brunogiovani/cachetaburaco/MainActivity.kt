@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ import com.brunogiovani.cachetaburaco.presentation.main.MainMenuScreen
 import com.brunogiovani.cachetaburaco.presentation.match.MatchScreen
 import com.brunogiovani.cachetaburaco.presentation.match.MatchViewModel
 import com.brunogiovani.cachetaburaco.presentation.components.AdsConsentManager
+import com.brunogiovani.cachetaburaco.presentation.components.AppOpenAdManager
 import com.brunogiovani.cachetaburaco.presentation.profile.OnlineProfileScreen
 import com.brunogiovani.cachetaburaco.presentation.ranking.OnlineRankingScreen
 
@@ -81,6 +83,7 @@ class MainActivity : ComponentActivity() {
         // componentes de anuncio (SafeAdBannerSlot/PostMatchInterstitialAd)
         // ficam esperando AdsConsentManager.canRequestAds antes de pedir qualquer anuncio.
         AdsConsentManager.gatherConsent(this)
+        AppOpenAdManager.start(this)
 
         networkRepository = LocalNetworkRepositoryImpl(applicationContext)
 
@@ -95,6 +98,11 @@ class MainActivity : ComponentActivity() {
                             if (FakeAuthRepository.hasSavedProfile()) AppState.MAIN_MENU
                             else AppState.LOGIN
                         )
+                    }
+                    // App-open ad nunca pode interromper uma partida em andamento
+                    // se o app voltar do segundo plano no meio dela.
+                    LaunchedEffect(currentScreen) {
+                        AppOpenAdManager.isMatchInProgress = currentScreen == AppState.MATCH
                     }
 
                     var isHosting by remember { mutableStateOf(false) }
@@ -165,7 +173,8 @@ class MainActivity : ComponentActivity() {
                                         currentScreen = AppState.LOBBY_CLIENT_RESUME
                                     }
                                 }
-                            }
+                            },
+                            globalChatRepository = globalChatRepository
                         )
 
                         AppState.LOBBY_HOST -> LobbyScreen(

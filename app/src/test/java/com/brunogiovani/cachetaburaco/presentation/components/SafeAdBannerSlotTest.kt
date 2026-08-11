@@ -5,19 +5,18 @@ import org.junit.Test
 
 class SafeAdBannerSlotTest {
 
+    // Os IDs de verdade moraram pra strings.xml (admob_banner_menu/lobby/ranking);
+    // aqui so garanto que cada AdPlacement roteia pro bloco certo.
+    private val menu = "menu-id"
+    private val lobby = "lobby-id"
+    private val ranking = "ranking-id"
+
     @Test
     fun `production ad units use separated admob blocks by placement`() {
-        assertEquals(
-            "ca-app-pub-9473501958357317/7461912378",
-            productionAdUnitFor(AdPlacement.MAIN_MENU)
-        )
-        assertEquals(
-            "ca-app-pub-9473501958357317/8583422353",
-            productionAdUnitFor(AdPlacement.LOBBY)
-        )
-        assertEquals(
-            "ca-app-pub-9473501958357317/2018014003",
-            productionAdUnitFor(AdPlacement.RANKING)
-        )
+        assertEquals(menu, productionAdUnitFor(AdPlacement.MAIN_MENU, menu, lobby, ranking))
+        assertEquals(lobby, productionAdUnitFor(AdPlacement.LOBBY, menu, lobby, ranking))
+        assertEquals(ranking, productionAdUnitFor(AdPlacement.RANKING, menu, lobby, ranking))
+        assertEquals(lobby, productionAdUnitFor(AdPlacement.RULES, menu, lobby, ranking))
+        assertEquals(ranking, productionAdUnitFor(AdPlacement.ROUND_SUMMARY, menu, lobby, ranking))
     }
 }

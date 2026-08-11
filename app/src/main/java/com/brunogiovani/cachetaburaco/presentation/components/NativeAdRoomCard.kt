@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import com.brunogiovani.cachetaburaco.R
 import com.google.android.gms.ads.AdListener
@@ -25,9 +26,6 @@ import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.nativead.MediaView
 import com.google.android.gms.ads.nativead.NativeAd
 import com.google.android.gms.ads.nativead.NativeAdView
-
-private const val PROD_NATIVE_ROOM_LIST = "ca-app-pub-9473501958357317/5456307931"
-private const val TEST_NATIVE_ADVANCED = "ca-app-pub-3940256099942544/2247696110"
 
 /**
  * Card de anuncio nativo avancado misturado na lista de "Encontrar sala
@@ -43,11 +41,15 @@ fun NativeAdRoomCard(modifier: Modifier = Modifier) {
     if (!canRequestAds) return
 
     val context = LocalContext.current
+    // stringResource (nao context.getString) pra continuar reagindo a troca
+    // de configuracao -- lint (LocalContextGetResourceValueCall) exige isso.
+    val nativeTestId = stringResource(R.string.admob_native_test)
+    val nativeProdId = stringResource(R.string.admob_native_room_list)
     var nativeAd by remember { mutableStateOf<NativeAd?>(null) }
 
-    DisposableEffect(context) {
+    DisposableEffect(context, nativeTestId, nativeProdId) {
         val isDebuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-        val adUnitId = if (isDebuggable) TEST_NATIVE_ADVANCED else PROD_NATIVE_ROOM_LIST
+        val adUnitId = if (isDebuggable) nativeTestId else nativeProdId
 
         val adLoader = AdLoader.Builder(context, adUnitId)
             .forNativeAd { ad ->

@@ -64,6 +64,44 @@ fun GlobalChatScreen(
     repository: GlobalChatRepository,
     onBack: () -> Unit
 ) {
+    MenuBackdrop {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(16.dp)
+                .widthIn(max = MenuMetrics.MaxContentWidth)
+                .align(Alignment.Center)
+        ) {
+            MenuTopBar(
+                title = "Chat geral",
+                subtitle = "Veja as últimas mensagens e continue a conversa",
+                onBack = onBack
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            GlobalChatPanel(
+                playerName = playerName,
+                repository = repository,
+                modifier = Modifier.weight(1f).fillMaxWidth()
+            )
+        }
+    }
+}
+
+/**
+ * Corpo do chat geral (lista + campo de envio) sem o cabecalho/fundo de tela
+ * cheia -- reaproveitado tanto pelo GlobalChatScreen (navegacao dedicada)
+ * quanto embutido direto no menu principal, logo abaixo do ranking, do jeito
+ * que o Bruno pediu pra virar um espaco vivo de combinar sala/partida.
+ */
+@Composable
+fun GlobalChatPanel(
+    playerName: String,
+    repository: GlobalChatRepository,
+    modifier: Modifier = Modifier
+) {
     val messages = remember { mutableStateListOf<GlobalChatEntry>() }
     var draft by remember { mutableStateOf("") }
     var sendError by remember { mutableStateOf<String?>(null) }
@@ -93,79 +131,62 @@ fun GlobalChatScreen(
         }
     }
 
-    MenuBackdrop {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(16.dp)
-                .widthIn(max = MenuMetrics.MaxContentWidth)
-                .align(Alignment.Center)
-        ) {
-            MenuTopBar(
-                title = "Chat geral",
-                subtitle = "Veja as últimas mensagens e continue a conversa",
-                onBack = onBack
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                if (messages.isEmpty()) {
-                    MenuStatusMessage(
-                        text = "Nenhuma mensagem ainda",
-                        caption = "Seja o primeiro a dizer oi!",
-                        showSpinner = false,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        items(messages, key = { it.id }) { entry -> GlobalChatBubble(entry) }
-                    }
+    Column(modifier = modifier) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (messages.isEmpty()) {
+                MenuStatusMessage(
+                    text = "Nenhuma mensagem ainda",
+                    caption = "Seja o primeiro a dizer oi!",
+                    showSpinner = false,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(messages, key = { it.id }) { entry -> GlobalChatBubble(entry) }
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-            sendError?.let { message ->
-                Text(message, color = MenuColors.Red, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
-            }
+        sendError?.let { message ->
+            Text(message, color = MenuColors.Red, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp))
+        }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { if (it.length <= 300) draft = it },
-                    placeholder = { Text("Mensagem...", color = Color.White.copy(alpha = 0.4f)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { send() }),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MenuColors.TableGreenLight,
-                        unfocusedBorderColor = MenuColors.BorderStrong,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = MenuColors.TableGreenLight
-                    ),
-                    modifier = Modifier.weight(1f)
-                )
-                MenuFilledButton(
-                    text = "Enviar",
-                    onClick = ::send,
-                    enabled = draft.isNotBlank(),
-                    containerColor = MenuColors.TableGreenLight,
-                    // width fixo: MenuFilledButton sempre pede fillMaxWidth por dentro,
-                    // e aqui ele divide a linha com o campo de texto (weight = 1f).
-                    modifier = Modifier.width(96.dp)
-                )
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { if (it.length <= 300) draft = it },
+                placeholder = { Text("Mensagem...", color = Color.White.copy(alpha = 0.4f)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { send() }),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MenuColors.TableGreenLight,
+                    unfocusedBorderColor = MenuColors.BorderStrong,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = MenuColors.TableGreenLight
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            MenuFilledButton(
+                text = "Enviar",
+                onClick = ::send,
+                enabled = draft.isNotBlank(),
+                containerColor = MenuColors.TableGreenLight,
+                // width fixo: MenuFilledButton sempre pede fillMaxWidth por dentro,
+                // e aqui ele divide a linha com o campo de texto (weight = 1f).
+                modifier = Modifier.width(96.dp)
+            )
         }
     }
 }

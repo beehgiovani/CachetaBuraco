@@ -3,6 +3,7 @@ package com.brunogiovani.cachetaburaco.presentation.main
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -56,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import com.brunogiovani.cachetaburaco.R
 import com.brunogiovani.cachetaburaco.data.repositories.FakeAuthRepository
 import com.brunogiovani.cachetaburaco.domain.models.Player
+import com.brunogiovani.cachetaburaco.domain.repositories.GlobalChatRepository
+import com.brunogiovani.cachetaburaco.presentation.chat.GlobalChatPanel
 import com.brunogiovani.cachetaburaco.presentation.components.AdPlacement
 import com.brunogiovani.cachetaburaco.presentation.components.MenuActionRow
 import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
@@ -78,7 +81,8 @@ fun MainMenuScreen(
     onOpenGlobalChat: () -> Unit = {},
     onOpenChampionships: () -> Unit = {},
     onPlayBot: () -> Unit,
-    onResumeGame: () -> Unit = {}
+    onResumeGame: () -> Unit = {},
+    globalChatRepository: GlobalChatRepository? = null
 ) {
     val context = LocalContext.current
     val player = FakeAuthRepository.getCurrentPlayer()
@@ -105,7 +109,8 @@ fun MainMenuScreen(
         onPlayBot = onPlayBot,
         onJoinRoom = onJoinRoom,
         onHostOnlineRoom = onHostOnlineRoom,
-        onJoinOnlineRoom = onJoinOnlineRoom
+        onJoinOnlineRoom = onJoinOnlineRoom,
+        globalChatRepository = globalChatRepository
     )
 
     if (showLogoutDialog) {
@@ -155,7 +160,8 @@ private fun MainMenuContent(
     onPlayBot: () -> Unit,
     onJoinRoom: () -> Unit,
     onHostOnlineRoom: () -> Unit,
-    onJoinOnlineRoom: () -> Unit
+    onJoinOnlineRoom: () -> Unit,
+    globalChatRepository: GlobalChatRepository? = null
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         Image(
@@ -225,6 +231,15 @@ private fun MainMenuContent(
                             onOpenOnlineRanking = onOpenOnlineRanking
                         )
                     }
+                    if (globalChatRepository != null) {
+                        MenuEntrance(delayMillis = 130) {
+                            InlineGlobalChatPanel(
+                                playerName = playerName,
+                                repository = globalChatRepository,
+                                onExpand = onOpenGlobalChat
+                            )
+                        }
+                    }
                     SafeAdBannerSlot(compact = true, placement = AdPlacement.MAIN_MENU)
                     // Espaco reservado pro FAB do chat nao tampar o fim da lista
                     // em telas curtas (ele fica fixo por cima do conteudo rolado).
@@ -256,6 +271,15 @@ private fun MainMenuContent(
                                 currentPlayerId = currentPlayerId,
                                 onOpenOnlineRanking = onOpenOnlineRanking
                             )
+                        }
+                        if (globalChatRepository != null) {
+                            MenuEntrance(delayMillis = 90) {
+                                InlineGlobalChatPanel(
+                                    playerName = playerName,
+                                    repository = globalChatRepository,
+                                    onExpand = onOpenGlobalChat
+                                )
+                            }
                         }
                     }
 
@@ -609,6 +633,41 @@ private fun RankingPanel(
         ) {
             Text("Ver ranking global", color = Color.White, fontWeight = FontWeight.Bold)
         }
+    }
+}
+
+// Logo abaixo do ranking global, do jeito que o Bruno pediu: um chat ao vivo
+// pra combinar sala/partida sem precisar navegar pra uma tela separada.
+// Altura fixa porque GlobalChatPanel usa weight(1f) internamente pra lista
+// de mensagens, e aqui ele mora dentro de uma coluna com verticalScroll
+// (altura infinita) -- sem essa altura fixa o weight(1f) não tem o que medir.
+@Composable
+private fun InlineGlobalChatPanel(
+    playerName: String,
+    repository: GlobalChatRepository,
+    onExpand: () -> Unit
+) {
+    MenuSectionCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Chat geral", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(
+                "Expandir",
+                color = MenuColors.TableGreenLight,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                modifier = Modifier.clickable(onClick = onExpand)
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        GlobalChatPanel(
+            playerName = playerName,
+            repository = repository,
+            modifier = Modifier.fillMaxWidth().height(260.dp)
+        )
     }
 }
 

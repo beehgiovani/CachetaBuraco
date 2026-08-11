@@ -50,7 +50,11 @@ object AdsConsentManager {
     private fun initializeIfAllowed(activity: ComponentActivity, info: ConsentInformation) {
         if (info.canRequestAds() && !_canRequestAds.value) {
             _canRequestAds.value = true
-            MobileAds.initialize(activity.applicationContext) {}
+            MobileAds.initialize(activity.applicationContext) {
+                // So depois do SDK pronto: pre-carrega o app-open pra ja estar
+                // disponivel na primeira vez que o app voltar de segundo plano.
+                AppOpenAdManager.loadAd(activity)
+            }
         }
     }
 }

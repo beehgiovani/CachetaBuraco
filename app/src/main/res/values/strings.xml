@@ -2,4 +2,25 @@
 <resources>
     <string name="app_name">Carteado BR</string>
     <string name="admob_app_id">ca-app-pub-9473501958357317~5221661763</string>
+
+    <!--
+        IDs de bloco de anuncio reais (producao) e de teste do Google, tudo
+        num lugar so pra nao correr risco de um ID de teste vazar pra release
+        escondido dentro de um arquivo Kotlin qualquer. Cada composable/
+        manager le o par certo (debug pega o _test, release pega o real) via
+        ApplicationInfo.FLAG_DEBUGGABLE, nunca hardcoded direto no .kt.
+    -->
+    <string name="admob_banner_menu">ca-app-pub-9473501958357317/7461912378</string>
+    <string name="admob_banner_lobby">ca-app-pub-9473501958357317/8583422353</string>
+    <string name="admob_banner_ranking">ca-app-pub-9473501958357317/2018014003</string>
+    <string name="admob_banner_test">ca-app-pub-3940256099942544/9214589741</string>
+
+    <string name="admob_interstitial_post_match">ca-app-pub-9473501958357317/2339884534</string>
+    <string name="admob_interstitial_test">ca-app-pub-3940256099942544/1033173712</string>
+
+    <string name="admob_native_room_list">ca-app-pub-9473501958357317/5456307931</string>
+    <string name="admob_native_test">ca-app-pub-3940256099942544/2247696110</string>
+
+    <string name="admob_app_open">ca-app-pub-9473501958357317/6885205600</string>
+    <string name="admob_app_open_test">ca-app-pub-3940256099942544/9257395921</string>
 </resources>

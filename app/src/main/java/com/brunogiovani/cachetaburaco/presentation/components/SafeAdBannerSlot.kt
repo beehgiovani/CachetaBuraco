@@ -19,20 +19,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.brunogiovani.cachetaburaco.R
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import kotlin.math.roundToInt
-
-private const val PROD_BANNER_MENU = "ca-app-pub-9473501958357317/7461912378"
-private const val PROD_BANNER_LOBBY = "ca-app-pub-9473501958357317/8583422353"
-private const val PROD_BANNER_RANKING = "ca-app-pub-9473501958357317/2018014003"
-private const val TEST_BANNER_ANDROID = "ca-app-pub-3940256099942544/9214589741"
 
 enum class AdPlacement {
     MAIN_MENU,
@@ -62,6 +59,14 @@ fun SafeAdBannerSlot(
     }
 
     val context = LocalContext.current
+    // stringResource (nao context.getString) pra continuar reagindo a troca
+    // de configuracao -- lint (LocalContextGetResourceValueCall) exige isso
+    // dentro de Composable.
+    val bannerTestId = stringResource(R.string.admob_banner_test)
+    val bannerMenuId = stringResource(R.string.admob_banner_menu)
+    val bannerLobbyId = stringResource(R.string.admob_banner_lobby)
+    val bannerRankingId = stringResource(R.string.admob_banner_ranking)
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
@@ -72,9 +77,18 @@ fun SafeAdBannerSlot(
         contentAlignment = Alignment.Center
     ) {
         val widthDp = maxWidth.value.roundToInt().coerceIn(320, 1200)
-        val adUnitId = remember(context, placement) {
+        val adUnitId = remember(context, placement, bannerTestId, bannerMenuId, bannerLobbyId, bannerRankingId) {
             val isDebuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-            if (isDebuggable) TEST_BANNER_ANDROID else productionAdUnitFor(placement)
+            if (isDebuggable) {
+                bannerTestId
+            } else {
+                productionAdUnitFor(
+                    placement,
+                    bannerMenu = bannerMenuId,
+                    bannerLobby = bannerLobbyId,
+                    bannerRanking = bannerRankingId
+                )
+            }
         }
         val adView = remember(context, widthDp, adUnitId) {
             AdView(context).apply {
@@ -95,15 +109,23 @@ fun SafeAdBannerSlot(
     }
 }
 
-internal fun productionAdUnitFor(placement: AdPlacement): String {
+// IDs recebidos por parametro (nao lidos direto de R.string aqui) pra essa
+// funcao continuar testavel num JUnit puro, sem precisar de um Context
+// Android de verdade -- ver SafeAdBannerSlotTest.
+internal fun productionAdUnitFor(
+    placement: AdPlacement,
+    bannerMenu: String,
+    bannerLobby: String,
+    bannerRanking: String
+): String {
     // Cada tela usa um bloco proprio para medir receita e estabilidade sem
     // misturar dados de menu, lobby e ranking no mesmo relatorio.
     return when (placement) {
-        AdPlacement.MAIN_MENU -> PROD_BANNER_MENU
-        AdPlacement.LOBBY -> PROD_BANNER_LOBBY
-        AdPlacement.RANKING -> PROD_BANNER_RANKING
-        AdPlacement.RULES -> PROD_BANNER_LOBBY
-        AdPlacement.ROUND_SUMMARY -> PROD_BANNER_RANKING
+        AdPlacement.MAIN_MENU -> bannerMenu
+        AdPlacement.LOBBY -> bannerLobby
+        AdPlacement.RANKING -> bannerRanking
+        AdPlacement.RULES -> bannerLobby
+        AdPlacement.ROUND_SUMMARY -> bannerRanking
     }
 }
 
