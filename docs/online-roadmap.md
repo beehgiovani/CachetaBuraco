@@ -333,12 +333,32 @@ publicacao esta em `product-roadmap.md`.
 - [x] Host continua sendo autoridade na primeira versao online.
 - [x] Validar estruturalmente MELD e DRAW_DISCARD no banco pela migration `0014`.
 - [x] Servidor valida posse da carta, mao vazia, lixo, morto e vitoria dos convidados com estado privado por assento.
-- [ ] Remover a dependencia final da autoridade e da visao privada do host.
-  As migrations `0020`-`0026` controlam distribuicao, compra do monte e morto;
-  a `0040` deixa o conteudo dos mortos apenas no servidor; `0043`-`0047`
-  conferem lixo, curinga e a mao do assento `0` no ledger privado. Ainda falta
-  calcular a contagem final com o estado canonico e parar de devolver as maos
-  dos oponentes ao host.
+- [x] Calcular a contagem final com o estado canonico (migration `0048`).
+  `private.cbr_compute_round_summary` porta a conta inteira do
+  `GameRulesEngine`/`MatchViewModel` (vidas da Cacheta; mesa, canastra limpa/suja,
+  3 vermelhos e morto do Buraco/Tranca) lendo so o ledger privado, e fica
+  gravada em `match_results.server_round_scores`/`server_round_breakdown` como
+  auditoria. `complete_match` passou a exigir um `WIN_ROUND`/`COUNT_ROUND` de
+  verdade entre o `GAME_START` e o `ROUND_SUMMARY` (fecha o golpe de fabricar
+  um resultado sem jogar a rodada) e, na Cacheta, exige que o time vencedor
+  bata com quem realmente bateu por ultimo (invariante inequivoca: quem bate
+  por ultimo sempre vence a partida). Testado localmente (5 cenarios de
+  pontuacao + 3 de `complete_match`, incluindo um Buraco legitimo com morto e
+  canastra suja) e homologado nos 2 emuladores pos-deploy (Cacheta e Buraco:
+  deal, compra, descarte, meld com curinga, passagem de turno).
+  **Lacuna documentada, nao bloqueante:** no Buraco/Tranca o time que bate nao
+  e necessariamente o time que vence a partida (depende do acumulado das
+  rodadas anteriores), entao a checagem de time vencedor so vale pra Cacheta
+  por enquanto — fechar isso de vez exigiria um placar cumulativo rastreado
+  pelo servidor a cada rodada, nao so na ultima.
+- [ ] Parar de devolver as maos dos oponentes ao host.
+  `start_online_round` ainda devolve o conteudo real de todos os assentos em
+  `hands`, e `MatchViewModel.applyServerDeal()` guarda isso em
+  `remoteHandsBySeat`, usado em ~15 pontos de validacao otimista local
+  (compartilhados com o Wi-Fi, que precisa do conteudo real por nao ter
+  servidor). Trocar por placeholder+contagem pro transporte online (mesmo
+  padrao ja usado em `masterDeck`/mortos desde a `0025`) exige um branch por
+  transporte em cada ponto — mapeado, ainda nao implementado.
 - [x] Servidor confirma repeticao identica e rejeita colisao diferente pelo `message_id`.
 - [x] Host rejeita evento fora do turno antes de alterar a mesa canonica.
 - [x] Banco rejeita compra, baixa e descarte enviados por um assento fora do turno publico.

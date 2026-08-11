@@ -446,6 +446,9 @@ internal fun MatchConfig.toOnlineRoomConfigJson(): JsonObject = buildJsonObject 
     put("requireCleanCanastraToWin", requireCleanCanastraToWin)
     put("autoMeldTrancaRedThrees", autoMeldTrancaRedThrees)
     put("cardsPerPlayer", cardsPerPlayer)
+    // Servem so pra auditoria de pontuacao no servidor (private.cbr_compute_round_summary).
+    put("uniformCardPoints", uniformCardPoints)
+    put("penalizeBlackThreesInHand", penalizeBlackThreesInHand)
 }
 
 private fun JsonObject.toMatchConfig(): MatchConfig {
