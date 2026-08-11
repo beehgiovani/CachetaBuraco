@@ -17,6 +17,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -59,6 +61,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -87,6 +90,7 @@ import com.brunogiovani.cachetaburaco.presentation.components.MenuColors
 import com.brunogiovani.cachetaburaco.presentation.components.MenuMotion
 import com.brunogiovani.cachetaburaco.presentation.components.MenuShapes
 import com.brunogiovani.cachetaburaco.presentation.components.rememberReducedMotionEnabled
+import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -106,6 +110,11 @@ private val ColorLockRed = Color(0xFFEF5350)
 // 0032 apaga tudo quando ela encerra) -- este limite e so pra nao deixar a
 // lista em memoria crescer sem fim numa partida muito longa.
 private const val MAX_DISPLAYED_CHAT_MESSAGES = 200
+
+// Tempo que o balao da ultima mensagem do adversario fica sobre a mesa.
+// Curto o bastante pra nao atrapalhar a jogada, longo o bastante pra dar
+// tempo de ler uma provocacao inteira.
+private const val LIVE_CHAT_BUBBLE_MILLIS = 4000L
 
 private fun String.isErrorFeedback(): Boolean {
     return contains("nao", ignoreCase = true) ||
@@ -191,12 +200,29 @@ fun MatchScreen(
     val roomChatMessages = remember { mutableStateListOf<RoomChatMessage>() }
     var showRoomChat by remember { mutableStateOf(false) }
     var unreadRoomChatCount by remember { mutableIntStateOf(0) }
+    // Balao ao vivo: a ultima mensagem do adversario aparece sobre a mesa por
+    // alguns segundos, pra quem esta no meio de uma jogada nao precisar abrir
+    // o chat pra saber que foi provocado. So mensagem dos outros -- ver a
+    // propria mensagem ecoando na tela nao ajuda em nada.
+    var liveBubble by remember { mutableStateOf<RoomChatMessage?>(null) }
     LaunchedEffect(networkRepository, roomChatEnabled) {
         if (!roomChatEnabled) return@LaunchedEffect
         networkRepository.roomChatMessages.collect { message ->
             roomChatMessages.add(message)
             if (roomChatMessages.size > MAX_DISPLAYED_CHAT_MESSAGES) roomChatMessages.removeAt(0)
-            if (!showRoomChat) unreadRoomChatCount++
+            if (!showRoomChat) {
+                unreadRoomChatCount++
+                if (!message.isSelf) liveBubble = message
+            }
+        }
+    }
+    // Some sozinho. A chave e a propria mensagem: se chegar outra antes de
+    // vencer o tempo, o LaunchedEffect reinicia e o balao novo ganha os
+    // segundos inteiros em vez de herdar o resto do anterior.
+    LaunchedEffect(liveBubble) {
+        if (liveBubble != null) {
+            delay(LIVE_CHAT_BUBBLE_MILLIS)
+            liveBubble = null
         }
     }
 
@@ -364,6 +390,20 @@ fun MatchScreen(
 
             HandSection(state = state, viewModel = viewModel, config = state.config, feedback = feedback)
         }
+
+        // Logo abaixo da TopBar: perto do botao de chat (de onde a mensagem
+        // "vem"), e fora da area da mesa/mao, que e onde o jogador toca.
+        LiveChatBubble(
+            message = liveBubble,
+            onClick = {
+                liveBubble = null
+                showRoomChat = true
+                unreadRoomChatCount = 0
+            },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 64.dp)
+        )
 
         VictoryConfetti(
             visible = state.showRoundEndDialog &&
@@ -3197,6 +3237,57 @@ private fun RestartMatchDialog(onConfirm: () -> Unit, onDecline: () -> Unit) {
 }
 
 // --- Chat da sala ------------------------------------------
+
+/**
+ * Balao com a ultima mensagem recebida, sobreposto a mesa. Existe pra quem
+ * esta no meio de uma jogada perceber a provocacao sem abrir o chat -- some
+ * sozinho depois de LIVE_CHAT_BUBBLE_MILLIS.
+ */
+@Composable
+private fun LiveChatBubble(
+    message: RoomChatMessage?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = message != null,
+        enter = fadeIn() + slideInVertically { -it / 2 },
+        exit = fadeOut() + slideOutVertically { -it / 2 },
+        modifier = modifier
+    ) {
+        // Guardo a ultima mensagem nao-nula pro texto nao sumir no meio da
+        // animacao de saida (quando message ja voltou a ser null).
+        val shown = remember(message) { message } ?: return@AnimatedVisibility
+        val senderLabel = shown.senderSeat?.let { "J${it + 1}" } ?: "Jogador"
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .widthIn(max = 320.dp)
+                .background(Color(0xF21B2733), RoundedCornerShape(14.dp))
+                .border(1.dp, MenuColors.Gold.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text = senderLabel,
+                color = MenuColors.Gold,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = shown.body,
+                color = Color.White,
+                fontSize = 13.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
 @Composable
 private fun RoomChatDialog(
     messages: List<RoomChatMessage>,
@@ -3252,6 +3343,30 @@ private fun RoomChatDialog(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         items(messages) { message -> RoomChatBubble(message) }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Atalho de provocacao: manda direto, sem passar pelo campo de
+                // texto -- no meio de uma mao ninguem quer abrir o teclado.
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(TAUNT_EMOJIS) { taunt ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .background(Color.White.copy(alpha = 0.07f), RoundedCornerShape(16.dp))
+                                .border(1.dp, MenuColors.Border, RoundedCornerShape(16.dp))
+                                .clickable { onSend(taunt.message) }
+                                .padding(horizontal = 10.dp, vertical = 7.dp)
+                        ) {
+                            Text(taunt.emoji, fontSize = 15.sp)
+                            Text(taunt.label, color = Color.White.copy(alpha = 0.75f), fontSize = 11.sp)
+                        }
                     }
                 }
 
