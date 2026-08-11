@@ -74,6 +74,7 @@ import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.models.Rank
 import com.brunogiovani.cachetaburaco.domain.models.Suit
+import com.brunogiovani.cachetaburaco.domain.models.displayLabel
 import com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
 import com.brunogiovani.cachetaburaco.domain.usecases.GameRulesEngine
@@ -2223,7 +2224,7 @@ private fun TurnCardPile(turnCard: Card?, cardWidth: Dp = 58.dp) {
         Text("VIRA", color = ColorGold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         if (turnCard != null) {
             Text(
-                "Curinga: ${GameRulesEngine.getCachetaWildcardRank(turnCard).name}",
+                    "Curinga: ${GameRulesEngine.getCachetaWildcardRank(turnCard).displayLabel}",
                 color = Color.White.copy(alpha = 0.62f),
                 fontSize = 9.sp,
                 textAlign = TextAlign.Center

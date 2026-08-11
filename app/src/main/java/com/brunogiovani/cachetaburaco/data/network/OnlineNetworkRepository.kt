@@ -14,6 +14,7 @@ import com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
 import com.brunogiovani.cachetaburaco.domain.repositories.NetworkMessage
 import com.brunogiovani.cachetaburaco.domain.repositories.RoomChatMessage
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -34,11 +35,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * Adaptador do online para o mesmo contrato usado pelo Wi-Fi e pela maquina.
@@ -203,6 +206,15 @@ class OnlineNetworkRepository(
     }
 
     override fun connectToRoom(host: String, port: Int, password: String?) {
+        connectToRoomInternal(host, password, preserveRemoteSession = false, resumedRoundId = null)
+    }
+
+    private fun connectToRoomInternal(
+        host: String,
+        password: String?,
+        preserveRemoteSession: Boolean,
+        resumedRoundId: String?
+    ) {
         val roomCode = host.trim().uppercase()
         if (roomCode.isBlank()) {
             _connectionStatus.value = ConnectionStatus.ERROR
@@ -220,7 +232,13 @@ class OnlineNetworkRepository(
         scope.launch {
             roomMutex.withLock {
                 if (version != operationVersion.get()) return@withLock
-                closeCurrentSession()
+                if (preserveRemoteSession) {
+                    // Na reconexao a linha da sala continua valida no servidor.
+                    // Fechar aqui encerrava a propria sala quando o host caia.
+                    currentSession = null
+                } else {
+                    closeCurrentSession()
+                }
                 if (version != operationVersion.get()) return@withLock
 
                 try {
@@ -230,7 +248,7 @@ class OnlineNetworkRepository(
                         safelyLeave(session)
                         return@withLock
                     }
-                    installSession(session)
+                    installSession(session, resumedRoundId)
                 } catch (error: CancellationException) {
                     throw error
                 } catch (_: Throwable) {
@@ -242,7 +260,13 @@ class OnlineNetworkRepository(
 
     override fun reconnect(): Boolean {
         val roomCode = reconnectRoomCode ?: currentSession?.room?.roomCode ?: return false
-        connectToRoom(roomCode, port = 0, password = reconnectRoomPassword)
+        val resumedRoundId = currentRoundId.takeIf { currentRoundIsActive }
+        connectToRoomInternal(
+            host = roomCode,
+            password = reconnectRoomPassword,
+            preserveRemoteSession = true,
+            resumedRoundId = resumedRoundId
+        )
         return true
     }
 
@@ -355,12 +379,9 @@ class OnlineNetworkRepository(
             return
         }
         scope.launch {
-            val result = try {
-                withTimeoutOrNull(SERVER_RPC_TIMEOUT_MS) { dataSource.startRound(session) }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                null
+            val requestId = UUID.randomUUID().toString()
+            val result = requestServerRpcWithRetry {
+                dataSource.startRound(session, requestId)
             }
             if (result == null) reportFailureTelemetry(OnlineFailureCategory.DEAL_REQUEST_FAILED, session.room.roomId)
             onResult(result)
@@ -374,12 +395,9 @@ class OnlineNetworkRepository(
             return
         }
         scope.launch {
-            val result = try {
-                withTimeoutOrNull(SERVER_RPC_TIMEOUT_MS) { dataSource.drawDeckCard(session, seat) }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                null
+            val requestId = UUID.randomUUID().toString()
+            val result = requestServerRpcWithRetry {
+                dataSource.drawDeckCard(session, seat, requestId)
             }
             if (result == null) reportFailureTelemetry(OnlineFailureCategory.DRAW_REQUEST_FAILED, session.room.roomId)
             onResult(result)
@@ -411,22 +429,65 @@ class OnlineNetworkRepository(
             return
         }
         scope.launch {
-            val result = try {
-                withTimeoutOrNull(SERVER_RPC_TIMEOUT_MS) { dataSource.takeMorto(session, seat, indirect) }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                null
+            val requestId = UUID.randomUUID().toString()
+            val result = requestServerRpcWithRetry {
+                dataSource.takeMorto(session, seat, indirect, requestId)
             }
             if (result == null) reportFailureTelemetry(OnlineFailureCategory.MORTO_REQUEST_FAILED, session.room.roomId)
             onResult(result)
         }
     }
 
-    private fun installSession(session: OnlineRoomSession) {
+    override fun requestServerRemoteHand(seat: Int, onResult: (String?) -> Unit) {
+        val session = currentSession
+        if (session == null) {
+            onResult(null)
+            return
+        }
+        scope.launch {
+            val result = requestServerRpcWithRetry {
+                dataSource.loadRemoteHand(session, seat)
+            }
+            if (result == null) {
+                reportFailureTelemetry(OnlineFailureCategory.MORTO_REQUEST_FAILED, session.room.roomId)
+            }
+            onResult(result)
+        }
+    }
+
+    /** Repete a mesma chave para recuperar a resposta sem repetir a jogada. */
+    private suspend fun requestServerRpcWithRetry(block: suspend () -> String): String? {
+        repeat(SERVER_RPC_ATTEMPTS) { attempt ->
+            var rejectedMessage: String? = null
+            val result = try {
+                withTimeoutOrNull(SERVER_RPC_TIMEOUT_MS) { block() }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: OnlineRuleRejectedException) {
+                // Uma rejeicao de regra nao melhora com repeticao. Devolvo um
+                // resultado estruturado para a tela explicar o problema sem
+                // marcar a sessao como desconectada.
+                rejectedMessage = error.message ?: "Jogada recusada pelo servidor."
+                buildJsonObject {
+                    put("status", "REJECTED")
+                    put("reason", rejectedMessage)
+                }.toString()
+            } catch (_: Throwable) {
+                null
+            }
+            rejectedMessage?.let { _actionRejections.tryEmit(it) }
+            if (result != null) return result
+            if (attempt + 1 < SERVER_RPC_ATTEMPTS) {
+                delay(SERVER_RPC_RETRY_MS * (attempt + 1L))
+            }
+        }
+        return null
+    }
+
+    private fun installSession(session: OnlineRoomSession, resumedRoundId: String? = null) {
         currentSession = session
-        currentRoundId = null
-        currentRoundIsActive = false
+        currentRoundId = resumedRoundId
+        currentRoundIsActive = resumedRoundId != null
         hadCompleteRoom = false
         playerSeatsBySenderId.clear()
         _joinedRoomConfig.value = session.room.config
@@ -857,6 +918,8 @@ class OnlineNetworkRepository(
         // esta do lado de quem nunca respondeu. Achado com um relato real de
         // "compra trava, reconecta, trava nunca de novo, sempre a mesma sala".
         const val SERVER_RPC_TIMEOUT_MS = 10_000L
+        const val SERVER_RPC_ATTEMPTS = 2
+        const val SERVER_RPC_RETRY_MS = 250L
         val ROUND_UNSCOPED_TYPES = setOf("CLIENT_READY", "REQ_RECONNECT")
         val CLIENT_TO_HOST_TYPES = setOf(
             "CLIENT_READY",

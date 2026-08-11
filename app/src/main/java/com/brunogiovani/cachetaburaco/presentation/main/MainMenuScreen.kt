@@ -45,9 +45,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -170,16 +172,30 @@ private fun MainMenuContent(
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(16.dp)
         ) {
+            val fontScale = LocalDensity.current.fontScale
             val stacked = maxWidth < 700.dp
+            val compactLandscape = !stacked && (maxHeight < 680.dp || fontScale >= 1.2f)
+            val twoColumnActions = !stacked && maxWidth >= 900.dp && fontScale < 1.2f
+            val stackedScroll = rememberScrollState()
+            val profileScroll = rememberScrollState()
+            val actionsScroll = rememberScrollState()
+
+            // Ao mudar orientacao ou tamanho da fonte, recomeco no topo para
+            // nenhum bloco reaparecer cortado por uma posicao antiga de rolagem.
+            LaunchedEffect(maxWidth, maxHeight, fontScale) {
+                stackedScroll.scrollTo(0)
+                profileScroll.scrollTo(0)
+                actionsScroll.scrollTo(0)
+            }
 
             if (stacked) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
+                        .verticalScroll(stackedScroll),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    MenuHeader()
+                    MenuHeader(compact = fontScale >= 1.2f)
                     MenuEntrance {
                         ActionsPanel(
                             hasSavedGame = hasSavedGame,
@@ -190,14 +206,16 @@ private fun MainMenuContent(
                             onHostOnlineRoom = onHostOnlineRoom,
                             onJoinOnlineRoom = onJoinOnlineRoom,
                             onOpenGlobalChat = onOpenGlobalChat,
-                            onOpenChampionships = onOpenChampionships
+                            onOpenChampionships = onOpenChampionships,
+                            compact = fontScale >= 1.2f
                         )
                     }
                     MenuEntrance(delayMillis = 60) {
                         ProfilePanel(
                             playerName = playerName,
                             onOpenProfile = onOpenOnlineProfile,
-                            onLogout = onRequestLogout
+                            onLogout = onRequestLogout,
+                            stackActions = fontScale >= 1.2f
                         )
                     }
                     MenuEntrance(delayMillis = 100) {
@@ -221,14 +239,15 @@ private fun MainMenuContent(
                         modifier = Modifier
                             .weight(0.95f)
                             .fillMaxHeight()
-                            .verticalScroll(rememberScrollState()),
+                            .verticalScroll(profileScroll),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         MenuEntrance {
                             ProfilePanel(
                                 playerName = playerName,
                                 onOpenProfile = onOpenOnlineProfile,
-                                onLogout = onRequestLogout
+                                onLogout = onRequestLogout,
+                                stackActions = fontScale >= 1.2f
                             )
                         }
                         MenuEntrance(delayMillis = 60) {
@@ -245,12 +264,15 @@ private fun MainMenuContent(
                             .weight(1.1f)
                             .fillMaxHeight()
                             .background(MenuColors.InkPanelSoft, MenuShapes.Card)
-                            .verticalScroll(rememberScrollState())
-                            .padding(20.dp),
+                            .verticalScroll(actionsScroll)
+                            .padding(if (compactLandscape) 12.dp else 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)
+                        verticalArrangement = Arrangement.spacedBy(
+                            if (compactLandscape) 8.dp else 12.dp,
+                            if (compactLandscape) Alignment.Top else Alignment.CenterVertically
+                        )
                     ) {
-                        MenuHeader()
+                        MenuHeader(compact = compactLandscape)
                         MenuEntrance {
                             ActionsPanel(
                                 hasSavedGame = hasSavedGame,
@@ -261,7 +283,9 @@ private fun MainMenuContent(
                                 onHostOnlineRoom = onHostOnlineRoom,
                                 onJoinOnlineRoom = onJoinOnlineRoom,
                                 onOpenGlobalChat = onOpenGlobalChat,
-                                onOpenChampionships = onOpenChampionships
+                                onOpenChampionships = onOpenChampionships,
+                                compact = compactLandscape,
+                                twoColumns = twoColumnActions
                             )
                         }
                         SafeAdBannerSlot(compact = true, placement = AdPlacement.MAIN_MENU)
@@ -293,12 +317,15 @@ private fun MainMenuContent(
 }
 
 @Composable
-private fun MenuHeader() {
+private fun MenuHeader(compact: Boolean = false) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Image(
             painter = painterResource(id = R.drawable.game_logo),
             contentDescription = "Logo",
-            modifier = Modifier.heightIn(min = 82.dp, max = 118.dp),
+            modifier = Modifier.heightIn(
+                min = if (compact) 56.dp else 82.dp,
+                max = if (compact) 72.dp else 118.dp
+            ),
             contentScale = ContentScale.Fit
         )
         Text(
@@ -323,11 +350,74 @@ private fun ActionsPanel(
     onHostOnlineRoom: () -> Unit,
     onJoinOnlineRoom: () -> Unit,
     onOpenGlobalChat: () -> Unit = {},
-    onOpenChampionships: () -> Unit = {}
+    onOpenChampionships: () -> Unit = {},
+    compact: Boolean = false,
+    twoColumns: Boolean = false
 ) {
+    val localActions = listOf(
+        MainMenuAction(
+            title = "Criar sala local",
+            subtitle = "Configure regras para jogar na mesma rede Wi-Fi",
+            glyph = "♠",
+            accentColor = MenuColors.TableGreenLight,
+            onClick = onHostRoom,
+            highlighted = !hasSavedGame
+        ),
+        MainMenuAction(
+            title = "Jogar contra a máquina",
+            subtitle = "Treine e teste regras sem outro celular",
+            glyph = "♟",
+            accentColor = MenuColors.TableGreen,
+            onClick = onPlayBot
+        ),
+        MainMenuAction(
+            title = "Entrar em sala local",
+            subtitle = "Procure partidas na mesma rede Wi-Fi",
+            glyph = "♣",
+            accentColor = MenuColors.TableGreenDeep,
+            onClick = onJoinRoom
+        )
+    )
+    val onlineActions = listOf(
+        MainMenuAction(
+            title = "Criar sala online",
+            subtitle = "Publique as regras e jogue pela internet",
+            glyph = "♥",
+            accentColor = MenuColors.Gold,
+            onClick = onHostOnlineRoom,
+            badge = "BETA"
+        ),
+        MainMenuAction(
+            title = "Encontrar sala online",
+            subtitle = "Veja as regras antes de escolher uma mesa",
+            glyph = "★",
+            accentColor = MenuColors.GoldDeep,
+            onClick = onJoinOnlineRoom,
+            badge = "BETA"
+        ),
+        MainMenuAction(
+            title = "Campeonatos",
+            subtitle = "Crie ou entre com código, veja a classificação",
+            glyph = "🏆",
+            accentColor = MenuColors.Gold,
+            onClick = onOpenChampionships,
+            badge = "BETA"
+        )
+    )
+    val communityActions = listOf(
+        MainMenuAction(
+            title = "Chat geral",
+            subtitle = "Converse com quem estiver online agora",
+            glyph = "💬",
+            accentColor = MenuColors.TableGreenLight,
+            onClick = onOpenGlobalChat,
+            badge = "BETA"
+        )
+    )
+
     Column(
-        modifier = Modifier.widthIn(max = 460.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        modifier = Modifier.widthIn(max = if (twoColumns) 680.dp else 460.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp)
     ) {
         if (hasSavedGame) {
             MenuActionRow(
@@ -336,66 +426,72 @@ private fun ActionsPanel(
                 glyph = "▶",
                 accentColor = MenuColors.Gold,
                 onClick = onResumeGame,
-                highlighted = true
+                highlighted = true,
+                compact = compact
             )
         }
-        MenuGroupLabel("Rede local")
-        MenuActionRow(
-            title = "Criar sala local",
-            subtitle = "Configure regras para jogar na mesma rede Wi-Fi",
-            glyph = "♠",
-            accentColor = MenuColors.TableGreenLight,
-            onClick = onHostRoom,
-            highlighted = !hasSavedGame
-        )
-        MenuActionRow(
-            title = "Jogar contra a máquina",
-            subtitle = "Treine e teste regras sem outro celular",
-            glyph = "♟",
-            accentColor = MenuColors.TableGreen,
-            onClick = onPlayBot
-        )
-        MenuActionRow(
-            title = "Entrar em sala local",
-            subtitle = "Procure partidas na mesma rede Wi-Fi",
-            glyph = "♣",
-            accentColor = MenuColors.TableGreenDeep,
-            onClick = onJoinRoom
-        )
-        MenuGroupLabel("Online")
-        MenuActionRow(
-            title = "Criar sala online",
-            subtitle = "Publique as regras e jogue pela internet",
-            glyph = "♥",
-            accentColor = MenuColors.Gold,
-            onClick = onHostOnlineRoom,
-            badge = "BETA"
-        )
-        MenuActionRow(
-            title = "Encontrar sala online",
-            subtitle = "Veja as regras antes de escolher uma mesa",
-            glyph = "★",
-            accentColor = MenuColors.GoldDeep,
-            onClick = onJoinOnlineRoom,
-            badge = "BETA"
-        )
-        MenuActionRow(
-            title = "Campeonatos",
-            subtitle = "Crie ou entre com código, veja a classificação",
-            glyph = "🏆",
-            accentColor = MenuColors.Gold,
-            onClick = onOpenChampionships,
-            badge = "BETA"
-        )
-        MenuGroupLabel("Comunidade")
-        MenuActionRow(
-            title = "Chat geral",
-            subtitle = "Converse com quem estiver online agora",
-            glyph = "💬",
-            accentColor = MenuColors.TableGreenLight,
-            onClick = onOpenGlobalChat,
-            badge = "BETA"
-        )
+        if (twoColumns) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp)
+                ) {
+                    MenuActionGroup("Rede local", localActions, compact)
+                    MenuActionGroup("Comunidade", communityActions, compact)
+                }
+                MenuActionGroup(
+                    label = "Online",
+                    actions = onlineActions,
+                    compact = compact,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        } else {
+            MenuActionGroup("Rede local", localActions, compact)
+            MenuActionGroup("Online", onlineActions, compact)
+            MenuActionGroup("Comunidade", communityActions, compact)
+        }
+    }
+}
+
+private data class MainMenuAction(
+    val title: String,
+    val subtitle: String,
+    val glyph: String,
+    val accentColor: Color,
+    val onClick: () -> Unit,
+    val badge: String? = null,
+    val highlighted: Boolean = false
+)
+
+@Composable
+private fun MenuActionGroup(
+    label: String,
+    actions: List<MainMenuAction>,
+    compact: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(if (compact) 7.dp else 10.dp)
+    ) {
+        MenuGroupLabel(label)
+        actions.forEach { action ->
+            MenuActionRow(
+                title = action.title,
+                subtitle = action.subtitle,
+                glyph = action.glyph,
+                accentColor = action.accentColor,
+                onClick = action.onClick,
+                badge = action.badge,
+                highlighted = action.highlighted,
+                compact = compact
+            )
+        }
     }
 }
 
@@ -403,35 +499,66 @@ private fun ActionsPanel(
 private fun ProfilePanel(
     playerName: String,
     onOpenProfile: () -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    stackActions: Boolean = false
 ) {
     MenuSectionCard {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Image(
-                    painter = painterResource(id = R.drawable.default_avatar),
-                    contentDescription = "Avatar",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(54.dp).clip(CircleShape).background(MenuColors.TableGreen)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(playerName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text("Modo Local - Wi-Fi", color = MenuColors.TableGreenLight, fontSize = 12.sp)
+        if (stackActions) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                ProfileIdentity(playerName)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onOpenProfile) {
+                        Text("Perfil online", color = MenuColors.TableGreenLight, fontSize = 13.sp)
+                    }
+                    TextButton(onClick = onLogout) {
+                        Text("Sair", color = MenuColors.Red, fontSize = 13.sp)
+                    }
                 }
             }
-            Column(horizontalAlignment = Alignment.End) {
-                TextButton(onClick = onOpenProfile) {
-                    Text("Perfil online", color = MenuColors.TableGreenLight, fontSize = 13.sp)
-                }
-                TextButton(onClick = onLogout) {
-                    Text("Sair", color = MenuColors.Red, fontSize = 13.sp)
+        } else {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                ProfileIdentity(playerName, modifier = Modifier.weight(1f))
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(onClick = onOpenProfile) {
+                        Text("Perfil online", color = MenuColors.TableGreenLight, fontSize = 13.sp)
+                    }
+                    TextButton(onClick = onLogout) {
+                        Text("Sair", color = MenuColors.Red, fontSize = 13.sp)
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ProfileIdentity(playerName: String, modifier: Modifier = Modifier) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+        Image(
+            painter = painterResource(id = R.drawable.default_avatar),
+            contentDescription = "Avatar",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(54.dp).clip(CircleShape).background(MenuColors.TableGreen)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                playerName,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text("Modo Local - Wi-Fi", color = MenuColors.TableGreenLight, fontSize = 12.sp)
         }
     }
 }
@@ -628,6 +755,18 @@ private fun MainMenuScreenLandscapePreview() {
             onJoinOnlineRoom = {}
         )
     }
+}
+
+@Preview(
+    showBackground = true,
+    widthDp = 1067,
+    heightDp = 600,
+    fontScale = 1.3f,
+    name = "Menu - paisagem com fonte grande"
+)
+@Composable
+private fun MainMenuScreenLandscapeLargeFontPreview() {
+    MainMenuScreenLandscapePreview()
 }
 
 @Preview(showBackground = true, device = "spec:width=1280dp,height=800dp,dpi=240", name = "Menu - ranking preenchido")

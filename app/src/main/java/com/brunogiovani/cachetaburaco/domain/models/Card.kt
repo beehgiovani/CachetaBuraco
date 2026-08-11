@@ -22,6 +22,15 @@ enum class Rank(val value: Int) {
     KING(13)
 }
 
+val Rank.displayLabel: String
+    get() = when (this) {
+        Rank.ACE -> "A"
+        Rank.JACK -> "J"
+        Rank.QUEEN -> "Q"
+        Rank.KING -> "K"
+        else -> value.toString()
+    }
+
 data class Card(
     val suit: Suit,
     val rank: Rank,

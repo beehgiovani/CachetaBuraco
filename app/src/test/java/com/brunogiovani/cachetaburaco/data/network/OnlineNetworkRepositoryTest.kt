@@ -173,7 +173,7 @@ class OnlineNetworkRepositoryTest {
     }
 
     @Test
-    fun `reconnect leaves old session and joins same code again`() = runTest {
+    fun `reconnect keeps remote session and joins same code again`() = runTest {
         val dataSource = FakeOnlineRoomDataSource()
         dataSource.waitingRooms.value = listOf(dataSource.roomSummary(roomCode = "REC23456"))
         val repository = repository(dataSource)
@@ -184,8 +184,29 @@ class OnlineNetworkRepositoryTest {
         runCurrent()
 
         assertEquals(2, dataSource.joinCalls)
-        assertEquals(1, dataSource.leftSessions.size)
+        assertTrue(dataSource.leftSessions.isEmpty())
+        assertTrue(dataSource.closedSessions.isEmpty())
         assertEquals(ConnectionStatus.CONNECTED, repository.connectionStatus.value)
+    }
+
+    @Test
+    fun `reconnect preserves active round identity`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource()
+        dataSource.waitingRooms.value = listOf(dataSource.roomSummary(roomCode = "ROUND234"))
+        val repository = repository(dataSource)
+        repository.connectToRoom("ROUND234", 0)
+        runCurrent()
+        val roundId = "38d0d17f-b889-4dc6-a7f4-9204592f9a84"
+        repository.markRoundActive(roundId)
+
+        assertTrue(repository.reconnect())
+        runCurrent()
+        repository.sendMessage(NetworkMessage("client", "REQ_DRAW_DECK", "{}", "draw-after-reconnect"))
+        runCurrent()
+
+        val published = dataSource.published.single { it.message.messageId == "draw-after-reconnect" }
+        assertEquals(roundId, published.message.roundId)
+        assertEquals(0, published.recipientSeat)
     }
 
     @Test
@@ -575,9 +596,101 @@ class OnlineNetworkRepositoryTest {
         var result: String? = "not called"
         repository.requestServerDeal { result = it }
         runCurrent()
+        advanceTimeBy(251)
+        runCurrent()
 
         assertEquals(null, result)
         assertEquals(listOf(OnlineFailureCategory.DEAL_REQUEST_FAILED), dataSource.reportedFailures)
+    }
+
+    @Test
+    fun `server deal retry reuses the same idempotency key`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource().apply {
+            startRoundResult = "{\"status\":\"OK\"}"
+            startRoundFailuresRemaining = 1
+        }
+        val repository = repository(dataSource)
+        repository.startHosting("Host", config = MatchConfig())
+        runCurrent()
+
+        var result: String? = null
+        repository.requestServerDeal { result = it }
+        runCurrent()
+        advanceTimeBy(251)
+        runCurrent()
+
+        assertEquals(dataSource.startRoundResult, result)
+        assertEquals(2, dataSource.startRoundRequestIds.size)
+        assertEquals(1, dataSource.startRoundRequestIds.distinct().size)
+    }
+
+    @Test
+    fun `server draw retry reuses the same idempotency key`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource().apply {
+            drawDeckCardResult = "{\"status\":\"OK\",\"card\":\"ACE_SPADES_BLACK\"}"
+            drawDeckFailuresRemaining = 1
+        }
+        val repository = repository(dataSource)
+        repository.startHosting("Host", config = MatchConfig())
+        runCurrent()
+
+        var result: String? = null
+        repository.requestServerDraw(0) { result = it }
+        runCurrent()
+        advanceTimeBy(251)
+        runCurrent()
+
+        assertEquals(dataSource.drawDeckCardResult, result)
+        assertEquals(listOf(0, 0), dataSource.drawDeckCardCalls)
+        assertEquals(1, dataSource.drawDeckRequestIds.distinct().size)
+    }
+
+    @Test
+    fun `server morto retry preserves request key and indirect mode`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource().apply {
+            takeMortoResult = "{\"status\":\"OK\",\"hand\":[]}"
+            takeMortoFailuresRemaining = 1
+        }
+        val repository = repository(dataSource)
+        repository.startHosting("Host", config = MatchConfig())
+        runCurrent()
+
+        var result: String? = null
+        repository.requestServerMorto(1, indirect = true) { result = it }
+        runCurrent()
+        advanceTimeBy(251)
+        runCurrent()
+
+        assertEquals(dataSource.takeMortoResult, result)
+        assertEquals(listOf(1, 1), dataSource.takeMortoCalls)
+        assertEquals(listOf(true, true), dataSource.takeMortoIndirectCalls)
+        assertEquals(1, dataSource.takeMortoRequestIds.distinct().size)
+    }
+
+    @Test
+    fun `server morto rule rejection is returned without disconnecting the room`() = runTest {
+        val dataSource = FakeOnlineRoomDataSource().apply {
+            takeMortoRuleRejection = "INVALID_MORTO_HAND"
+        }
+        val repository = repository(dataSource)
+        repository.startHosting("Host", config = MatchConfig())
+        runCurrent()
+        val rejections = mutableListOf<String>()
+        val collector = launch { repository.actionRejections.collect { rejections += it } }
+        runCurrent()
+
+        var result: String? = null
+        repository.requestServerMorto(1, indirect = false) { result = it }
+        runCurrent()
+
+        val response = JSONObject(result.orEmpty())
+        assertEquals("REJECTED", response.getString("status"))
+        assertEquals("INVALID_MORTO_HAND", response.getString("reason"))
+        assertEquals(listOf("INVALID_MORTO_HAND"), rejections)
+        assertEquals(listOf(1), dataSource.takeMortoCalls)
+        assertEquals(ConnectionStatus.ROOM_READY, repository.connectionStatus.value)
+        assertTrue(dataSource.reportedFailures.isEmpty())
+        collector.cancel()
     }
 
     @Test
@@ -996,9 +1109,16 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
     var startRoundResult: String = "{}"
     var startRoundCalls: Int = 0
     var failStartRound: Boolean = false
+    var startRoundFailuresRemaining: Int = 0
+    val startRoundRequestIds = mutableListOf<String>()
 
-    override suspend fun startRound(session: OnlineRoomSession): String {
+    override suspend fun startRound(session: OnlineRoomSession, requestId: String): String {
         startRoundCalls++
+        startRoundRequestIds += requestId
+        if (startRoundFailuresRemaining > 0) {
+            startRoundFailuresRemaining--
+            error("start round response lost")
+        }
         if (failStartRound) error("start round failed")
         return startRoundResult
     }
@@ -1006,9 +1126,16 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
     var drawDeckCardResult: String = "{}"
     var drawDeckCardCalls: MutableList<Int> = mutableListOf()
     var failDrawDeckCard: Boolean = false
+    var drawDeckFailuresRemaining: Int = 0
+    val drawDeckRequestIds = mutableListOf<String>()
 
-    override suspend fun drawDeckCard(session: OnlineRoomSession, seat: Int): String {
+    override suspend fun drawDeckCard(session: OnlineRoomSession, seat: Int, requestId: String): String {
         drawDeckCardCalls += seat
+        drawDeckRequestIds += requestId
+        if (drawDeckFailuresRemaining > 0) {
+            drawDeckFailuresRemaining--
+            error("draw response lost")
+        }
         if (failDrawDeckCard) error("draw deck card failed")
         return drawDeckCardResult
     }
@@ -1016,11 +1143,35 @@ private class FakeOnlineRoomDataSource : OnlineRoomDataSource {
     var takeMortoResult: String = "{}"
     var takeMortoCalls: MutableList<Int> = mutableListOf()
     var failTakeMorto: Boolean = false
+    var takeMortoFailuresRemaining: Int = 0
+    var takeMortoRuleRejection: String? = null
+    val takeMortoRequestIds = mutableListOf<String>()
+    val takeMortoIndirectCalls = mutableListOf<Boolean>()
 
-    override suspend fun takeMorto(session: OnlineRoomSession, seat: Int, indirect: Boolean): String {
+    override suspend fun takeMorto(
+        session: OnlineRoomSession,
+        seat: Int,
+        indirect: Boolean,
+        requestId: String
+    ): String {
         takeMortoCalls += seat
+        takeMortoRequestIds += requestId
+        takeMortoIndirectCalls += indirect
+        takeMortoRuleRejection?.let { throw OnlineRuleRejectedException(it) }
+        if (takeMortoFailuresRemaining > 0) {
+            takeMortoFailuresRemaining--
+            error("morto response lost")
+        }
         if (failTakeMorto) error("take morto failed")
         return takeMortoResult
+    }
+
+    var remoteHandResult: String = "{}"
+    val remoteHandCalls = mutableListOf<Int>()
+
+    override suspend fun loadRemoteHand(session: OnlineRoomSession, seat: Int): String {
+        remoteHandCalls += seat
+        return remoteHandResult
     }
 
     val reportedFailures = mutableListOf<OnlineFailureCategory>()

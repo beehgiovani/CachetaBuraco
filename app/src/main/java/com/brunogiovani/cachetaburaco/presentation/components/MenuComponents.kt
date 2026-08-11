@@ -176,7 +176,8 @@ fun MenuActionRow(
     modifier: Modifier = Modifier,
     badge: String? = null,
     highlighted: Boolean = false,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    compact: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     MenuPressScale(
@@ -193,7 +194,7 @@ fun MenuActionRow(
             elevation = CardDefaults.cardElevation(if (highlighted) 6.dp else 2.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 72.dp)
+                .heightIn(min = if (compact) 62.dp else 72.dp)
                 .border(
                     width = 1.dp,
                     color = if (highlighted) Color.Transparent else accentColor.copy(alpha = 0.4f),
@@ -203,21 +204,28 @@ fun MenuActionRow(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .padding(
+                        horizontal = if (compact) 12.dp else 14.dp,
+                        vertical = if (compact) 8.dp else 12.dp
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(if (compact) 36.dp else 42.dp)
                         .background(
                             if (highlighted) Color.White.copy(alpha = 0.22f) else accentColor.copy(alpha = 0.18f),
                             CircleShape
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(glyph, fontSize = 19.sp, color = if (highlighted) Color.White else accentColor)
+                    Text(
+                        glyph,
+                        fontSize = if (compact) 17.sp else 19.sp,
+                        color = if (highlighted) Color.White else accentColor
+                    )
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(if (compact) 10.dp else 12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -225,6 +233,7 @@ fun MenuActionRow(
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
+                            modifier = Modifier.weight(1f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -293,7 +302,13 @@ fun MenuBadge(text: String, modifier: Modifier = Modifier, color: Color = MenuCo
             .border(1.dp, color.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
             .padding(horizontal = 5.dp, vertical = 1.dp)
     ) {
-        Text(text, color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        Text(
+            text = text,
+            color = color,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
     }
 }
 

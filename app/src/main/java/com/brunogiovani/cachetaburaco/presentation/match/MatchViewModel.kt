@@ -147,6 +147,7 @@ class MatchViewModel(
     private var pendingDiscardDrawCardId: String? = null
     private var pendingDiscardDrawRest: List<Card> = emptyList()
     private val pendingRemoteDiscardDraws = mutableMapOf<Int, PendingRemoteDiscardDraw>()
+    private var serverDrawInFlight = false
     // Incrementado a cada REQ_DRAW_DECK que o cliente manda pro host (so
     // online). Se o SERVE_CARD nunca chegar -- mensagem perdida, RPC do host
     // falhando silenciosamente, etc. -- o cliente ficava preso pra sempre em
@@ -305,6 +306,7 @@ class MatchViewModel(
         pendingDiscardDrawCardId = null
         pendingDiscardDrawRest = emptyList()
         pendingRemoteDiscardDraws.clear()
+        serverDrawInFlight = false
 
         // No online, quem embaralha e distribui a rodada e o servidor (RPC
         // start_online_round), nao o proprio aparelho -- assim um host mal
@@ -413,30 +415,34 @@ class MatchViewModel(
             return
         }
 
-        currentRoundId = json.optString("roundId").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+        val serverRoundId = json.optString("roundId").takeIf { it.isNotBlank() }
+        if (serverRoundId == null) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "O servidor devolveu uma rodada sem identificação. Tente novamente."
+            )
+            gameStartRequested = true
+            return
+        }
+        currentRoundId = serverRoundId
         // Sincroniza o repositorio online com o roundId que o servidor de fato
         // usou -- sem isso, acceptIncomingRound() no host nunca sabe que uma
         // rodada esta ativa (o host nem manda nem "recebe" o proprio
         // GAME_START, ja que quem publica agora e a RPC direto via SQL) e
         // descarta toda mensagem do cliente (REQ_DRAW_DECK, DISCARD, MELD...)
         // em silencio. Achado real: bug que travava toda compra online.
-        networkRepository.markRoundActive(currentRoundId!!)
+        networkRepository.markRoundActive(serverRoundId)
         // O servidor nao devolve mais o baralho de verdade aqui (ver comentario
         // na migration 0025): devolver a ordem inteira do monte pro host
         // destruiria a propria protecao de online_draw_deck_card, que decide
         // cada compra da rodada -- o host nem precisaria burlar a RPC, so ler
         // a ordem completa direto da distribuicao. masterDeck vira so um
         // marcador de TAMANHO pro online (nunca mais lido por conteudo, ja que
-        // toda compra online passa pela RPC); mortos ainda vem com o conteudo
-        // real porque REQ_PICK_MORTO continua sendo servido localmente por
-        // enquanto (gap conhecido, fica pra uma proxima fase).
+        // toda compra online passa pela RPC). Os mortos tambem ficam privados
+        // no servidor; localmente eu guardo apenas quantos ainda existem.
         masterDeck = MutableList(json.optInt("deckSize", 0)) { PLACEHOLDER_DECK_CARD }
 
-        val mortosJson = json.optJSONArray("mortos") ?: JSONArray()
-        repeat(mortosJson.length()) { index ->
-            val morto = cardsFromJson(mortosJson.optJSONArray(index) ?: JSONArray())
-            if (morto.isNotEmpty()) mortos.add(morto)
-        }
+        val serverMortosLeft = json.optInt("mortosLeft", 0).coerceAtLeast(0)
+        repeat(serverMortosLeft) { mortos.add(emptyList()) }
 
         val handsJson = json.optJSONObject("hands") ?: JSONObject()
         val myCards = cardsFromJson(handsJson.optJSONArray("0") ?: JSONArray())
@@ -559,8 +565,16 @@ class MatchViewModel(
             pendingDiscardDrawRest = emptyList()
 
             if (networkRepository.isOnlineTransport) {
+                if (serverDrawInFlight) return
+                serverDrawInFlight = true
                 networkRepository.requestServerDraw(localSeat) { rawJson ->
-                    viewModelScope.launch { applyServerDrawResult(rawJson) }
+                    viewModelScope.launch {
+                        try {
+                            applyServerDrawResult(rawJson)
+                        } finally {
+                            serverDrawInFlight = false
+                        }
+                    }
                 }
                 return
             }
@@ -639,7 +653,14 @@ class MatchViewModel(
                 }
                 val state = _gameState.value
                 val newHand = sortHandIfEnabled(state.myHand + card)
-                val (processedHand, newMelds) = autoProcessThreeReds(newHand, state.myTableMelds)
+                val (processedHand, newMelds) = autoProcessThreeReds(
+                    hand = newHand,
+                    tableMelds = state.myTableMelds,
+                    // No online a mesma compra ja registra e publica o 3
+                    // vermelho no servidor. Aqui eu apenas espelho o efeito
+                    // visual para nao enviar um MELD duplicado.
+                    broadcastMelds = false
+                )
                 val droppedThree = processedHand.size < newHand.size
                 _gameState.value = state.copy(
                     myHand = processedHand,
@@ -664,7 +685,11 @@ class MatchViewModel(
      * host. O servidor ja decidiu o conteudo (incluindo 3 vermelho extraidos
      * e repostos do monte) e ja publicou o PUBLIC_STATE atualizado sozinho.
      */
-    private fun applyServerMortoResultForOwnSeat(rawJson: String?, meldLabel: String) {
+    private fun applyServerMortoResultForOwnSeat(
+        rawJson: String?,
+        meldLabel: String,
+        indirect: Boolean = false
+    ) {
         val json = rawJson?.let { runCatching { JSONObject(it) }.getOrNull() }
         if (json == null || json.optString("status") != "OK") {
             _gameState.value = _gameState.value.copy(
@@ -679,20 +704,46 @@ class MatchViewModel(
             )
             return
         }
+        val localTeam = teamForSeat(localSeat)
+        val stateBeforeApply = _gameState.value
+        if (localTeam in teamsThatPickedMorto && stateBeforeApply.myHand.isNotEmpty()) {
+            val incomingMelds = handsFromJson(json.optJSONArray("redThreeMelds") ?: JSONArray())
+            val existingKeys = stateBeforeApply.myTableMelds
+                .mapTo(hashSetOf()) { meld -> meld.map { it.id }.sorted().joinToString("|") }
+            val missingMelds = incomingMelds.filter { meld ->
+                meld.map { it.id }.sorted().joinToString("|") !in existingKeys
+            }
+            _gameState.value = stateBeforeApply.copy(
+                myTableMelds = stateBeforeApply.myTableMelds + missingMelds,
+                mortosLeft = json.optInt("mortosLeft", stateBeforeApply.mortosLeft),
+                deckSize = json.optInt("deckSize", stateBeforeApply.deckSize)
+            )
+            return
+        }
         if (mortos.isNotEmpty()) mortos.removeAt(0)
         val redThreeMelds = handsFromJson(json.optJSONArray("redThreeMelds") ?: JSONArray())
         teamsThatPickedMorto.add(teamForSeat(localSeat))
         val state = _gameState.value
+        val pickupFeedback = if (indirect) {
+            "Você pegou o Morto! O turno passou para o oponente."
+        } else {
+            listOf(meldLabel.trim(), "Você pegou o Morto!")
+                .filter { it.isNotEmpty() }
+                .joinToString(" ")
+        }
         _gameState.value = state.copy(
             myHand = sortHandIfEnabled(hand),
             myTableMelds = state.myTableMelds + redThreeMelds,
             mortosLeft = json.optInt("mortosLeft", state.mortosLeft),
             deckSize = json.optInt("deckSize", state.deckSize),
             lastMeldResult = meldLabel,
-            feedbackMessage = "$meldLabel Você pegou o Morto!",
+            activeSeat = if (indirect) nextSeatAfter(localSeat) else state.activeSeat,
+            turnPhase = if (indirect) TurnPhase.WAITING_OPPONENT else state.turnPhase,
+            feedbackMessage = pickupFeedback,
             mortoNoticeSeat = localSeat,
             mortoNoticeId = if (state.mortoNoticeSeat == localSeat) state.mortoNoticeId else state.mortoNoticeId + 1
         )
+        publishPublicTableState()
     }
 
     /**
@@ -956,10 +1007,19 @@ class MatchViewModel(
                     feedbackMessage = "$meldLabel Solicitando o Morto...",
                     pendingMeldTargets = null
                 )
-                networkRepository.sendMessage(NetworkMessage(
+                val meldMessage = NetworkMessage(
                     playerId, "MELD", buildMeldPayload(publicMeld, localSeat, replaceMeldIndex)
-                ))
-                requestMorto()
+                )
+                if (networkRepository.isOnlineTransport) {
+                    requestOwnServerMortoAfterConfirmedAction(
+                        actionMessage = meldMessage,
+                        indirect = false,
+                        meldLabel = meldLabel
+                    )
+                } else {
+                    networkRepository.sendMessage(meldMessage)
+                    requestMorto()
+                }
                 return
             }
             if (networkRepository.isOnlineTransport) {
@@ -978,12 +1038,15 @@ class MatchViewModel(
                     feedbackMessage = "$meldLabel Pegando o Morto...",
                     pendingMeldTargets = null
                 )
-                networkRepository.sendMessage(NetworkMessage(
-                    playerId, "MELD", buildMeldPayload(publicMeld, localSeat, replaceMeldIndex)
-                ))
-                networkRepository.requestServerMorto(localSeat) { rawJson ->
-                    viewModelScope.launch { applyServerMortoResultForOwnSeat(rawJson, meldLabel) }
-                }
+                requestOwnServerMortoAfterConfirmedAction(
+                    actionMessage = NetworkMessage(
+                        playerId,
+                        "MELD",
+                        buildMeldPayload(publicMeld, localSeat, replaceMeldIndex)
+                    ),
+                    indirect = false,
+                    meldLabel = meldLabel
+                )
                 return
             }
             if (mortos.isNotEmpty()) {
@@ -1135,8 +1198,36 @@ class MatchViewModel(
                     canDrawFromDiscard = drawCheck.allowed,
                     drawDiscardBlockedReason = drawCheck.reason
                 )
-                networkRepository.sendMessage(NetworkMessage(playerId, "DISCARD", buildDiscardPayload(card, localSeat)))
-                requestMorto()
+                val discardMessage = NetworkMessage(playerId, "DISCARD", buildDiscardPayload(card, localSeat))
+                if (networkRepository.isOnlineTransport) {
+                    requestOwnServerMortoAfterConfirmedAction(
+                        actionMessage = discardMessage,
+                        indirect = true,
+                        meldLabel = ""
+                    )
+                } else {
+                    networkRepository.sendMessage(discardMessage)
+                    requestMorto()
+                }
+                return
+            }
+            if (networkRepository.isOnlineTransport) {
+                val discardLocked = GameRulesEngine.isDiscardLocked(updatedPile.lastOrNull(), currentConfig.gameType)
+                val drawCheck = GameRulesEngine.canDrawFromDiscard(updatedPile.lastOrNull(), currentConfig)
+                deckServedSeatsThisTurn.clear()
+                _gameState.value = state.copy(
+                    myHand = emptyList(),
+                    discardPile = updatedPile,
+                    selectedCards = emptySet(),
+                    activeSeat = nextSeat,
+                    turnPhase = TurnPhase.WAITING_OPPONENT,
+                    lastDrawnCardId = null,
+                    feedbackMessage = "Confirmando descarte e preparando o Morto...",
+                    isDiscardLocked = discardLocked,
+                    canDrawFromDiscard = drawCheck.allowed,
+                    drawDiscardBlockedReason = drawCheck.reason
+                )
+                requestIndirectServerMortoAfterDiscard(card)
                 return
             }
             if (mortos.isNotEmpty()) {
@@ -1192,6 +1283,76 @@ class MatchViewModel(
 
         if (isHost && masterDeck.isEmpty() && mortos.isEmpty() && currentConfig.gameType != GameType.CACHETA) {
             beginCountOnlyRound()
+        }
+    }
+
+    /** Confirma o fim do turno no servidor antes de consumir o morto indireto. */
+    private fun requestIndirectServerMortoAfterDiscard(discardedCard: Card) {
+        val discardMessage = NetworkMessage(playerId, "DISCARD", buildDiscardPayload(discardedCard, localSeat))
+        networkRepository.sendMessageConfirmed(discardMessage) { discardConfirmed ->
+            viewModelScope.launch {
+                if (!discardConfirmed) {
+                    _gameState.value = _gameState.value.copy(
+                        feedbackMessage = "Não foi possível confirmar o descarte. Sincronizando a partida..."
+                    )
+                    requestReconnect()
+                    return@launch
+                }
+
+                val publicState = NetworkMessage(playerId, "PUBLIC_STATE", buildPublicTableStatePayload())
+                networkRepository.sendMessageConfirmed(publicState) { stateConfirmed ->
+                    viewModelScope.launch {
+                        if (!stateConfirmed) {
+                            _gameState.value = _gameState.value.copy(
+                                feedbackMessage = "Não foi possível sincronizar a mesa. Reconecte para continuar."
+                            )
+                            requestReconnect()
+                            return@launch
+                        }
+                        networkRepository.requestServerMorto(localSeat, indirect = true) { rawJson ->
+                            viewModelScope.launch {
+                                applyServerMortoResultForOwnSeat(
+                                    rawJson = rawJson,
+                                    meldLabel = "",
+                                    indirect = true
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Cliente online confirma a jogada e pede o proprio morto direto ao banco. */
+    private fun requestOwnServerMortoAfterConfirmedAction(
+        actionMessage: NetworkMessage,
+        indirect: Boolean,
+        meldLabel: String
+    ) {
+        networkRepository.sendMessageConfirmed(actionMessage) { actionConfirmed ->
+            viewModelScope.launch {
+                if (!actionConfirmed) {
+                    _gameState.value = _gameState.value.copy(
+                        feedbackMessage = "Não foi possível confirmar a jogada. Sincronizando a partida..."
+                    )
+                    requestReconnect()
+                    return@launch
+                }
+
+                networkRepository.requestServerMorto(localSeat, indirect) { rawJson ->
+                    viewModelScope.launch {
+                        if (rawJson == null) {
+                            _gameState.value = _gameState.value.copy(
+                                feedbackMessage = "O servidor não confirmou o Morto. Sincronizando a partida..."
+                            )
+                            requestReconnect()
+                            return@launch
+                        }
+                        applyServerMortoResultForOwnSeat(rawJson, meldLabel, indirect)
+                    }
+                }
+            }
         }
     }
 
@@ -1539,11 +1700,23 @@ class MatchViewModel(
      * dentro de startGame() via _gameState.value.teamScores.
      */
     fun nextRound() {
-        _gameState.value = clearRoundEndUiState()
         if (isHost) {
             publishNextRoundAndStart(resetScores = false)
         } else {
-            networkRepository.sendMessage(NetworkMessage(playerId, "REQ_NEXT_ROUND", ""))
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Solicitando a próxima rodada ao host..."
+            )
+            networkRepository.sendMessageConfirmed(
+                NetworkMessage(playerId, "REQ_NEXT_ROUND", "")
+            ) { delivered ->
+                if (!delivered) {
+                    viewModelScope.launch {
+                        _gameState.value = _gameState.value.copy(
+                            feedbackMessage = "Não foi possível solicitar a próxima rodada. Tente novamente."
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -1653,6 +1826,7 @@ class MatchViewModel(
                 "SERVE_CARD"         -> if (!isHost && isHostOrigin(message)) handleServeCard(message.payload)
                 "REQ_PICK_MORTO"     -> if (isHost) handleClientMortoRequest(message)
                 "SERVE_MORTO"        -> if (!isHost && isHostOrigin(message)) handleServeMorto(message.payload)
+                "MORTO_TAKEN"        -> if (isHost) handleServerMortoTaken(message)
                 "MELD"               -> if (isHost) handleRemoteMeld(message) else if (isHostOrigin(message)) handleOpponentMeld(message.payload)
                 "PICK_MORTO"         -> if (!isHost && isHostOrigin(message)) handleOpponentPickMorto(message.payload)
                 "WIN_ROUND"          -> handleOpponentWinRound(message)
@@ -1906,7 +2080,21 @@ class MatchViewModel(
 
         val team = teamForSeat(actorSeat)
         val teamPickedMorto = team in teamsThatPickedMorto
-        if (currentConfig.gameType != GameType.CACHETA && !teamPickedMorto && mortos.isNotEmpty()) {
+        val hasMortoAvailable = if (networkRepository.isOnlineTransport) {
+            _gameState.value.mortosLeft > 0
+        } else {
+            mortos.isNotEmpty()
+        }
+        if (currentConfig.gameType != GameType.CACHETA && !teamPickedMorto && hasMortoAvailable) {
+            if (networkRepository.isOnlineTransport) {
+                // No online o proprio assento pede o morto ao Postgres depois
+                // que MELD/DISCARD foi confirmado. O host espera MORTO_TAKEN
+                // para nao disputar o mesmo morto com uma segunda RPC.
+                _gameState.value = _gameState.value.copy(
+                    feedbackMessage = "O jogador zerou a mão. Aguardando o servidor entregar o Morto..."
+                )
+                return true
+            }
             serveMortoToRemote(actorSeat, remotePlayerId, indirect = indirectMorto)
             return true
         }
@@ -2421,6 +2609,58 @@ class MatchViewModel(
             mortoNoticeSeat = requestingSeat,
             mortoNoticeId = state.mortoNoticeId + 1
         )
+    }
+
+    /** Host recebe o aviso do banco e busca a mao privada canonica do cliente. */
+    private fun handleServerMortoTaken(message: NetworkMessage) {
+        val json = runCatching { JSONObject(message.payload) }.getOrNull() ?: return
+        val requestedSeat = json.optInt("seat", -1)
+        val actorSeat = trustedRemoteSeat(message, requestedSeat) ?: return
+        networkRepository.requestServerRemoteHand(actorSeat) { rawJson ->
+            viewModelScope.launch { applyServerRemoteHandSync(actorSeat, rawJson) }
+        }
+    }
+
+    private fun applyServerRemoteHandSync(requestingSeat: Int, rawJson: String?) {
+        val json = rawJson?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (json == null || json.optString("status") != "OK" || json.optInt("seat", -1) != requestingSeat) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "Não foi possível sincronizar a mão depois do Morto."
+            )
+            return
+        }
+        val hand = cardsFromJson(json.optJSONArray("hand") ?: JSONArray())
+        if (hand.size != currentConfig.cardsPerPlayer) {
+            _gameState.value = _gameState.value.copy(
+                feedbackMessage = "A mão sincronizada depois do Morto é inválida."
+            )
+            return
+        }
+
+        val team = json.optInt("team", teamForSeat(requestingSeat))
+        val teamMelds = handsFromJson(json.optJSONArray("teamMelds") ?: JSONArray())
+        val state = _gameState.value
+        remoteHandsBySeat[requestingSeat] = hand
+        teamsThatPickedMorto.add(team)
+        teamsWithMortoServedByHost.add(team)
+        val mortosLeft = json.optInt("mortosLeft", state.mortosLeft).coerceAtLeast(0)
+        while (mortos.size > mortosLeft) mortos.removeAt(0)
+
+        _gameState.value = state.copy(
+            myTableMelds = if (team == teamForSeat(localSeat)) teamMelds else state.myTableMelds,
+            opponentTableMelds = if (team != teamForSeat(localSeat)) teamMelds else state.opponentTableMelds,
+            deckSize = json.optInt("deckSize", state.deckSize),
+            mortosLeft = mortosLeft,
+            opponentHandCount = remoteHandCountForSeat(requestingSeat),
+            opponentPickedMorto = if (team != teamForSeat(localSeat)) true else state.opponentPickedMorto,
+            mortoNoticeSeat = requestingSeat,
+            mortoNoticeId = if (state.mortoNoticeSeat == requestingSeat) {
+                state.mortoNoticeId
+            } else {
+                state.mortoNoticeId + 1
+            }
+        )
+        publishPublicTableState()
     }
 
     /**

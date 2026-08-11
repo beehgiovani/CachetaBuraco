@@ -135,7 +135,7 @@ interface OnlineRoomDataSource {
      * interpreta esse payload e o MatchViewModel, do mesmo jeito que qualquer
      * outro NetworkMessage.payload.
      */
-    suspend fun startRound(session: OnlineRoomSession): String
+    suspend fun startRound(session: OnlineRoomSession, requestId: String): String
 
     /**
      * Pede pro servidor decidir a proxima carta do monte (RPC
@@ -145,15 +145,24 @@ interface OnlineRoomDataSource {
      * remoto) vai no parametro `seat`, mas quem decide qual carta sai e o
      * banco, nunca o processo do host.
      */
-    suspend fun drawDeckCard(session: OnlineRoomSession, seat: Int): String
+    suspend fun drawDeckCard(session: OnlineRoomSession, seat: Int, requestId: String): String
 
     /**
      * Pede pro servidor entregar o morto inteiro como mao pro assento que
      * zerou a mao (RPC `online_take_morto`), incluindo extrair e repor os 3
-     * vermelho automaticos da Tranca. So o host chama -- o banco decide o
-     * conteudo do morto, nunca o processo do host.
+     * vermelho automaticos da Tranca. Cada convidado pede somente o proprio
+     * morto; o host pode pedir para o assento 0 ou recuperar um assento remoto.
+     * Em todos os casos o banco decide o conteudo, nunca o aparelho.
      */
-    suspend fun takeMorto(session: OnlineRoomSession, seat: Int, indirect: Boolean = false): String
+    suspend fun takeMorto(
+        session: OnlineRoomSession,
+        seat: Int,
+        indirect: Boolean = false,
+        requestId: String
+    ): String
+
+    /** Le a mao canonica de um cliente; o banco aceita somente o host. */
+    suspend fun loadRemoteHand(session: OnlineRoomSession, seat: Int): String
 
     /**
      * Registra uma falha do transporte online sem guardar mao, token ou

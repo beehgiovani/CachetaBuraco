@@ -17,9 +17,9 @@ import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 
 /**
- * Cobre uma partida basica de verdade contra a maquina: entrar no lobby,
+ * Cobre uma partida basica de verdade contra a máquina: entrar no lobby,
  * concluir a configuracao, ver a mesa carregada e sair de volta pro menu.
- * E o unico modo que nao depende de rede local nem do Supabase, entao pode
+ * E o unico modo que não depende de rede local nem do Supabase, entao pode
  * ser exercitado de ponta a ponta com seguranca num teste instrumentado.
  */
 @RunWith(AndroidJUnit4::class)

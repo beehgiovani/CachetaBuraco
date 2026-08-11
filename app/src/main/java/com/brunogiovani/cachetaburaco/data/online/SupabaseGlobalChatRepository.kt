@@ -51,7 +51,7 @@ class SupabaseGlobalChatRepository(
 
     override fun observeMessages(playerName: String): Flow<GlobalChatEntry> = channelFlow {
         val playerId = identity.ensure(playerName)
-        val realtimeChannel = client.channel("global-chat-realtime")
+        val realtimeChannel = client.channel(uniqueRealtimeTopic("global-chat-realtime"))
         val liveRows = Channel<GlobalChatMessageRow>(capacity = Channel.UNLIMITED)
         val changes = realtimeChannel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
             table = GLOBAL_CHAT_TABLE
@@ -62,7 +62,7 @@ class SupabaseGlobalChatRepository(
         val emittedIds = linkedSetOf<Long>()
 
         try {
-            realtimeChannel.subscribe(blockUntilSubscribed = true)
+            check(realtimeChannel.subscribeWithin()) { "Tempo esgotado ao assinar o chat geral." }
 
             // Backfill das ultimas mensagens pra quem abre o chat ter
             // contexto do assunto -- o canal ja esta inscrito antes disso

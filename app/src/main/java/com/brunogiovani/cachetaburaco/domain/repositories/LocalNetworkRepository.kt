@@ -189,4 +189,10 @@ interface LocalNetworkRepository {
     fun requestServerMorto(seat: Int, indirect: Boolean = false, onResult: (String?) -> Unit) {
         onResult(null)
     }
+
+    // Depois de um morto solicitado diretamente pelo cliente, o host busca a
+    // mao canonica no schema privado para continuar validando as jogadas.
+    fun requestServerRemoteHand(seat: Int, onResult: (String?) -> Unit) {
+        onResult(null)
+    }
 }

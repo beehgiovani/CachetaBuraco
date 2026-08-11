@@ -26,6 +26,7 @@ import com.brunogiovani.cachetaburaco.R
 import com.brunogiovani.cachetaburaco.domain.models.Card
 import com.brunogiovani.cachetaburaco.domain.models.Suit
 import com.brunogiovani.cachetaburaco.domain.models.DeckColor
+import com.brunogiovani.cachetaburaco.domain.models.displayLabel
 
 @Composable
 fun CardView(
@@ -104,13 +105,7 @@ fun CardView(
                         Suit.CLUBS -> "♣"
                         Suit.SPADES -> "♠"
                     }
-                    val rankText = when (card.rank.value) {
-                        1 -> "A"
-                        11 -> "J"
-                        12 -> "Q"
-                        13 -> "K"
-                        else -> card.rank.value.toString()
-                    }
+                    val rankText = card.rank.displayLabel
     
                     Column(
                         modifier = Modifier

@@ -13,6 +13,7 @@ publicacao esta em `product-roadmap.md`.
 - [x] Manter RLS ligada em todas as tabelas publicas nas migracoes.
 - [x] Criar politicas por usuario autenticado antes de expor escrita real.
 - [x] Registrar eventos de partida com `message_id` unico e ACK idempotente para evitar jogada duplicada.
+- [x] Repetir distribuicao, compra do monte e morto com a mesma chave de idempotencia quando a resposta HTTP se perder (`0038`, validada localmente).
 - [x] Restringir mensagens privadas ao assento destinatario.
 - [x] Restringir tipos e direcao dos eventos entre host e clientes no banco.
 - [x] Validar no host (autoridade principal da partida).
@@ -91,6 +92,92 @@ publicacao esta em `product-roadmap.md`.
   compra, morto); so falta a homologacao em aparelho fisico (item logo acima
   e a secao 1 do `product-roadmap.md`).
 
+  **Atualizacao (`0038`, aplicada no projeto remoto correto):** distribuicao,
+  compra e morto agora guardam um recibo privado por `requestId`. Se a resposta
+  HTTP se perder depois do commit, o app repete a mesma chave e recebe o mesmo
+  resultado sem comprar ou distribuir duas vezes. O convidado que zera a mao
+  confirma primeiro o `MELD`/`DISCARD` e pede o proprio morto diretamente ao
+  Postgres; o host nao faz uma segunda RPC e apenas recebe `MORTO_TAKEN` para
+  reler a mao canonica no schema privado. O Wi-Fi local continua com o host
+  servindo o morto. O smoke transacional local, 238 testes Kotlin, build e lint
+  Android passaram. As migrations `0037`/`0038` foram aplicadas em
+  `yvpbegrdepevppglbcbm`; o historico remoto ficou alinhado e o lint dos schemas
+  `public`, `private` e `extensions` nao encontrou erros. Em 2026-08-11, duas
+  instancias Android independentes (fontes 1.0x e 1.3x) publicaram e localizaram
+  uma sala de Cacheta, atualizaram `0/1` para `1/1` por Realtime e iniciaram a
+  rodada com 9 cartas por jogador, vira separada, lixo vazio e monte com 85.
+  A compra do convidado reduziu o monte para 84 e apareceu como 10 cartas no
+  host; o descarte voltou a mao para 9, criou lixo com uma carta e transferiu o
+  turno.
+
+  **Atualizacao (`0039`, aplicada e homologada em 2026-08-11):** o fluxo do
+  morto indireto foi repetido em duas instancias Android independentes, com o
+  convidado fazendo o ultimo descarte pela interface. O servidor entregou
+  exatamente 11 cartas, reduziu os mortos de 2 para 1, passou o turno ao host e
+  publicou `MORTO_TAKEN`. Durante o teste encontrei que a fotografia publica
+  mantinha o topo antigo do lixo; a `0039_indirect_morto_preserves_discard.sql`
+  passou a incorporar o `DISCARD` confirmado antes de publicar o estado do
+  morto. A repeticao confirmou o novo topo (`9S`), lixo com 2 cartas, mao
+  privada e `handCounts[1]` com 11, sem duplicar carta ou morto. O lint local e
+  remoto ficaram limpos. Ainda falta repetir a homologacao em dois aparelhos
+  fisicos; o teste atual cobriu duas instancias Android com escalas de fonte
+  diferentes.
+
+  **Atualizacao (`0040`, aplicada no projeto remoto em 2026-08-11):** a distribuicao nao
+  devolve mais o conteudo dos mortos ao aparelho host. A resposta conserva
+  `mortosLeft`, enquanto as cartas permanecem em `private.match_deck_state` ate
+  a compra do monte ou a retirada autorizada do morto. O app representa essas
+  pilhas somente por marcadores vazios. O smoke transacional confirma dois
+  mortos privados, mao inicial do host com 11 cartas e retry idempotente sem
+  redistribuicao. O historico remoto e o lint dos schemas `public`, `private`
+  e `extensions` ficaram alinhados e sem avisos.
+
+  **Atualizacao (`0041`, aplicada no projeto remoto em 2026-08-11):** o servidor agora
+  registra qual assento ja concluiu a compra da vez. Outra chave de
+  idempotencia nao permite comprar novamente; baixa e descarte exigem compra
+  previa, e o descarte libera a transicao seguinte. O 3 vermelho automatico da
+  Tranca continua pedindo carta de reposicao. As RPCs antigas de distribuicao,
+  compra e morto perderam `EXECUTE` para `authenticated`, deixando somente as
+  variantes idempotentes expostas. O smoke tambem confirma que uma rodada ativa
+  nao pode ser redistribuida com outra chave.
+
+  **Atualizacao (`0042`, aplicada no projeto remoto em 2026-08-11):** o 3 vermelho
+  automatico retirado do monte agora entra no ledger privado da equipe e em um
+  `PUBLIC_STATE` canonico no mesmo commit da compra. Assim ele nao desaparece
+  em reconexao e todos os assentos veem a mesma mesa. O app apenas reproduz a
+  baixa visualmente e nao publica um segundo `MELD`. O smoke forca uma carta
+  conhecida no topo, confirma uma unica baixa publica/privada e garante que a
+  carta de reposicao continua liberada.
+
+  **Atualizacao (`0043`/`0044`, aplicada no projeto remoto em 2026-08-11):** o ledger
+  privado do convidado agora confirma que o topo do lixo forma um jogo novo ou
+  completa uma baixa existente antes de aceitar `DRAW_DISCARD` em Buraco e
+  Tranca. O banco tambem rejeita o descarte de curinga quando ele ainda pode ser
+  usado ou sujar uma baixa limpa, mas libera quando so restam curingas. Cacheta
+  conserva a compra livre do topo. O smoke cobre os quatro caminhos e o lint
+  ficou sem avisos depois do ajuste de volatilidade da `0044`.
+
+  **Atualizacao (`0045`-`0047`, validada no banco local):** o assento `0`
+  passou a ter o mesmo ledger privado dos convidados. Distribuicao, compra,
+  baixa, descarte e morto atualizam a mao canonica do host na mesma transacao;
+  a retirada do morto foi testada com exatamente 11 cartas. Um smoke adicional
+  reproduziu o convidado zerando a mao com uma baixa e pedindo o morto direto:
+  corrigi o tracker do host para usar `recipient_seat` no `SERVE_MORTO`, sem
+  confundir uma entrega privada ao assento 1 com a mao do assento 0. O banco tambem
+  distingue GAME_START/SERVE_CARD/SERVE_MORTO criados pelas RPCs de uma entrega
+  forjada pelo cliente. Os smokes `0040`-`0047`, 242 testes Kotlin, os dois APKs
+  debug e os lints Android/SQL passaram. O APK corrigido foi reinstalado nas duas
+  instancias Android usadas nos testes. A publicacao destas tres migrations aguarda
+  o CLI voltar a conta que possui o projeto `yvpbegrdepevppglbcbm`.
+
+  **Homologacao remota adicional (2026-08-11):** o APK atual abriu duas sessoes
+  anonimas isoladas contra o projeto publicado, criou uma sala descartavel de
+  Buraco, zerou canonicamente a mao do assento 1 e pediu o morto com a propria
+  identidade do convidado. A RPC devolveu 11 cartas, o host releu as mesmas 11
+  no ledger privado e o historico registrou `MORTO_TAKEN`; a sala e as sessoes
+  de teste foram encerradas no bloco de limpeza. O teste ficou opt-in em
+  `OnlineMortoHomologationTest`, para a suite comum nunca criar dados remotos.
+
 ## Fase 1 - Base online sem mudar o jogo local
 
 - [x] Criar projeto Supabase e confirmar regiao.
@@ -109,7 +196,9 @@ publicacao esta em `product-roadmap.md`.
 - [x] Ligar os fluxos de criar e encontrar sala online na UI com identificacao Beta.
 - [ ] Validar os dois fluxos em aparelhos fisicos depois da aplicacao remota das migracoes.
   Testado fisico + emulador ate uma rodada completa de Buraco. Falta repetir
-  com dois aparelhos fisicos e outros modos/tamanhos de sala.
+  com dois aparelhos fisicos e outros modos/tamanhos de sala. Cacheta tambem
+  passou em duas instancias Android independentes ate compra, descarte e troca
+  de turno em 2026-08-11.
 
 ## Fase 2 - Perfil e ranking global
 
@@ -241,17 +330,24 @@ publicacao esta em `product-roadmap.md`.
 
 - [x] Host continua sendo autoridade na primeira versao online.
 - [x] Validar estruturalmente MELD e DRAW_DISCARD no banco pela migration `0014`.
-- [x] Servidor valida posse da carta, mao vazia, lixo, morto e vitoria dos assentos clientes com estado privado por assento.
-- [x] Servidor passa a controlar baralho, mao do host e todas as transicoes sem depender da autoridade do aparelho host.
-  Fechado pelas migrations `0020`-`0026` (distribuicao, compra do monte,
-  morto). Detalhe completo no item equivalente do checklist de seguranca
-  acima.
+- [x] Servidor valida posse da carta, mao vazia, lixo, morto e vitoria dos convidados com estado privado por assento.
+- [ ] Remover a dependencia final da autoridade e da visao privada do host.
+  As migrations `0020`-`0026` controlam distribuicao, compra do monte e morto;
+  a `0040` deixa o conteudo dos mortos apenas no servidor; `0043`-`0047`
+  conferem lixo, curinga e a mao do assento `0` no ledger privado. Depois da
+  publicacao de `0045`-`0047`, ainda falta calcular a contagem final com o
+  estado canonico e parar de devolver as maos dos oponentes ao host.
 - [x] Servidor confirma repeticao identica e rejeita colisao diferente pelo `message_id`.
 - [x] Host rejeita evento fora do turno antes de alterar a mesa canonica.
 - [x] Banco rejeita compra, baixa e descarte enviados por um assento fora do turno publico.
+- [x] Banco rejeita segunda compra na mesma vez e acao/descarte sem compra previa (`0041`).
+- [x] Banco valida justificativa do lixo e descarte obrigatorio de curinga para convidados (`0043`) e host (`0045`, pendente de publicacao remota).
 - [x] Banco rejeita evento desconhecido, destinatario incorreto e mensagem exclusiva do papel oposto.
 - [x] App identifica cada rodada, preserva o token nos retries e so redistribui depois do ACK de `NEXT_ROUND`.
+- [x] Reconexao preserva a rodada ativa sem o host encerrar a propria sala no servidor.
+- [x] Cada assinatura Realtime usa um topico novo; busca de salas faz consulta imediata e polling apenas como contingencia.
 - [x] Banco valida o `roundId` e impede resultado antigo de limpar a mao da rodada atual (migration `0017`).
+- [x] Aplicar `0037_room_chat_sender_seat_guard.sql` no projeto remoto para impedir falsificacao do assento no chat.
 - [x] Servidor salva resumo final da partida com breakdown e atualiza estatisticas de forma idempotente.
 - [x] Logs de auditoria removem cartas privadas depois do resultado confirmado.
 

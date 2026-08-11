@@ -335,7 +335,11 @@ private fun RankingReady(
 }
 
 @Composable
-private fun CurrentPlayerSummary(entry: OnlineRankingEntry?, isChampion: Boolean = false, modifier: Modifier = Modifier) {
+private fun CurrentPlayerSummary(
+    entry: OnlineRankingEntry?,
+    modifier: Modifier = Modifier,
+    isChampion: Boolean = false
+) {
     Surface(
         modifier = modifier,
         color = MenuColors.InkPanel,

@@ -13,7 +13,9 @@ import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.decodeRecord
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import java.util.Locale
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -68,8 +70,9 @@ class SupabaseOnlineRoomDataSource(
     }
 
     override fun observeWaitingRooms(playerName: String): Flow<List<OnlineRoomSummary>> = channelFlow {
-        val realtimeChannel = client.channel("waiting-match-rooms")
+        val realtimeChannel = client.channel(uniqueRealtimeTopic("waiting-match-rooms"))
         val refreshes = Channel<Unit>(capacity = Channel.CONFLATED)
+        var fallbackRefreshJob: Job? = null
         val changes = realtimeChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
             table = "match_rooms"
         }
@@ -79,12 +82,24 @@ class SupabaseOnlineRoomDataSource(
 
         try {
             ensureIdentity(playerName)
-            realtimeChannel.subscribe(blockUntilSubscribed = true)
+            // A primeira consulta nao depende do WebSocket. Assim a tela abre
+            // com as salas atuais mesmo quando a assinatura demora ou falha.
+            send(fetchWaitingRooms())
+            val subscribed = realtimeChannel.subscribeWithin()
             refreshes.trySend(Unit)
+            if (!subscribed) {
+                fallbackRefreshJob = launch {
+                    while (true) {
+                        delay(WAITING_ROOM_FALLBACK_REFRESH_MS)
+                        refreshes.trySend(Unit)
+                    }
+                }
+            }
             for (ignored in refreshes) {
                 send(fetchWaitingRooms())
             }
         } finally {
+            fallbackRefreshJob?.cancel()
             changeCollector.cancel()
             refreshes.close()
             // Se o flow for cancelado antes do subscribe(blockUntilSubscribed
@@ -189,30 +204,50 @@ class SupabaseOnlineRoomDataSource(
         ).decodeAs<Boolean>()
     }
 
-    override suspend fun startRound(session: OnlineRoomSession): String {
+    override suspend fun startRound(session: OnlineRoomSession, requestId: String): String {
         return client.postgrest.rpc(
-            function = "start_online_round",
-            parameters = buildJsonObject { put("p_room_id", session.room.roomId) }
-        ).decodeAs<JsonObject>().toString()
-    }
-
-    override suspend fun drawDeckCard(session: OnlineRoomSession, seat: Int): String {
-        return client.postgrest.rpc(
-            function = "online_draw_deck_card",
+            function = "start_online_round_idempotent",
             parameters = buildJsonObject {
                 put("p_room_id", session.room.roomId)
-                put("p_seat", seat)
+                put("p_request_id", requestId)
             }
         ).decodeAs<JsonObject>().toString()
     }
 
-    override suspend fun takeMorto(session: OnlineRoomSession, seat: Int, indirect: Boolean): String {
+    override suspend fun drawDeckCard(session: OnlineRoomSession, seat: Int, requestId: String): String {
         return client.postgrest.rpc(
-            function = "online_take_morto",
+            function = "online_draw_deck_card_idempotent",
+            parameters = buildJsonObject {
+                put("p_room_id", session.room.roomId)
+                put("p_seat", seat)
+                put("p_request_id", requestId)
+            }
+        ).decodeAs<JsonObject>().toString()
+    }
+
+    override suspend fun takeMorto(
+        session: OnlineRoomSession,
+        seat: Int,
+        indirect: Boolean,
+        requestId: String
+    ): String {
+        return client.postgrest.rpc(
+            function = "online_take_morto_idempotent",
             parameters = buildJsonObject {
                 put("p_room_id", session.room.roomId)
                 put("p_seat", seat)
                 put("p_indirect", indirect)
+                put("p_request_id", requestId)
+            }
+        ).decodeAs<JsonObject>().toString()
+    }
+
+    override suspend fun loadRemoteHand(session: OnlineRoomSession, seat: Int): String {
+        return client.postgrest.rpc(
+            function = "online_get_remote_hand",
+            parameters = buildJsonObject {
+                put("p_room_id", session.room.roomId)
+                put("p_seat", seat)
             }
         ).decodeAs<JsonObject>().toString()
     }
@@ -232,7 +267,7 @@ class SupabaseOnlineRoomDataSource(
         afterSequence: Long
     ): Flow<OnlineStoredEvent> = channelFlow {
         val roomId = session.room.roomId
-        val realtimeChannel = client.channel("match-events-$roomId")
+        val realtimeChannel = client.channel(uniqueRealtimeTopic("match-events-$roomId"))
         val liveRows = Channel<MatchEventRow>(capacity = Channel.UNLIMITED)
         val changes = realtimeChannel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
             table = "match_events"
@@ -246,7 +281,7 @@ class SupabaseOnlineRoomDataSource(
         val emittedIds = linkedSetOf<String>()
 
         try {
-            realtimeChannel.subscribe(blockUntilSubscribed = true)
+            check(realtimeChannel.subscribeWithin()) { "Tempo esgotado ao assinar eventos da partida." }
 
             // A consulta inicial cobre reconexao. O canal ja esta inscrito para
             // nao perder um evento criado durante essa leitura.
@@ -289,7 +324,7 @@ class SupabaseOnlineRoomDataSource(
 
     override fun observeRoomChat(session: OnlineRoomSession): Flow<OnlineChatMessage> = channelFlow {
         val roomId = session.room.roomId
-        val realtimeChannel = client.channel("room-chat-$roomId")
+        val realtimeChannel = client.channel(uniqueRealtimeTopic("room-chat-$roomId"))
         val liveRows = Channel<RoomChatMessageRow>(capacity = Channel.UNLIMITED)
         val changes = realtimeChannel.postgresChangeFlow<PostgresAction.Insert>(schema = "public") {
             table = "room_chat_messages"
@@ -303,7 +338,7 @@ class SupabaseOnlineRoomDataSource(
         val emittedIds = linkedSetOf<Long>()
 
         try {
-            realtimeChannel.subscribe(blockUntilSubscribed = true)
+            check(realtimeChannel.subscribeWithin()) { "Tempo esgotado ao assinar o chat da sala." }
 
             // A consulta inicial cobre quem abre o chat no meio da partida ou
             // reconecta. O canal ja esta inscrito antes disso pra nao perder
@@ -336,7 +371,7 @@ class SupabaseOnlineRoomDataSource(
 
     override fun observeConnectedSeats(session: OnlineRoomSession): Flow<Set<Int>> = channelFlow {
         val roomId = session.room.roomId
-        val realtimeChannel = client.channel("room-presence-$roomId")
+        val realtimeChannel = client.channel(uniqueRealtimeTopic("room-presence-$roomId"))
         val refreshes = Channel<Unit>(capacity = Channel.CONFLATED)
         val changes = realtimeChannel.postgresChangeFlow<PostgresAction>(schema = "public") {
             table = "room_players"
@@ -347,7 +382,7 @@ class SupabaseOnlineRoomDataSource(
         }
 
         try {
-            realtimeChannel.subscribe(blockUntilSubscribed = true)
+            check(realtimeChannel.subscribeWithin()) { "Tempo esgotado ao assinar a presenca da sala." }
             refreshes.trySend(Unit)
             for (ignored in refreshes) {
                 send(loadConnectedSeats(roomId))
@@ -393,6 +428,10 @@ class SupabaseOnlineRoomDataSource(
                 filter("connected", FilterOperator.EQ, true)
             }
         }.decodeList<RoomPlayerPresenceRow>().mapTo(linkedSetOf()) { player -> player.seat }
+    }
+
+    private companion object {
+        const val WAITING_ROOM_FALLBACK_REFRESH_MS = 5_000L
     }
 
 }
