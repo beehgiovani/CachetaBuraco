@@ -33,7 +33,8 @@ data class MatchConfig(
     val uniformCardPoints: Boolean = false,       // Tranca/Buraco: todas as cartas valem 10pts
     val botDifficulty: BotDifficulty = BotDifficulty.NORMAL,
     val pointsMode: PointsMode = PointsMode.FREE,
-    val pointLimit: Int = 1500                   // Limite de pontos para a partida acabar
+    val pointLimit: Int = 1500,                   // Limite de pontos para a partida acabar
+    val roomLevel: PlayerLevel? = null            // Nivel exigido pra entrar (calculado por estatistica); null = livre. So online.
 ) {
     val isTeamMode: Boolean get() = maxPlayers == 4
     val cardsPerPlayer: Int
@@ -56,7 +57,8 @@ data class MatchConfig(
             uniformCardPoints,
             botDifficulty,
             pointsMode,
-            pointLimit
+            pointLimit,
+            roomLevel ?: "NONE"
         ).joinToString(",")
     }
 
@@ -67,6 +69,7 @@ data class MatchConfig(
         fun deserialize(serialized: String): MatchConfig {
             val parts = serialized.split(",")
             val defaults = MatchConfig()
+            val hasRoomLevel = parts.size >= 16
             val hasBlackThreePenalty = parts.size >= 15
             val hasBotDifficulty = parts.size >= 14
             val hasExpandedRules = parts.size >= 13
@@ -154,7 +157,14 @@ data class MatchConfig(
                 )
                     ?.toIntOrNull()
                     ?.coerceIn(1, 100_000)
-                    ?: defaults.pointLimit
+                    ?: defaults.pointLimit,
+                roomLevel = if (hasRoomLevel) {
+                    parts.getOrNull(15)?.let {
+                        if (it == "NONE") null else runCatching { PlayerLevel.valueOf(it) }.getOrNull()
+                    }
+                } else {
+                    defaults.roomLevel
+                }
             )
         }
     }

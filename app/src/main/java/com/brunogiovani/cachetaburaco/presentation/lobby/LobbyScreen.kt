@@ -64,7 +64,9 @@ import com.brunogiovani.cachetaburaco.domain.models.BotDifficulty
 import com.brunogiovani.cachetaburaco.domain.models.GameType
 import com.brunogiovani.cachetaburaco.domain.models.MatchConfig
 import com.brunogiovani.cachetaburaco.domain.models.Player
+import com.brunogiovani.cachetaburaco.domain.models.PlayerLevel
 import com.brunogiovani.cachetaburaco.domain.models.PointsMode
+import com.brunogiovani.cachetaburaco.presentation.championship.playerLevelLabel
 import com.brunogiovani.cachetaburaco.domain.repositories.ConnectionStatus
 import com.brunogiovani.cachetaburaco.domain.repositories.DiscoveredRoom
 import com.brunogiovani.cachetaburaco.domain.repositories.LocalNetworkRepository
@@ -139,6 +141,9 @@ fun LobbyScreen(
     var selectedPointLimit by rememberSaveable { mutableIntStateOf(5) }
     var isPrivateRoom by rememberSaveable { mutableStateOf(false) }
     var roomPassword by rememberSaveable { mutableStateOf("") }
+    // So online: barra quem tem nivel calculado diferente na entrada (ver
+    // migration 0050). Wi-Fi/bot nao usa nivel nenhum.
+    var roomLevel by rememberSaveable { mutableStateOf<PlayerLevel?>(null) }
 
     LaunchedEffect(selectedGameType) {
         selectedPointLimit = if (selectedGameType == GameType.CACHETA) 5 else 1500
@@ -161,7 +166,8 @@ fun LobbyScreen(
         autoSortHand = autoSortHand,
         botDifficulty = botDifficulty,
         pointsMode = pointsMode,
-        pointLimit = selectedPointLimit
+        pointLimit = selectedPointLimit,
+        roomLevel = if (networkRepository.isOnlineTransport) roomLevel else null
     )
 
     // No modo contra a máquina, reaproveito a criação de sala e simulo um cliente.
@@ -358,6 +364,8 @@ fun LobbyScreen(
                     onPrivateRoomChange = { isPrivateRoom = it },
                     roomPassword = roomPassword,
                     onRoomPasswordChange = { roomPassword = it },
+                    roomLevel = roomLevel,
+                    onRoomLevelChange = { roomLevel = it },
                     hostedRoomCode = hostedRoomCode,
                     onPublish = publishOrStart,
                     onStart = {
@@ -441,6 +449,8 @@ private fun HostPanel(
     onPrivateRoomChange: (Boolean) -> Unit = {},
     roomPassword: String = "",
     onRoomPasswordChange: (String) -> Unit = {},
+    roomLevel: PlayerLevel? = null,
+    onRoomLevelChange: (PlayerLevel?) -> Unit = {},
     hostedRoomCode: String? = null,
     onPublish: () -> Unit,
     onStart: () -> Unit
@@ -676,6 +686,28 @@ private fun HostPanel(
                             onPasswordChange = onRoomPasswordChange,
                             isError = roomPassword.isNotEmpty() && !privatePasswordValid
                         )
+                    }
+                }
+            }
+        }
+
+        if (!isPublished && isOnlineTransport) item {
+            MenuSectionCard(title = "Nível da sala") {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Opcional -- barra quem tem nível calculado diferente (livre aceita todo mundo).",
+                        color = MenuColors.OnDarkFaint,
+                        fontSize = 12.sp
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MenuChipOption(label = "Livre", isSelected = roomLevel == null, onClick = { onRoomLevelChange(null) })
+                        PlayerLevel.entries.forEach { option ->
+                            MenuChipOption(
+                                label = playerLevelLabel(option),
+                                isSelected = option == roomLevel,
+                                onClick = { onRoomLevelChange(option) }
+                            )
+                        }
                     }
                 }
             }
@@ -1235,6 +1267,9 @@ private fun RuleSummaryText(config: MatchConfig) {
                 null
             )
         )
+        config.roomLevel?.let { level ->
+            add(RuleChip("Nível: ${playerLevelLabel(level)}", null))
+        }
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

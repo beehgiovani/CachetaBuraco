@@ -426,7 +426,9 @@ private fun championshipCadenceLabel(cadence: ChampionshipCadence): String = whe
     ChampionshipCadence.MANUAL -> "Livre"
 }
 
-private fun playerLevelLabel(level: PlayerLevel): String = when (level) {
+// internal (nao private): reaproveitado em LobbyScreen.kt pro seletor de
+// nivel da sala usar o mesmo rotulo do seletor de nivel de campeonato.
+internal fun playerLevelLabel(level: PlayerLevel): String = when (level) {
     PlayerLevel.NOOB -> "Iniciante"
     PlayerLevel.MID -> "Intermediário"
     PlayerLevel.HARD -> "Avançado"

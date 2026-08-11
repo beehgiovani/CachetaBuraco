@@ -449,6 +449,9 @@ internal fun MatchConfig.toOnlineRoomConfigJson(): JsonObject = buildJsonObject 
     // Servem so pra auditoria de pontuacao no servidor (private.cbr_compute_round_summary).
     put("uniformCardPoints", uniformCardPoints)
     put("penalizeBlackThreesInHand", penalizeBlackThreesInHand)
+    // Lido por join_match_room (migration 0050) pra barrar quem tem nivel
+    // calculado diferente do exigido pela sala -- null = sala livre.
+    put("roomLevel", roomLevel?.name)
 }
 
 private fun JsonObject.toMatchConfig(): MatchConfig {
