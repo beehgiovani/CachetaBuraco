@@ -34,9 +34,9 @@ import com.brunogiovani.cachetaburaco.presentation.login.LoginScreen
 import com.brunogiovani.cachetaburaco.presentation.main.MainMenuScreen
 import com.brunogiovani.cachetaburaco.presentation.match.MatchScreen
 import com.brunogiovani.cachetaburaco.presentation.match.MatchViewModel
+import com.brunogiovani.cachetaburaco.presentation.components.AdsConsentManager
 import com.brunogiovani.cachetaburaco.presentation.profile.OnlineProfileScreen
 import com.brunogiovani.cachetaburaco.presentation.ranking.OnlineRankingScreen
-import com.google.android.gms.ads.MobileAds
 
 enum class AppState {
     LOGIN,
@@ -77,7 +77,10 @@ class MainActivity : ComponentActivity() {
 
         // Carrega o perfil salvo antes de decidir qual tela abrir.
         FakeAuthRepository.init(applicationContext)
-        MobileAds.initialize(applicationContext) {}
+        // So inicializa o AdMob depois de checar consentimento (UMP) -- os
+        // componentes de anuncio (SafeAdBannerSlot/PostMatchInterstitialAd)
+        // ficam esperando AdsConsentManager.canRequestAds antes de pedir qualquer anuncio.
+        AdsConsentManager.gatherConsent(this)
 
         networkRepository = LocalNetworkRepositoryImpl(applicationContext)
 

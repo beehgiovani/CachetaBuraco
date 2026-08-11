@@ -27,6 +27,7 @@ object PostMatchInterstitialAd {
 
     fun preload(context: Context) {
         if (cachedAd != null || isLoading) return
+        if (!AdsConsentManager.canRequestAds.value) return
         isLoading = true
         InterstitialAd.load(
             context.applicationContext,

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +49,14 @@ fun SafeAdBannerSlot(
     placement: AdPlacement = AdPlacement.MAIN_MENU
 ) {
     if (LocalInspectionMode.current) {
+        AdPlaceholder(modifier = modifier, compact = compact)
+        return
+    }
+
+    // Sem consentimento (UMP) resolvido ainda nao pede anuncio nenhum -- so mostra
+    // o placeholder ate AdsConsentManager liberar (ver MainActivity.onCreate).
+    val canRequestAds by AdsConsentManager.canRequestAds
+    if (!canRequestAds) {
         AdPlaceholder(modifier = modifier, compact = compact)
         return
     }
