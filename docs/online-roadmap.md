@@ -354,11 +354,42 @@ publicacao esta em `product-roadmap.md`.
 - [ ] Parar de devolver as maos dos oponentes ao host.
   `start_online_round` ainda devolve o conteudo real de todos os assentos em
   `hands`, e `MatchViewModel.applyServerDeal()` guarda isso em
-  `remoteHandsBySeat`, usado em ~15 pontos de validacao otimista local
+  `remoteHandsBySeat`, usado em ~15 pontos espalhados por `MatchViewModel.kt`
   (compartilhados com o Wi-Fi, que precisa do conteudo real por nao ter
-  servidor). Trocar por placeholder+contagem pro transporte online (mesmo
-  padrao ja usado em `masterDeck`/mortos desde a `0025`) exige um branch por
-  transporte em cada ponto — mapeado, ainda nao implementado.
+  servidor). O padrao pra trocar por placeholder+contagem no transporte
+  online ja existe no proprio codigo (`masterDeck`/`handleOpponentPickMorto`,
+  idioma `if (networkRepository.isOnlineTransport) { placeholder } else {
+  conteudo real }`) — mas **investigacao profunda (2026-08-12) achou que
+  aplicar isso direto quebra o placar da partida**: o conteudo restante de
+  `remoteHandsBySeat[actorSeat]` no fim da rodada e a fonte real do relatorio
+  em `handleOpponentWinRound`/`handleReplyWinRound`/`handleReplyCountRound`
+  (`MatchViewModel.kt:1388-1472`), que alimenta `tryFinalizePendingRoundSummary`
+  (`:1515-1676`) e vira `p_scores`/`p_breakdown` mandado pra `complete_match`.
+  A 0048/0049 ja porta esse mesmo calculo pro Postgres
+  (`private.cbr_compute_round_summary`), mas so como auditoria em colunas
+  paralelas (`server_round_scores`/`server_round_breakdown`) — `complete_match`
+  continua confiando no `p_scores` calculado no Kotlin, nunca valida contra o
+  calculo do proprio servidor. Trocar `remoteHandsBySeat` por placeholder
+  agora faria todo placar online sair errado silenciosamente (rankings, XP,
+  campeonato), sem nenhum erro visivel.
+  **Pre-requisito real, em duas fases:**
+  - **Fase A** (item novo, escopo proprio): validar
+    `private.cbr_compute_round_summary` contra `GameRulesEngine` em todos os
+    modos/variantes de regra (Cacheta, Buraco, Tranca, canastra limpa/suja,
+    charutos, pontos uniformes, penalidade de morto nao pego...), depois
+    tornar `complete_match` autoritativo com o calculo do servidor
+    (substituindo ou pelo menos rejeitando divergencia de
+    `p_scores`/`p_breakdown`).
+  - **Fase B** (a correcao original deste item): so depois da Fase A provada
+    em producao, trocar `remoteHandsBySeat` por placeholder+contagem nos ~15
+    pontos mapeados, seguindo o idioma ja estabelecido acima.
+  RPCs relevantes pra retomar isso: `start_online_round`
+  (`0045_host_private_hand_ledger.sql`, corpo real herdado de
+  `0025_server_authoritative_draw.sql` via rename na `0040`),
+  `online_take_morto` (`0047_host_morto_ledger_sync.sql`, corpo real herdado
+  de `0026_server_authoritative_morto.sql`), `online_get_remote_hand`
+  (`0038_idempotent_round_rpc_receipts.sql`, so exige `auth.uid() = host_id`
+  e `p_seat > 0` — nenhuma restricao por time).
 - [x] Servidor confirma repeticao identica e rejeita colisao diferente pelo `message_id`.
 - [x] Host rejeita evento fora do turno antes de alterar a mesa canonica.
 - [x] Banco rejeita compra, baixa e descarte enviados por um assento fora do turno publico.
