@@ -251,6 +251,13 @@ class OnlineNetworkRepository(
                     installSession(session, resumedRoundId)
                 } catch (error: CancellationException) {
                     throw error
+                } catch (error: OnlineRuleRejectedException) {
+                    // join_match_room recusou por motivo especifico (nivel,
+                    // senha, sala cheia/fechada, banimento) -- sem isso o
+                    // catch generico abaixo escondia o motivo real atras de
+                    // "verifique a rede", que nao tem nada a ver com o erro.
+                    _actionRejections.tryEmit(error.message ?: "Não foi possível entrar na sala.")
+                    _connectionStatus.value = ConnectionStatus.ERROR
                 } catch (_: Throwable) {
                     _connectionStatus.value = ConnectionStatus.ERROR
                 }

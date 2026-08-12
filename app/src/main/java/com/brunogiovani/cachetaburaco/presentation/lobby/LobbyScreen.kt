@@ -183,6 +183,14 @@ fun LobbyScreen(
     var pendingPublishConfig by remember { mutableStateOf<MatchConfig?>(null) }
     var pendingJoinConfig by remember { mutableStateOf<MatchConfig?>(null) }
     var joinError by remember { mutableStateOf<String?>(null) }
+    // join_match_room recusa por motivo especifico (nivel incompativel, senha
+    // errada, sala cheia/fechada, banimento) -- sem isso o ConnectionStatus.ERROR
+    // generico abaixo mostrava sempre "verifique a rede", mesmo quando a rede
+    // estava perfeita e o motivo real era outro (achado real, 2026-08-11).
+    var lastJoinRejection by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        networkRepository.actionRejections.collect { lastJoinRejection = it }
+    }
     // Sala privada nao aparece na lista de descoberta, entao "entrar por
     // codigo" nao tem o MatchConfig de antemao como o fluxo normal (que usa o
     // config ja publicado na sala listada) -- so sei o config depois que
@@ -233,7 +241,9 @@ fun LobbyScreen(
             ConnectionStatus.ERROR,
             ConnectionStatus.HOST_DISCONNECTED -> {
                 pendingJoinConfig = null
-                joinError = "Não foi possível entrar na sala. Verifique a rede e tente novamente."
+                joinError = lastJoinRejection
+                    ?: "Não foi possível entrar na sala. Verifique a rede e tente novamente."
+                lastJoinRejection = null
             }
             else -> Unit
         }
@@ -251,7 +261,9 @@ fun LobbyScreen(
             ConnectionStatus.ERROR,
             ConnectionStatus.HOST_DISCONNECTED -> {
                 isJoiningByCode = false
-                joinError = "Não foi possível entrar na sala. Confira o código e a senha."
+                joinError = lastJoinRejection
+                    ?: "Não foi possível entrar na sala. Confira o código e a senha."
+                lastJoinRejection = null
             }
             else -> Unit
         }
@@ -390,12 +402,14 @@ fun LobbyScreen(
                             joinError = "Esta sala não publicou as regras corretamente. Aguarde o host republicar."
                         } else {
                             joinError = null
+                            lastJoinRejection = null
                             pendingJoinConfig = roomConfig
                             networkRepository.connectToRoom(room.host, room.port)
                         }
                     },
                     onJoinByCode = { roomCode, password ->
                         joinError = null
+                        lastJoinRejection = null
                         isJoiningByCode = true
                         networkRepository.connectToRoom(roomCode, port = 0, password = password)
                     },

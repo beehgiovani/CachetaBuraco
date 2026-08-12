@@ -17,6 +17,9 @@ object GameRulesEngine {
     // Toda variação configurável passa pelo MatchConfig. Se uma regra de mesa
     // mudar, a alteração entra aqui antes de chegar na UI.
 
+    /** Na Cacheta todo jogo fecha em 3 cartas e nao cresce depois de baixado. */
+    const val CACHETA_MELD_SIZE = 3
+
     // Compra do lixo.
 
     data class DrawDiscardResult(
@@ -106,8 +109,22 @@ object GameRulesEngine {
             return MeldValidationResult(false, reason = "Na Cacheta, cada jogo aceita apenas um coringa")
         }
 
+        // Na Cacheta todo jogo tem exatamente 3 cartas -- a mao de 9 vira 3
+        // jogos de 3, e jogo baixado nao cresce. Esta checagem sozinha cobre
+        // as duas regras: baixar 4+ e recusado aqui, e "encaixar" numa trinca
+        // ou sequencia ja baixada tambem, porque o encaixe revalida o jogo
+        // inteiro (meld + carta nova) e cairia em 4 cartas.
+        // Sem ela a sequencia passava batido: checkSequencia exige minimo 3,
+        // mas nao tinha maximo nenhum.
+        if (normalCards.size + wildcards.size != CACHETA_MELD_SIZE) {
+            return MeldValidationResult(
+                false,
+                reason = "Na Cacheta, cada jogo tem exatamente $CACHETA_MELD_SIZE cartas"
+            )
+        }
+
         // Cacheta aceita trinca exata de 3 cartas ou sequência do mesmo naipe.
-        val trincaResult = checkTrinca(normalCards, wildcards, exactSize = 3)
+        val trincaResult = checkTrinca(normalCards, wildcards, exactSize = CACHETA_MELD_SIZE)
         if (trincaResult.isValid) {
             val allSuitsUnique = normalCards.distinctBy { it.suit }.size == normalCards.size
             if (allSuitsUnique) return trincaResult

@@ -118,14 +118,45 @@ class SupabaseOnlineRoomDataSource(
         password: String?
     ): OnlineRoomSession {
         val playerId = ensureIdentity(playerName)
-        val row = client.postgrest.rpc(
-            function = "join_match_room",
-            parameters = buildJsonObject {
-                put("p_room_code", roomCode)
-                password?.trim()?.takeIf { it.isNotEmpty() }?.let { put("p_password", it) }
+        val row = try {
+            client.postgrest.rpc(
+                function = "join_match_room",
+                parameters = buildJsonObject {
+                    put("p_room_code", roomCode)
+                    password?.trim()?.takeIf { it.isNotEmpty() }?.let { put("p_password", it) }
+                }
+            ).decodeSingle<RoomSessionRow>()
+        } catch (error: PostgrestRestException) {
+            // Mesmo padrao de publishEvent: P0001 e sempre um `raise exception`
+            // nosso (join_match_room, migrations 0050/0051), nunca queda de
+            // rede. Sem isso o motivo real (nivel incompativel, senha errada,
+            // sala cheia...) se perdia no catch generico de
+            // OnlineNetworkRepository e a tela so mostrava "verifique a rede",
+            // que confunde quem esta testando sala com nivel/senha.
+            if (error.code == "P0001") {
+                // error.message concatena todo o diagnostico da RestException
+                // (Code/Hint/Details/URL/Headers) -- error.error e que guarda
+                // so o texto cru do `raise exception` (ex: "ROOM_NOT_FOUND"),
+                // que e o que joinRejectionMessage espera comparar (achado
+                // testando: o `when` nunca batia e sempre caia no `else`).
+                throw OnlineRuleRejectedException(joinRejectionMessage(error.error))
             }
-        ).decodeSingle<RoomSessionRow>()
+            throw error
+        }
         return row.toSession(localPlayerId = playerId)
+    }
+
+    private fun joinRejectionMessage(reasonCode: String?): String = when (reasonCode?.trim()) {
+        "ROOM_NOT_FOUND" -> "Sala não encontrada. Confira o código."
+        "ROOM_PASSWORD_INVALID" -> "Senha incorreta para esta sala."
+        "ROOM_CLOSED" -> "Esta sala já foi encerrada."
+        "ROOM_NOT_WAITING" -> "Esta sala já começou a partida."
+        "ROOM_HOST_OFFLINE" -> "O host desta sala está offline no momento."
+        "ROOM_LEVEL_MISMATCH" -> "Seu nível não é compatível com o nível declarado desta sala."
+        "ROOM_FULL" -> "Esta sala já está cheia."
+        "PROFILE_BANNED" -> "Sua conta está banida e não pode entrar em salas."
+        "AUTH_REQUIRED" -> "Sessão expirada. Saia e entre novamente."
+        else -> "Não foi possível entrar na sala. Tente novamente."
     }
 
     override suspend fun leaveRoom(session: OnlineRoomSession) {

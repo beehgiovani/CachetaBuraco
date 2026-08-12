@@ -600,8 +600,13 @@ class GameRulesEngineTest {
         assertFalse(result.isValid)
     }
 
+    // Este teste afirmava o contrario ("can have four cards") desde o primeiro
+    // commit do projeto -- era suposicao do codigo original, nunca uma regra
+    // conferida. Na Cacheta de verdade a mao de 9 cartas vira exatamente tres
+    // jogos de tres, entao sequencia de 4 nunca deveria ter passado. Bruno
+    // reportou (2026-08-11) e a regra foi corrigida no GameRulesEngine.
     @Test
-    fun `cacheta sequence can have four cards`() {
+    fun `cacheta sequence cannot have four cards`() {
         val config = MatchConfig(gameType = GameType.CACHETA)
         val result = GameRulesEngine.validateMeld(
             cards = listOf(
@@ -613,8 +618,7 @@ class GameRulesEngineTest {
             config = config
         )
 
-        assertTrue(result.reason, result.isValid)
-        assertEquals(MeldType.SEQUENCIA, result.meldType)
+        assertFalse(result.isValid)
     }
 
     @Test
@@ -747,4 +751,94 @@ class GameRulesEngineTest {
         assertFalse(result.reason, result.isValid)
     }
 
+
+    // ─── Cacheta: jogo fecha em 3 cartas e nao cresce ─────────────────────
+    // Bruno reportou que dava pra baixar sequencia de 4+ e ainda encaixar
+    // carta em jogo ja baixado. A trinca ja era travada (exactSize = 3), mas
+    // checkSequencia exigia minimo 3 e nao tinha maximo nenhum.
+
+    @Test
+    fun `cacheta aceita sequencia de exatamente tres cartas`() {
+        val config = MatchConfig(gameType = GameType.CACHETA)
+
+        val result = GameRulesEngine.validateMeld(
+            cards = listOf(
+                card(Rank.FOUR, Suit.HEARTS),
+                card(Rank.FIVE, Suit.HEARTS),
+                card(Rank.SIX, Suit.HEARTS)
+            ),
+            config = config
+        )
+
+        assertTrue(result.reason, result.isValid)
+    }
+
+    @Test
+    fun `cacheta recusa sequencia com mais de tres cartas`() {
+        val config = MatchConfig(gameType = GameType.CACHETA)
+
+        val result = GameRulesEngine.validateMeld(
+            cards = listOf(
+                card(Rank.FOUR, Suit.HEARTS),
+                card(Rank.FIVE, Suit.HEARTS),
+                card(Rank.SIX, Suit.HEARTS),
+                card(Rank.SEVEN, Suit.HEARTS)
+            ),
+            config = config
+        )
+
+        assertFalse("sequencia de 4 nao pode valer na Cacheta", result.isValid)
+    }
+
+    @Test
+    fun `cacheta recusa encaixar carta em sequencia ja baixada`() {
+        val config = MatchConfig(gameType = GameType.CACHETA)
+        // "Encaixar" revalida o jogo inteiro (baixado + carta nova). Se o jogo
+        // ja tem 3, qualquer encaixe cai em 4 e tem que ser recusado.
+        val jogoBaixado = listOf(
+            card(Rank.FOUR, Suit.HEARTS),
+            card(Rank.FIVE, Suit.HEARTS),
+            card(Rank.SIX, Suit.HEARTS)
+        )
+        val novaCarta = card(Rank.SEVEN, Suit.HEARTS)
+
+        val result = GameRulesEngine.validateMeld(jogoBaixado + novaCarta, config)
+
+        assertFalse("nao pode crescer jogo baixado na Cacheta", result.isValid)
+    }
+
+    @Test
+    fun `cacheta recusa encaixar quarta carta em trinca ja baixada`() {
+        val config = MatchConfig(gameType = GameType.CACHETA)
+        val trincaBaixada = listOf(
+            card(Rank.NINE, Suit.HEARTS),
+            card(Rank.NINE, Suit.CLUBS),
+            card(Rank.NINE, Suit.SPADES)
+        )
+        val quartoNove = card(Rank.NINE, Suit.DIAMONDS)
+
+        val result = GameRulesEngine.validateMeld(trincaBaixada + quartoNove, config)
+
+        assertFalse("nao pode crescer trinca baixada na Cacheta", result.isValid)
+    }
+
+    @Test
+    fun `buraco continua aceitando sequencia longa`() {
+        // A trava de 3 cartas e so da Cacheta -- Buraco precisa de 7 pra
+        // canastra, entao nao pode ter sido afetado.
+        val config = MatchConfig(gameType = GameType.BURACO)
+
+        val result = GameRulesEngine.validateMeld(
+            cards = listOf(
+                card(Rank.FOUR, Suit.HEARTS),
+                card(Rank.FIVE, Suit.HEARTS),
+                card(Rank.SIX, Suit.HEARTS),
+                card(Rank.SEVEN, Suit.HEARTS),
+                card(Rank.EIGHT, Suit.HEARTS)
+            ),
+            config = config
+        )
+
+        assertTrue(result.reason, result.isValid)
+    }
 }

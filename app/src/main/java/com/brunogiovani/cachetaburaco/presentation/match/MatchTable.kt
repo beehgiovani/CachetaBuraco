@@ -324,16 +324,24 @@ internal fun DrawPilesPanel(
         val priorityCards = compact || maxHeight < 250.dp || fontScale >= 1.18f
         val ultraCompact = maxHeight < 190.dp || fontScale >= 1.35f
         val tightPanel = priorityCards || ultraCompact
+        val isCacheta = config.gameType == GameType.CACHETA
         val compactCardByHeight = ((maxHeight - 8.dp).coerceAtLeast(88.dp)) / 1.5f
-        val compactCardByWidth = ((maxWidth - 18.dp) / if (config.gameType == GameType.CACHETA) 3f else 2f)
+        // A Cacheta poe 3 cartas na linha (monte, vira, lixo); os outros modos,
+        // 2 (monte, lixo). Desconto o espacamento antes de dividir.
+        val compactCardByWidth = ((maxWidth - 18.dp) / if (isCacheta) 3f else 2f)
         val priorityCardWidth = minOf(compactCardByHeight, compactCardByWidth, if (ultraCompact) 74.dp else 88.dp)
             .coerceAtLeast(58.dp)
         val pileCardWidth = if (priorityCards) priorityCardWidth else 74.dp
-        val discardCardWidth = if (priorityCards) {
-            minOf(priorityCardWidth + 10.dp, compactCardByWidth, if (ultraCompact) 80.dp else 94.dp)
+        // O lixo so ganha largura extra quando o slot dele e maior de verdade
+        // (Buraco/Tranca usam peso 1.18 contra 0.82 do monte). Na Cacheta os
+        // tres slots tem peso igual: pedir mais largura ali fazia o Compose
+        // cortar a largura e manter a altura (cardWidth * 1.5f), deixando a
+        // carta do lixo permanentemente esmagada.
+        val discardCardWidth = when {
+            !priorityCards -> pileCardWidth
+            isCacheta -> pileCardWidth
+            else -> minOf(priorityCardWidth + 10.dp, compactCardByWidth, if (ultraCompact) 80.dp else 94.dp)
                 .coerceAtLeast(priorityCardWidth)
-        } else {
-            pileCardWidth
         }
         val contentArrangement = Arrangement.spacedBy(if (tightPanel) 6.dp else 8.dp, Alignment.CenterVertically)
         if (priorityCards) {
@@ -770,7 +778,12 @@ private fun CompactPileCard(
                 color = if (active || blocked) glowColor.copy(alpha = pulse) else Color.White.copy(alpha = 0.14f),
                 shape = RoundedCornerShape(9.dp)
             )
-            .padding(if (active || blocked) 3.dp else 1.dp)
+            // Padding fixo de proposito. Antes variava (3.dp ativo / 1.dp
+            // inativo) e, como ele entra depois do .size(), a area util da
+            // carta mudava junto -- a cada descarte o estado alternava e a
+            // carta "pulava" de proporcao por um frame. O destaque de ativo ja
+            // vem do brilho, da sombra e da borda, que nao mexem no layout.
+            .padding(3.dp)
             .clickable(enabled = enabled) {
                 if (blocked) onBlockedClick() else onClick()
             },
@@ -874,7 +887,18 @@ private fun DeckPile(
         Spacer(modifier = Modifier.height(if (priorityCard) 1.dp else 3.dp))
         Box(
             contentAlignment = Alignment.Center,
+            // Tamanho fixo na Box de fora, de proposito -- antes so o CardView
+            // interno tinha .size(), e a Box decorativa (sem tamanho proprio)
+            // dependia do filho pra "borbulhar" a largura pra cima. Dentro do
+            // Row de MONTE/VIRA/LIXO isso e fragil: a Column do LIXO carrega
+            // texto mais largo que o card ("Toque para comprar"), e o Row com
+            // 3 colunas nao-weighted espreme o card pra menos da metade do
+            // cardWidth pedido (achado real: MONTE e LIXO com o mesmo
+            // cardWidth=74dp, LIXO renderizando ~40% do tamanho). Fixando o
+            // tamanho aqui, igual o CompactPileCard ja faz certo, o card nao
+            // depende mais do quanto a Column ao redor decide reservar.
             modifier = Modifier
+                .size(width = cardWidth, height = cardWidth * 1.5f)
                 .shadow(if (isMyTurn) 16.dp else 5.dp, RoundedCornerShape(8.dp), clip = false)
                 .background(
                     if (isMyTurn) ColorGreenLight.copy(alpha = 0.18f * pulse) else Color.Transparent,
@@ -896,10 +920,10 @@ private fun DeckPile(
                         com.brunogiovani.cachetaburaco.domain.models.Rank.ACE
                     ),
                     isFaceUp = false,
-                    modifier = Modifier.size(width = cardWidth, height = cardWidth * 1.5f)
+                    modifier = Modifier.fillMaxSize()
                 )
             } else {
-                Box(modifier = Modifier.width(cardWidth).height(cardWidth * 1.5f)
+                Box(modifier = Modifier.fillMaxSize()
                     .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp)))
             }
             if (priorityCard) {
@@ -987,7 +1011,13 @@ private fun DiscardPile(
         Spacer(modifier = Modifier.height(if (priorityCard) 1.dp else 3.dp))
         Box(
             contentAlignment = Alignment.Center,
+            // Mesmo motivo do DeckPile: tamanho fixo na Box de fora, nao so
+            // no CardView interno. Era exatamente essa Box sem .size() proprio
+            // que deixava o card do lixo espremido pelo Column ao redor
+            // (largura do texto "Toque para comprar" competindo com as outras
+            // duas colunas do Row sem weight).
             modifier = Modifier
+                .size(width = cardWidth, height = cardWidth * 1.5f)
                 .shadow(if (canDraw || isBlocked) 18.dp else 5.dp, RoundedCornerShape(8.dp), clip = false)
                 .background(
                     if (canDraw || isBlocked) {
@@ -1017,7 +1047,7 @@ private fun DiscardPile(
                 CardView(
                     card = topCard,
                     isFaceUp = true,
-                    modifier = Modifier.size(width = cardWidth, height = cardWidth * 1.5f)
+                    modifier = Modifier.fillMaxSize()
                 )
                 if (isBlocked) {
                     Box(
@@ -1035,7 +1065,7 @@ private fun DiscardPile(
                     }
                 }
             } else {
-                Box(modifier = Modifier.width(cardWidth).height(cardWidth * 1.5f)
+                Box(modifier = Modifier.fillMaxSize()
                     .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
                     contentAlignment = Alignment.Center
                 ) {
