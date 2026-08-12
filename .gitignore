@@ -49,10 +49,12 @@ local.properties
 *.keystore
 *.p12
 *.pfx
+*.der
 *.env
 .env
 .env.*
 keystore.properties
+/keystore/
 !.env.example
 !*.env.example
 credentials/
