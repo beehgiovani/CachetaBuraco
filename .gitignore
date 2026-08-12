@@ -55,6 +55,7 @@ local.properties
 .env.*
 keystore.properties
 /keystore/
+*.hprof
 !.env.example
 !*.env.example
 credentials/
