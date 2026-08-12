@@ -52,6 +52,7 @@ local.properties
 *.env
 .env
 .env.*
+keystore.properties
 !.env.example
 !*.env.example
 credentials/

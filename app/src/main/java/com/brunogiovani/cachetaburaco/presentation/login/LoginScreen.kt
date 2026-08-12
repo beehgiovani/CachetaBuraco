@@ -286,7 +286,7 @@ private fun NewProfileContent(
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Entrar", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Como convidado (com apelido) ou com sua conta Google", color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp, textAlign = TextAlign.Center)
+        Text("Escolha como quer entrar", color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp, textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(20.dp))
 
         OutlinedTextField(
@@ -321,6 +321,13 @@ private fun NewProfileContent(
             loading = isLoading,
             containerColor = MenuColors.TableGreenLight
         )
+        Text(
+            text = "Rápido, sem conta. Seu progresso fica salvo só neste aparelho.",
+            color = Color.White.copy(alpha = 0.45f),
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 6.dp, start = 8.dp, end = 8.dp)
+        )
 
         Spacer(modifier = Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -341,6 +348,13 @@ private fun NewProfileContent(
             enabled = !isLoading && !isLoadingGoogle,
             loading = isLoadingGoogle,
             containerColor = MenuColors.InkPanelSoft
+        )
+        Text(
+            text = "Mantém ranking, medalhas e XP se você trocar de aparelho ou reinstalar o app.",
+            color = Color.White.copy(alpha = 0.45f),
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 6.dp, start = 8.dp, end = 8.dp)
         )
 
         if (hasSaved) {
