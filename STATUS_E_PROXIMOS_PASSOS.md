@@ -14,6 +14,7 @@
 - O web possui repositório limpo e `https://carteadobr.web.app` respondeu HTTP 200.
 - O README Android classifica explicitamente o modo online como beta.
 - `:app:testDebugUnitTest` passou na validação de 26/09/2026.
+- A cópia Android em desenvolvimento possui sete commits locais e 78 entradas de código, testes, assets e migrations ainda não integradas ao GitHub; a versão web também tem história Git própria sem remoto. Ambas foram preservadas para consolidação posterior.
 
 ## Diagnóstico franco
 
