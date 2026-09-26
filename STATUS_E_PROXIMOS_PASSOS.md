@@ -1,6 +1,6 @@
 # Status e próximos passos — Carteado BR / Cacheta-Buraco
 
-> Auditoria de 22/09/2026. Esta é uma fotografia baseada em arquivos, Git, artefatos e endpoints observáveis. Nenhum build completo foi executado nesta classificação.
+> Atualizado em 26/09/2026 após limpeza do repositório, revisão documental e teste local.
 
 ## Classificação
 
@@ -10,9 +10,10 @@
 
 ## Evidências observadas
 
-- O Android possui repositório limpo, APK e AAB de release e assets de loja.
+- A árvore rastreada está limpa de builds, APK/AAB e configurações pessoais; os assets necessários ao produto foram preservados.
 - O web possui repositório limpo e `https://carteadobr.web.app` respondeu HTTP 200.
 - O README Android classifica explicitamente o modo online como beta.
+- `:app:testDebugUnitTest` passou na validação de 26/09/2026.
 
 ## Diagnóstico franco
 
