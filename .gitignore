@@ -1,9 +1,8 @@
 # CachetaBuraco - Git ignore
 
-# Temporary scripts and one-off tools
-*.py
-scripts/
-tools/
+# Local scratch work
+.local/
+scratch/
 
 # Local plans, notes and generated reports
 tasks
@@ -66,6 +65,9 @@ google-services.json
 # Coverage and test artifacts
 coverage/
 *.exec
+test-results/
+connected-results/
+.firebase/
 
 # System files
 .DS_Store
